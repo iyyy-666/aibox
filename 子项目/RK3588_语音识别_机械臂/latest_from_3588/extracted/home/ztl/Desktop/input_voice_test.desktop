@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=输入语音测试
+Exec=/usr/local/bin/input_voice_test.sh
+Icon=/root/robot_arm/assets/icons/robot_voice.png
+Terminal=false
+Categories=Utility;

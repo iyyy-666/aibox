@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=颜色识别（双目）
+Name[zh_CN]=颜色识别（双目）
+Comment=使用双目摄像头识别物品颜色
+Exec=/usr/local/bin/color_recognition.sh
+Icon=/root/robot_arm/assets/icons/color.png
+Terminal=false
+Categories=Utility;

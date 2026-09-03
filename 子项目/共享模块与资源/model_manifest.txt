@@ -1,0 +1,8 @@
+/root/robot_arm/models/face_detection_yunet_2023mar.onnx	232589 bytes
+/root/robot_arm/models/face_dnn/deploy.prototxt	28104 bytes
+/root/robot_arm/models/face_dnn/res10_300x300_ssd_iter_140000_fp16.caffemodel	5351047 bytes
+/root/robot_arm/models/fruit/yolov8n-cls.pt	5563076 bytes
+/root/robot_arm/models/fruit/yolov8n.pt	6549796 bytes
+/root/robot_arm/models/hand/.cache/huggingface/CACHEDIR.TAG	191 bytes
+/root/robot_arm/models/hand/.cache/huggingface/.gitignore	1 bytes
+/root/robot_arm/models/hand/hand_yolov8n.pt	6237883 bytes

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=按钮控制机械臂
+Exec=/usr/local/bin/button_control.sh
+Icon=/root/robot_arm/assets/icons/robot_button.png
+Terminal=false
+Categories=Utility;

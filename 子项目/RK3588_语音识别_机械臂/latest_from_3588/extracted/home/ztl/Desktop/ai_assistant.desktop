@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=AI对话助手
+Exec=/usr/local/bin/ai_assistant.sh
+Icon=/root/robot_arm/assets/icons/ai.png
+Terminal=false
+Categories=Utility;

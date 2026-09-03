@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语音简单控制机械臂</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1114; --surface: #171d22; --surface2: #1f272d;
+  --line: #2f3a42; --text: #f2f5f2; --muted: #9aa7a1; --muted2: #728078;
+  --green: #3fd47d; --blue: #4da3ff; --orange: #ffad4d; --red: #ff5b66;
+  --green-soft: rgba(63,212,125,0.14); --radius: 8px; --shadow: 0 18px 50px rgba(0,0,0,0.28);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
+  background: radial-gradient(circle at 12% 0%, rgba(63,212,125,0.08), transparent 28rem),
+              linear-gradient(135deg, #101417 0%, #151a1f 55%, #0d1114 100%);
+  color: var(--text);
+}
+button { font: inherit; }
+.app { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 22px 0 18px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0 22px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); background: linear-gradient(145deg,#243039,#14191d); font-size: 22px; }
+h1 { margin: 0; font-size: clamp(21px,3vw,30px); }
+.subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.link-btn, .btn { border-radius: var(--radius); cursor: pointer; transition: transform 0.12s, border-color 0.12s, background 0.12s, color 0.12s; }
+.link-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 13px; color: var(--text); text-decoration: none; background: var(--surface2); border: 1px solid var(--line); }
+.link-btn:hover { border-color: var(--green); color: var(--green); }
+main { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 16px; align-items: start; }
+.panel { padding: 18px; background: rgba(23,29,34,0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); box-shadow: var(--shadow); }
+.panel + .panel { margin-top: 16px; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+h2 { margin: 0; font-size: 15px; }
+.section-note { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.status-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.status-tile { min-height: 88px; padding: 15px; display: flex; justify-content: space-between; gap: 14px; background: rgba(23,29,34,0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); box-shadow: var(--shadow); }
+.status-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.status-value { display: block; font-size: 18px; font-weight: 700; }
+.dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 5px; border-radius: 50%; background: #5f6a64; box-shadow: 0 0 0 5px rgba(255,255,255,0.04); }
+.dot.on { background: var(--green); box-shadow: 0 0 0 5px var(--green-soft), 0 0 18px rgba(63,212,125,0.6); }
+.dot.warn { background: var(--orange); box-shadow: 0 0 0 5px rgba(255,173,77,0.14); }
+.btn { min-height: 48px; padding: 0 16px; border: 1px solid var(--line); background: var(--surface2); color: var(--text); font-weight: 800; }
+.btn:hover { border-color: var(--green); color: var(--green); }
+.btn-primary { border-color: transparent; background: var(--green); color: #08120d; }
+.btn-primary:hover { color: #08120d; box-shadow: 0 14px 30px rgba(63,212,125,0.18); }
+.level-wrap { margin-top: 12px; padding: 12px; background: var(--surface2); border: 1px solid rgba(255,255,255,0.06); border-radius: var(--radius); }
+.level-head { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--muted); font-size:13px; margin-bottom:9px; }
+.level-bar { height: 16px; overflow:hidden; border-radius:999px; background:#0b0f12; border:1px solid rgba(255,255,255,0.08); }
+.level-fill { width:0%; height:100%; border-radius:999px; background:linear-gradient(90deg,var(--green),var(--orange)); transition:width .12s ease, background .12s ease; }
+.level-fill.hot { background:linear-gradient(90deg,var(--orange),var(--red)); }
+.level-hint { margin-top:8px; color:var(--muted2); font-size:12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: var(--surface2); color: var(--muted); font-size: 12px; }
+.log-list { height: 230px; overflow-y: auto; padding-right: 4px; color: var(--muted); font-family: "Cascadia Mono",Consolas,monospace; font-size: 12px; }
+.log-list div { display: grid; grid-template-columns: 76px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.log-list time { color: var(--muted2); }
+.footer { padding: 18px 0 4px; color: var(--muted2); text-align: center; font-size: 12px; }
+@media (max-width: 860px) { .status-grid, main { grid-template-columns: 1fr; } }
+@media (max-width: 540px) { .app { width: min(100% - 20px, 960px); } .panel { padding: 15px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">??</div>
+      <div><h1>语音简单控制机械臂</h1><p class="subtitle">普通话识别 · 简单指令控制 · 语音输出</p></div>
+    </div>
+    <a class="link-btn" href="/button">? 按钮控制</a>
+  </header>
+
+  <section class="status-grid">
+    <div class="status-tile"><div><span class="status-label">串口连接</span><span class="status-value" id="serial-text">检查中</span></div><span id="serial-dot" class="dot"></span></div>
+    <div class="status-tile"><div><span class="status-label">语音状态</span><span class="status-value" id="voice-state">待机</span></div><span id="voice-dot" class="dot"></span></div>
+  </section>
+
+  <main>
+    <section>
+      <div class="panel">
+        <div class="panel-head"><div><h2>语音监听</h2><p class="section-note">点击开始后直接说指令词</p></div></div>
+        <button class="btn btn-primary" id="voice-btn" onclick="toggleVoice()" style="width:100%;min-height:64px;font-size:20px;">开启语音监听</button>
+        <div class="level-wrap">
+          <div class="level-head"><span>&#36755;&#20837;&#38899;&#37327;</span><strong id="voice-peak-text">0%</strong></div>
+          <div class="level-bar"><div class="level-fill" id="voice-peak-fill"></div></div>
+          <div class="level-hint" id="voice-level-hint">&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;?</div>
+        </div>
+
+        <div style="margin-top:12px;display:grid;gap:8px;">
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">最近识别 <span id="voice-text-display" style="color:var(--green);">-</span></div>
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">最近执行 <span id="last-cmd" style="color:var(--green);">-</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h2>识别记录</h2><p class="section-note">最近的识别与执行结果</p></div></div>
+        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>语音助手已就绪</span></div></div>
+      </div>
+    </section>
+
+    <aside>
+      <div class="panel">
+        <div class="panel-head"><div><h2>可用指令</h2><p class="section-note">尽量用短句、清楚地说</p></div></div>
+        <div class="chips">
+          <span class="chip">直立</span>
+          <span class="chip">放平</span>
+          <span class="chip">抓取</span>
+          <span class="chip">搬运</span>
+          <span class="chip">张开</span>
+          <span class="chip">闭合</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer class="footer">语音简单控制机械臂 &middot; RK3588</footer>
+</div>
+<script>
+const API = '';
+let voiceOn = false;
+let lastVoiceText = '';
+let logLines = [];
+
+function updateVoiceLevel(v) {
+  const peak = Math.max(0, Number(v.peak || 0));
+  const noiseFloor = Number(v.noise_floor || 0.008);
+  const trigger = Math.max(0.015, Number(v.trigger_peak || 0.05));
+  const effective = Math.max(0, peak - noiseFloor);
+  const pct = Math.max(0, Math.min(100, Math.round((effective / trigger) * 100)));
+  const rawPct = Math.max(0, Math.min(100, Math.round(peak * 100)));
+  const fill = document.getElementById('voice-peak-fill');
+  const text = document.getElementById('voice-peak-text');
+  const hint = document.getElementById('voice-level-hint');
+  if (!fill || !text || !hint) return;
+  fill.style.width = pct + '%';
+  fill.className = 'level-fill' + (pct >= 100 ? ' hot' : '');
+  text.textContent = pct + '% / raw ' + rawPct + '%';
+  if (!v.running) hint.innerHTML = '&#30417;&#21548;&#26410;&#24320;&#21551;';
+  else if (pct <= 2) hint.innerHTML = '&#24213;&#22122;&#65292;&#26410;&#26816;&#27979;&#21040;&#35828;&#35805;';
+  else if (pct < 45) hint.innerHTML = '&#38899;&#37327;&#20559;&#23567;&#65292;&#35831;&#38752;&#36817;&#40614;&#20811;&#39118;';
+  else if (pct >= 100) hint.innerHTML = '&#24050;&#36798;&#21040;&#35302;&#21457;&#32447;&#65292;&#21487;&#20197;&#35782;&#21035;';
+  else hint.innerHTML = '&#36755;&#20837;&#27491;&#24120;';
+}
+
+function addLog(text, kind='') {
+  const now = new Date();
+  const stamp = now.toLocaleTimeString('zh-CN', {hour12:false});
+  logLines.unshift({stamp, text, kind});
+  logLines = logLines.slice(0, 12);
+  const box = document.getElementById('log-list');
+  box.innerHTML = logLines.map(item => `<div><time>${item.stamp}</time><span class="${item.kind}">${item.text}</span></div>`).join('');
+}
+
+async function refreshVoiceLevel() {
+  try {
+    const res = await fetch(API + '/api/voice/level');
+    const lv = await res.json();
+    updateVoiceLevel({running: voiceOn, peak: lv.peak || 0, trigger_peak: 0.05, noise_floor: 0.008});
+  } catch (e) {}
+}
+
+async function refreshStatus() {
+  try {
+    const res = await fetch(API + '/api/status');
+    const s = await res.json();
+    document.getElementById('serial-dot').className = 'dot ' + ((s.serial && s.serial.connected) ? 'on' : 'warn');
+    document.getElementById('serial-text').textContent = (s.serial && s.serial.connected) ? '已连接' : '未连接';
+    const v = s.voice || {};
+    document.getElementById('voice-dot').className = 'dot ' + (v.running ? 'on' : 'warn');
+    document.getElementById('voice-state').textContent = v.last_error ? ('异常: ' + v.last_error) : (v.busy ? '识别中' : (v.running ? '监听中' : '待机'));
+    document.getElementById('voice-btn').textContent = v.running ? '关闭语音监听' : '开启语音监听';
+    voiceOn = v.running;
+    updateVoiceLevel(v);
+    const voiceText = v.last_text || v.text || '-';
+    document.getElementById('voice-text-display').textContent = voiceText;
+    document.getElementById('last-cmd').textContent = v.last_command || '-';
+    if (voiceText !== '-' && voiceText !== lastVoiceText) {
+      lastVoiceText = voiceText;
+      addLog('识别: ' + voiceText, '');
+    }
+  } catch (e) {
+    document.getElementById('serial-dot').className = 'dot warn';
+    document.getElementById('serial-text').textContent = '离线';
+  }
+}
+
+async function toggleVoice() {
+  try {
+    const url = voiceOn ? '/api/voice/stop' : '/api/voice/start';
+    const res = await fetch(API + url);
+    const r = await res.json();
+    addLog(r.success ? (voiceOn ? '语音监听已关闭' : '语音监听已开启') : '语音切换失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('语音请求失败', 'err');
+  }
+  setTimeout(refreshStatus, 300);
+}
+
+refreshStatus();
+setInterval(refreshStatus, 1000);
+setInterval(refreshVoiceLevel, 250);
+refreshVoiceLevel();
+</script>
+</body>
+</html>

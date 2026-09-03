@@ -1,0 +1,325 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>按钮控制机械臂</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1114; --surface: #171d22; --surface2: #1f272d;
+  --line: #2f3a42; --text: #f2f5f2; --muted: #9aa7a1; --muted2: #728078;
+  --green: #3fd47d; --blue: #4da3ff; --orange: #ffad4d; --red: #ff5b66;
+  --green-soft: rgba(63,212,125,0.14);
+  --radius: 8px; --shadow: 0 18px 50px rgba(0,0,0,0.28);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
+  background: radial-gradient(circle at 12% 0%, rgba(63,212,125,0.08), transparent 28rem),
+              linear-gradient(135deg, #101417 0%, #151a1f 55%, #0d1114 100%);
+  color: var(--text);
+}
+button, input { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+.app { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 22px 0 18px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0 22px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); background: linear-gradient(145deg,#243039,#14191d); font-size: 22px; }
+h1 { margin: 0; font-size: clamp(21px,3vw,30px); }
+.subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.status-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.status-tile, .panel { background: rgba(23,29,34,0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); box-shadow: var(--shadow); }
+.status-tile { min-height: 88px; padding: 15px; display: flex; justify-content: space-between; gap: 14px; }
+.status-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.status-value { display: block; font-size: 18px; font-weight: 700; }
+.dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 5px; border-radius: 50%; background: #5f6a64; box-shadow: 0 0 0 5px rgba(255,255,255,0.04); }
+.dot.on { background: var(--green); box-shadow: 0 0 0 5px var(--green-soft), 0 0 18px rgba(63,212,125,0.6); }
+.dot.warn { background: var(--orange); box-shadow: 0 0 0 5px rgba(255,173,77,0.14); }
+main { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(320px,0.75fr); gap: 16px; align-items: start; }
+.panel { padding: 18px; }
+.panel + .panel { margin-top: 16px; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+h2 { margin: 0; font-size: 15px; }
+.section-note { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.pose-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.pose-btn { min-height: 120px; padding: 18px; text-align: left; color: var(--text); background: var(--surface2); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; transition: transform 0.12s, border-color 0.12s, background 0.12s; }
+.pose-btn:hover { transform: translateY(-1px); }
+.pose-btn.custom { background: linear-gradient(145deg, rgba(77,163,255,0.22), rgba(31,39,45,0.98)); }
+.pose-btn.stand { background: linear-gradient(145deg, rgba(77,163,255,0.22), rgba(31,39,45,0.98)); }
+.pose-btn.flat { background: linear-gradient(145deg, rgba(255,173,77,0.22), rgba(31,39,45,0.98)); }
+.pose-btn.grab { background: linear-gradient(145deg, rgba(63,212,125,0.22), rgba(31,39,45,0.98)); }
+.pose-icon { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 16px; border-radius: var(--radius); background: rgba(255,255,255,0.08); font-size: 21px; }
+.pose-title { display: block; font-size: 21px; font-weight: 800; margin-bottom: 6px; }
+.pose-desc { display: block; color: var(--muted); font-size: 13px; }
+.stop-btn { width: 100%; min-height: 74px; margin-top: 14px; padding: 0 18px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #fff; background: linear-gradient(135deg,#e92836,#a70f1b); border: 0; border-radius: var(--radius); cursor: pointer; box-shadow: 0 16px 36px rgba(255,91,102,0.22); font-size: 22px; font-weight: 900; transition: transform 0.12s, box-shadow 0.12s; }
+.stop-btn:hover { box-shadow: 0 18px 42px rgba(255,91,102,0.32); }
+.quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.quick-btn { min-height: 48px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; color: var(--text); background: var(--surface2); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; transition: transform 0.12s, border-color 0.12s, background 0.12s; }
+.quick-btn:hover { border-color: var(--green); color: var(--green); }
+.large-btn { min-height: 64px; font-size: 20px; font-weight: 800; }
+.pose-btn:active, .stop-btn:active, .quick-btn:active { transform: scale(0.98); }
+.serial-row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.serial-status { font-size: 13px; color: var(--muted); }
+.log-list { height: 252px; overflow-y: auto; padding-right: 4px; color: var(--muted); font-family: "Cascadia Mono",Consolas,monospace; font-size: 12px; }
+.log-list div { display: grid; grid-template-columns: 76px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.log-list time { color: var(--muted2); }
+.log-list .ok { color: var(--green); }
+.log-list .err { color: var(--red); }
+.footer { padding: 18px 0 4px; color: var(--muted2); text-align: center; font-size: 12px; }
+.link-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 13px; color: var(--text); text-decoration: none; background: var(--surface2); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; transition: transform 0.12s, border-color 0.12s, color 0.12s; }
+.link-btn:hover { border-color: var(--green); color: var(--green); }
+@media (max-width: 860px) { .status-grid, main { grid-template-columns: 1fr; } }
+@media (max-width: 540px) { .app { width: min(100% - 20px, 1120px); } .pose-grid, .quick-grid { grid-template-columns: 1fr; } .panel { padding: 15px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">&#129470;</div>
+      <div><h1>按钮控制机械臂</h1><p class="subtitle">按钮动作 · 夹爪控制 · 关节控制 · 串口通信</p></div>
+    </div>
+    <nav style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="link-btn" href="/calibrate">&#9881; 舵机校准</a>
+      <button class="link-btn" onclick="toggleSerial()" id="serial-btn">&#128268; 连接串口</button>
+    </nav>
+  </header>
+
+  <section class="status-grid">
+    <div class="status-tile"><div><span class="status-label">串口连接</span><span class="status-value" id="serial-text">检查中</span></div><span id="serial-dot" class="dot"></span></div>
+    <div class="status-tile"><div><span class="status-label">当前姿态</span><span class="status-value" id="pose-text">未知</span></div><span class="dot warn"></span></div>
+    <div class="status-tile"><div><span class="status-label">最后指令</span><span class="status-value" id="last-cmd" style="font-size:12px;word-break:break-all;">-</span></div></div>
+  </section>
+
+  <main>
+    <section>
+      <div class="panel">
+        <div class="panel-head"><div><h2>预设姿态</h2><p class="section-note">点击执行预设动作，操作前确保机械臂周围空间充足。</p></div></div>
+        <div class="pose-grid" id="pose-grid">
+          <button class="pose-btn stand" onclick="doPose('直立')"><span class="pose-icon">&#8613;</span><span class="pose-title">直立</span><span class="pose-desc">归中待命 · 0°</span></button>
+          <button class="pose-btn flat" onclick="doPose('放平')"><span class="pose-icon">&#8596;</span><span class="pose-title">放平</span><span class="pose-desc">前倾85°笔直展开</span></button>
+          <button class="pose-btn grab" onclick="doSequence('抓取')"><span class="pose-icon">&#9758;</span><span class="pose-title">抓取</span><span class="pose-desc">A形拱桥·四步序列</span></button>
+          <button class="pose-btn" style="background:linear-gradient(145deg,rgba(63,212,125,0.22),rgba(31,39,45,0.98))" onclick="doSequence('搬运')"><span class="pose-icon">&#128666;</span><span class="pose-title">搬运</span><span class="pose-desc">抓取→搬运→释放</span></button>
+        </div>
+        <button class="stop-btn" onclick="doStop()">&#9632; 急停</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h2>操作日志</h2><p class="section-note">最近操作记录。</p></div></div>
+        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>系统就绪</span></div></div>
+      </div>
+
+    </section>
+
+    <aside>
+      <div class="panel">
+        <div class="panel-head"><div><h2>快捷动作</h2><p class="section-note">夹爪控制和复位。</p></div></div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="doGripper('open')">&#9776; 夹爪张开</button>
+          <button class="quick-btn" onclick="doGripper('half')">&#9644; 夹爪半开</button>
+          <button class="quick-btn" onclick="doGripper('close')">&#8854; 夹爪闭合</button>
+          <button class="quick-btn" onclick="doGripperStep(-60)">&#9664; 夹爪微开</button>
+          <button class="quick-btn" onclick="doGripperStep(60)">&#9654; 夹爪微合</button>
+        </div>
+        <button class="quick-btn large-btn" onclick="doAllCenter()" style="width:100%;margin-top:12px;">&#8635; 全部复位到中心</button>
+        <div style="margin-top:10px;display:grid;gap:6px;" id="joint-controls"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:grid;gap:8px;">
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
+            &#127760; Web控制: <code style="color:var(--green);">http://192.168.11.106:8000</code>
+          </div>
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
+            &#128187; VNC桌面: <code style="color:var(--green);">192.168.11.106:5901</code>
+          </div>
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
+            &#9000; SSH终端: <code style="color:var(--green);">ssh root@192.168.11.106</code>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <footer class="footer">KM1 Robot Control Console v2.0 · RK3588 · Ubuntu 22.04</footer>
+</div>
+
+<script>
+const API = '';
+let serialConnected = false;
+let logLines = [];
+const JOINT_STEP_PWM = 60;
+
+function addLog(text, kind='') {
+  const now = new Date();
+  const stamp = now.toLocaleTimeString('zh-CN', {hour12:false});
+  logLines.unshift({stamp, text, kind});
+  logLines = logLines.slice(0, 50);
+  const box = document.getElementById('log-list');
+  box.innerHTML = logLines.map(item => `<div><time>${item.stamp}</time><span class="${item.kind}">${item.text}</span></div>`).join('');
+}
+
+function renderPoses(poses) {
+  const grid = document.getElementById('pose-grid');
+  const builtin = ['直立', '放平', '抓取', '搬运'];
+  poses.forEach(p => {
+    if (builtin.includes(p.name)) return;
+    if (document.getElementById('pose-' + p.name)) return;
+    const btn = document.createElement('button');
+    btn.className = 'pose-btn custom';
+    btn.id = 'pose-' + p.name;
+    btn.onclick = () => doPose(p.name);
+    btn.innerHTML = '<span class="pose-icon">&#9733;</span><span class="pose-title">' + p.name + '</span><span class="pose-desc">' + (p.description || '') + '</span>';
+    grid.appendChild(btn);
+  });
+}
+
+async function refreshStatus() {
+  try {
+    const res = await fetch(API + '/api/status');
+    const s = await res.json();
+    serialConnected = Boolean(s.serial && s.serial.connected);
+    document.getElementById('serial-dot').className = 'dot ' + (serialConnected ? 'on' : '');
+    document.getElementById('serial-text').textContent = serialConnected ? '已连接' : '未连接';
+    document.getElementById('serial-btn').textContent = serialConnected ? '断开串口' : '连接串口';
+    document.getElementById('pose-text').textContent = s.robot ? s.robot.current_pose : '未知';
+    document.getElementById('last-cmd').textContent = s.serial ? (s.serial.last_command || '-') : '-';
+    if (s.robot && s.robot.available_poses) renderPoses(s.robot.available_poses);
+    if (s.robot && s.robot.servo_pwms) updateJointPwms(s.robot.servo_pwms);
+  } catch (e) {
+    document.getElementById('serial-dot').className = 'dot warn';
+    document.getElementById('serial-text').textContent = '服务离线';
+  }
+}
+
+async function toggleSerial() {
+  try {
+    if (serialConnected) {
+      const res = await fetch(API + '/api/serial/disconnect');
+      const r = await res.json();
+      addLog(r.success ? '串口已断开' : '串口断开失败', r.success ? 'ok' : 'err');
+    } else {
+      const res = await fetch(API + '/api/serial/connect');
+      const r = await res.json();
+      addLog(r.success ? '串口已连接 ' + r.port : '串口连接失败', r.success ? 'ok' : 'err');
+    }
+  } catch (e) {
+    addLog('串口请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+async function doPose(name) {
+  addLog('执行姿态: ' + name, 'ok');
+  try {
+    const res = await fetch(API + '/api/robot/pose/' + encodeURIComponent(name), { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+async function doSequence(name) {
+  addLog('执行序列: ' + name, 'ok');
+  try {
+    const res = await fetch(API + '/api/robot/sequence/' + encodeURIComponent(name), { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('序列请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+async function doStop() {
+  addLog('急停', 'err');
+  try {
+    const res = await fetch(API + '/api/robot/stop', { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? '急停完成' : '急停失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+async function doGripper(action) {
+  const names = {open:'夹爪张开', close:'夹爪闭合', half:'夹爪半开'};
+  addLog(names[action] || action, 'ok');
+  try {
+    const res = await fetch(API + '/api/robot/gripper/' + action, { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? (names[action] || action) + ' 完成' : (names[action] || action) + ' 失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+async function doGripperStep(delta) {
+  const name = delta < 0 ? '夹爪微开' : '夹爪微合';
+  addLog(name, 'ok');
+  try {
+    const res = await fetch(API + '/api/robot/gripper_adjust?delta=' + delta, { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+const JOINT_NAMES = ['底座', '肩部', '肘部1', '肘部2', '腕部', '夹爪'];
+function renderJoints() {
+  const c = document.getElementById('joint-controls');
+  c.innerHTML = JOINT_NAMES.map((n, i) => `
+    <div style="display:flex;align-items:center;gap:6px;padding:2px 0;">
+      <span style="font-size:12px;color:var(--muted);width:42px;">${n}</span>
+      <button class="quick-btn" id="j${i}minus" onclick="doJointStep(${i},'minus')" style="flex:1;min-height:32px;font-size:12px;">PWM-${JOINT_STEP_PWM}</button>
+      <span id="j${i}pwm" style="width:50px;text-align:center;font-size:12px;color:var(--muted);">1500</span>
+      <button class="quick-btn" id="j${i}plus" onclick="doJointStep(${i},'plus')" style="flex:1;min-height:32px;font-size:12px;">PWM+${JOINT_STEP_PWM}</button>
+    </div>
+  `).join('');
+}
+
+function updateJointPwms(pwms) {
+  pwms.forEach((pwm, i) => {
+    const el = document.getElementById('j' + i + 'pwm');
+    if (el) el.textContent = pwm;
+  });
+}
+
+async function doJointStep(id, dir) {
+  const r = await (await fetch(API + '/api/robot/joint/' + id + '/' + dir + '?delta=' + JOINT_STEP_PWM, { method: 'POST' })).json();
+  if (r.success) {
+    const pwmText = r.pwm ? ' -> ' + r.pwm : '';
+    addLog(JOINT_NAMES[id] + (dir === 'plus' ? ' PWM+' : ' PWM-') + JOINT_STEP_PWM + pwmText, 'ok');
+    refreshStatus();
+  } else {
+    addLog(JOINT_NAMES[id] + ' 失败', 'err');
+  }
+}
+
+async function doAllCenter() {
+  addLog('全部复位到中心', 'ok');
+  try {
+    const res = await fetch(API + '/api/robot/all_center', { method: 'POST' });
+    const r = await res.json();
+    addLog(r.success ? '复位完成' : '复位失败', r.success ? 'ok' : 'err');
+  } catch (e) {
+    addLog('请求失败', 'err');
+  }
+  refreshStatus();
+}
+
+renderJoints();
+refreshStatus();
+setInterval(refreshStatus, 1000);
+</script>
+</body>
+</html>
+
+
+

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>舵机校准 - KM1</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1114; --surface: #171d22; --surface2: #1f272d;
+  --line: #2f3a42; --text: #f2f5f2; --muted: #9aa7a1; --muted2: #728078;
+  --green: #3fd47d; --blue: #4da3ff; --orange: #ffad4d; --red: #ff5b66;
+  --green-soft: rgba(63,212,125,0.14); --blue-soft: rgba(77,163,255,0.14);
+  --radius: 8px; --shadow: 0 18px 50px rgba(0,0,0,0.28);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
+  background: radial-gradient(circle at 18% 0%, rgba(77,163,255,0.08), transparent 28rem),
+              linear-gradient(135deg, #101417 0%, #151a1f 55%, #0d1114 100%);
+  color: var(--text);
+}
+button, input { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+.app { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 22px 0 18px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0 22px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); background: linear-gradient(145deg,#243039,#14191d); font-size: 21px; }
+h1 { margin: 0; font-size: clamp(21px,3vw,30px); }
+.subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.link-btn, .btn, .pose-chip { border-radius: var(--radius); cursor: pointer; transition: transform 0.12s, border-color 0.12s, background 0.12s, color 0.12s; }
+.link-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 13px; color: var(--text); text-decoration: none; background: var(--surface2); border: 1px solid var(--line); }
+.link-btn:hover { border-color: var(--green); color: var(--green); }
+main { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(280px,0.65fr); gap: 16px; align-items: start; }
+.panel { padding: 18px; background: rgba(23,29,34,0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); box-shadow: var(--shadow); }
+.panel + .panel { margin-top: 16px; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+h2 { margin: 0; font-size: 15px; }
+.section-note { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.servo-stack { display: grid; gap: 10px; }
+.servo-row { display: grid; grid-template-columns: minmax(108px,0.34fr) minmax(180px,1fr) 72px; align-items: center; gap: 14px; min-height: 76px; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface2); }
+.servo-title { display: block; font-weight: 800; font-size: 15px; }
+.servo-name { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+input[type="range"] { width: 100%; height: 28px; accent-color: var(--green); cursor: pointer; }
+.pwm-val { justify-self: end; width: 70px; padding: 8px 0; border-radius: var(--radius); text-align: center; color: var(--green); background: var(--green-soft); font-family: "Cascadia Mono",Consolas,monospace; font-size: 13px; font-weight: 800; }
+.save-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; }
+.input { width: 100%; min-height: 46px; padding: 0 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface2); color: var(--text); outline: none; }
+.input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.btn { min-height: 46px; padding: 0 16px; border: 1px solid var(--line); background: var(--surface2); color: var(--text); font-weight: 800; }
+.btn:hover { border-color: var(--green); color: var(--green); }
+.btn-primary { border-color: transparent; background: var(--green); color: #08120d; }
+.btn-primary:hover { color: #08120d; box-shadow: 0 14px 30px rgba(63,212,125,0.18); }
+.btn-danger:hover { border-color: var(--red); color: var(--red); }
+.pose-list { display: flex; gap: 8px; flex-wrap: wrap; min-height: 42px; }
+.pose-chip { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface2); color: var(--text); font-size: 13px; }
+.pose-chip:hover, .pose-chip.loaded { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+.empty-state { color: var(--muted); font-size: 13px; }
+.toast { position: fixed; left: 50%; bottom: 22px; min-width: 220px; transform: translate(-50%,12px); padding: 12px 16px; border-radius: var(--radius); background: #e9f8ee; color: #07120b; box-shadow: 0 18px 40px rgba(0,0,0,0.34); opacity: 0; pointer-events: none; text-align: center; font-weight: 800; transition: opacity 0.18s, transform 0.18s; z-index: 20; }
+.toast.show { opacity: 1; transform: translate(-50%,0); }
+@media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .app { width: min(100% - 20px, 980px); } .servo-row { grid-template-columns: 1fr; gap: 8px; } .pwm-val { justify-self: stretch; width: 100%; } .save-row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">&#9881;</div>
+      <div><h1>舵机校准</h1><p class="subtitle">实时调整 6 路 PWM，保存自定义姿态</p></div>
+    </div>
+    <a class="link-btn" href="/">&#8592; 返回控制台</a>
+  </header>
+  <main>
+    <section>
+      <div class="panel">
+        <div class="panel-head"><div><h2>实时舵机控制</h2><p class="section-note">拖动滑杆实时发送指令，建议逐个调整。</p></div></div>
+        <div class="servo-stack" id="servos"></div>
+      </div>
+    </section>
+    <aside>
+      <div class="panel">
+        <div class="panel-head"><div><h2>保存当前姿态</h2><p class="section-note">为当前舵机位置命名保存。</p></div></div>
+        <div class="save-row">
+          <input class="input" id="pose-name" placeholder="姿态名称，如：抓取位">
+          <button class="btn btn-primary" onclick="savePose()">保存</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>已保存姿态</h2><p class="section-note">点击载入PWM并移动机械臂。</p></div></div>
+        <div class="pose-list" id="pose-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>快速复位</h2><p class="section-note">全部舵机回到中心值 P1500。</p></div></div>
+        <button class="btn btn-danger" onclick="allCenter()" style="width:100%;">全部复位到中心 P1500</button>
+        <p class="section-note" style="margin-top:10px;color:#ffad4d;">&#9888; 安全范围 P1280-P1720（±220），超出可能碰撞！</p>
+      </div>
+    </aside>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';
+const NAMES = ['底座 #0','肩部 #1','肘部1 #2','肘部2 #3','腕部 #4','夹爪 #5'];
+const CENTER = 1500;
+const lastSend = {};
+let toastTimer = null;
+
+function init() {
+  const c = document.getElementById('servos');
+  for(let i=0;i<6;i++){
+    const row = document.createElement('div'); row.className = 'servo-row';
+    const label = document.createElement('div'); label.className = 'servo-label';
+    const title = document.createElement('span'); title.className = 'servo-title'; title.textContent = '舵机 '+i;
+    const name = document.createElement('span'); name.className = 'servo-name'; name.textContent = NAMES[i];
+    const slider = document.createElement('input'); slider.type = 'range'; slider.id = 's'+i; slider.min='800'; slider.max='2200'; slider.value = CENTER; slider.addEventListener('input', ()=>onSlider(i));
+    const val = document.createElement('div'); val.className = 'pwm-val'; val.id = 'v'+i; val.textContent = 'P'+CENTER;
+    label.append(title,name); row.append(label,slider,val); c.appendChild(row);
+  }
+  loadPoses();
+}
+
+function onSlider(i) {
+  const pwm = +document.getElementById('s'+i).value;
+  document.getElementById('v'+i).textContent = 'P'+pwm;
+  const now = Date.now();
+  if(lastSend[i] && now-lastSend[i] < 50) return;
+  lastSend[i] = now;
+  fetch(API+'/api/robot/servo/'+i+'?pwm='+pwm+'&time_ms=100',{method:'POST'}).catch(()=>toast('请求失败'));
+}
+
+function allCenter() {
+  for(let i=0;i<6;i++){ document.getElementById('s'+i).value=CENTER; document.getElementById('v'+i).textContent='P'+CENTER; }
+  fetch(API+'/api/robot/all_center',{method:'POST'}).then(r=>r.json()).then(r=>toast(r.success?'已复位':'失败')).catch(()=>toast('请求失败'));
+}
+
+async function savePose() {
+  const name = document.getElementById('pose-name').value.trim();
+  if(!name){ toast('请输入名称'); return; }
+  const pwms = [];
+  for(let i=0;i<6;i++) pwms.push(+document.getElementById('s'+i).value);
+  try {
+    const res = await fetch(API+'/api/calibrate/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,pwms,time:1500})});
+    const r = await res.json();
+    if(r.success){ toast('已保存 '+name); document.getElementById('pose-name').value=''; loadPoses(); }
+    else toast('保存失败');
+  } catch(e) { toast('请求失败'); }
+}
+
+async function loadPoses() {
+  const list = document.getElementById('pose-list');
+  list.innerHTML = '<span class="empty-state">加载中...</span>';
+  try {
+    const res = await fetch(API+'/api/calibrate/poses');
+    const poses = await res.json();
+    list.innerHTML = '';
+    if(!poses.length){ list.innerHTML='<span class="empty-state">暂无保存的姿态。</span>'; return; }
+    poses.forEach(p=>{
+      const chip = document.createElement('button');
+      chip.type='button'; chip.className='pose-chip'; chip.textContent=p.name;
+      chip.addEventListener('click',()=>loadPose(p.name,p.pwms,chip));
+      list.appendChild(chip);
+    });
+  } catch(e) { list.innerHTML='<span class="empty-state">加载失败。</span>'; }
+}
+
+function loadPose(name,pwms,chip){
+  for(let i=0;i<6;i++){ const pwm=pwms[i]||CENTER; document.getElementById('s'+i).value=pwm; document.getElementById('v'+i).textContent='P'+pwm; fetch(API+'/api/robot/servo/'+i+'?pwm='+pwm+'&time_ms=500',{method:'POST'}).catch(()=>{}); }
+  document.getElementById('pose-name').value=name;
+  document.querySelectorAll('.pose-chip').forEach(e=>e.classList.remove('loaded'));
+  if(chip) chip.classList.add('loaded');
+  toast('已载入 '+name);
+}
+
+function toast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+init();
+</script>
+</body>
+</html>

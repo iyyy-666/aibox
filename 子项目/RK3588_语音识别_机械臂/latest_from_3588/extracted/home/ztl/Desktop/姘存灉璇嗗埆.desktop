@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=水果识别（双目）
+Name[zh_CN]=水果识别（双目）
+Comment=使用双目摄像头识别常见水果
+Exec=/usr/local/bin/fruit_recognition.sh
+Icon=/root/robot_arm/assets/icons/fruit.png
+Terminal=false
+Categories=Utility;

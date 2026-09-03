@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=语音儿歌播放
+Exec=/usr/local/bin/nursery_rhyme_player.sh
+Icon=/root/robot_arm/assets/icons/nursery.png
+Terminal=false
+Categories=Utility;
