@@ -12,7 +12,7 @@ import tkinter as tk
 import cv2
 import numpy as np
 
-from vision_targeting import box_is_target, draw_target_roi, stable_filter
+from vision_targeting import box_is_target, draw_target_roi, split_stereo, stable_filter
 
 CAMERA_DEVICE = os.getenv("FRUIT_CAMERA_DEVICE", "/dev/video41")
 CAMERA_WIDTH = int(os.getenv("FRUIT_CAMERA_WIDTH", "1280"))
@@ -213,8 +213,7 @@ class FruitRecognitionApp:
         self.root.after(0, lambda: self.status_text.set(text))
 
     def _normal_frame(self, frame: np.ndarray) -> np.ndarray:
-        mid = frame.shape[1] // 2
-        return frame[:, :mid].copy()
+        return split_stereo(frame)[0]
 
     def _detect_loop(self) -> None:
         while self.running:

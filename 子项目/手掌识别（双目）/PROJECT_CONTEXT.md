@@ -1,6 +1,6 @@
 ﻿# 手掌识别（双目） - Project Context
 
-更新时间：2026-08-30
+更新时间：2026-09-04
 
 ## 1. 项目名称
 
@@ -12,7 +12,7 @@ G:\codexwork\人工智能实验箱\子项目\手掌识别（双目）
 
 ## 3. 项目目的
 
-在双目合成画面中框出最像手的一个目标，并识别石头、剪刀、布等简单手势。
+在双目合成画面中稳定框出手掌，并识别石头、剪刀、布。
 
 ## 4. 当前入口文件
 
@@ -20,19 +20,19 @@ G:\codexwork\人工智能实验箱\子项目\手掌识别（双目）
 
 ## 5. 使用技术栈
 
-Python, Tkinter, OpenCV, Ultralytics YOLO hand, ROI/轮廓手势估计
+Python, Tkinter, OpenCV, MediaPipe Hands 21 点关键点，双目候选校验与时序投票。
 
 ## 6. 当前完成状态
 
-刚优化：hand_yolov8n 优先检测，OpenCV 兜底，一次只识别一个最像手的目标。
+MediaPipe Hands 优先检测；右目候选校验与连续 4 帧投票确认石头、剪刀、布。MediaPipe 不可用时保留 OpenCV 轮廓兜底；候选手掌始终显示，避免把“未确定”误报为未检测到手掌。
 
 ## 7. 已知 bug / 待优化点
 
-手势分类仍是近似估计；强背景干扰和光照变化仍可能影响框选。
+首版只稳定跟踪一个主手掌；首次部署需要安装 `mediapipe==0.10.18`，启动脚本已显式配置其 Python 依赖路径。
 
 ## 8. 依赖关系
 
-共享：vision_targeting.py。模型：/root/robot_arm/models/hand/hand_yolov8n.pt。硬件：双目摄像头。
+共享：vision_targeting.py。手势模块：hand_landmarks.py。依赖：mediapipe==0.10.18。硬件：双目摄像头 `/dev/video41`。
 
 ## 9. 维护规则
 
