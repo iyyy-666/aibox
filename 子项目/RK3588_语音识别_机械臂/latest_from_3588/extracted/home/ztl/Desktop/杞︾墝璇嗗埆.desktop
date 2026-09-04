@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=车牌识别（双目）
-Name[zh_CN]=车牌识别（双目）
+Name=车牌识别
+Name[zh_CN]=车牌识别
 Comment=使用双目摄像头识别车牌号和蓝绿牌
 Exec=/usr/local/bin/plate_recognition.sh
 Icon=/root/robot_arm/assets/icons/plate.png

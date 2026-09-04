@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=人脸识别（双目）
-Name[zh_CN]=人脸识别（双目）
+Name=人脸识别
+Name[zh_CN]=人脸识别
 Comment=使用双目摄像头检测人脸
 Exec=/usr/local/bin/face_recognition.sh
 Icon=/root/robot_arm/assets/icons/face.png

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=手掌识别（双目）
-Name[zh_CN]=手掌识别（双目）
+Name=手掌识别
+Name[zh_CN]=手掌识别
 Comment=使用双目摄像头识别人手和石头剪刀布手势
 Exec=/usr/local/bin/palm_recognition.sh
 Icon=/root/robot_arm/assets/icons/palm.png

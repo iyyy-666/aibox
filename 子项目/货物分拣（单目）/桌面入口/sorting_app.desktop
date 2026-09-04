@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=货物分拣（双目）
-Name[zh_CN]=货物分拣（双目）
+Name=货物分拣
+Name[zh_CN]=货物分拣
 Comment=使用双目摄像头进行红蓝物块分拣
 Exec=/usr/local/bin/sorting_app.sh
 Terminal=false

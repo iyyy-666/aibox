@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=形状识别（双目）
-Name[zh_CN]=形状识别（双目）
+Name=形状识别
+Name[zh_CN]=形状识别
 Comment=使用双目摄像头识别二维图形形状
 Exec=/usr/local/bin/shape_recognition.sh
 Icon=/root/robot_arm/assets/icons/shape.png
