@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import time
 from typing import Callable
 
 import serial
+
+
+POSITION_STATE = os.getenv("AIBOX_GIMBAL_POSITION_STATE", "/tmp/aibox_gimbal_position.json")
 
 
 class SerialGimbalClient:
@@ -79,8 +84,18 @@ class SerialGimbalClient:
                 self.yaw_pwm = pulse
             else:
                 self.pitch_pwm = pulse
+        self._save_position()
         self.last_error = ""
         return True, self.port
+
+    def _save_position(self) -> None:
+        try:
+            tmp = f"{POSITION_STATE}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"yaw": self.yaw_pwm, "pitch": self.pitch_pwm}, fh)
+            os.replace(tmp, POSITION_STATE)
+        except OSError:
+            pass
 
     def _await_ack(self, servo_id: int, pulse: int) -> bool:
         assert self._serial is not None

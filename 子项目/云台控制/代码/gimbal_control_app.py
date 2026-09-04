@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import glob
 import fcntl
+import json
 import os
 import struct
 import threading
@@ -47,6 +48,7 @@ I2C_ADDR_YAW = int(os.getenv("GIMBAL_I2C_ADDR_YAW", "0x40"), 0)
 I2C_ADDR_PITCH = int(os.getenv("GIMBAL_I2C_ADDR_PITCH", "0x41"), 0)
 I2C_CH_YAW = int(os.getenv("GIMBAL_I2C_CH_YAW", "0"), 0)
 I2C_CH_PITCH = int(os.getenv("GIMBAL_I2C_CH_PITCH", "1"), 0)
+POSITION_STATE = os.getenv("AIBOX_GIMBAL_POSITION_STATE", "/tmp/aibox_gimbal_position.json")
 
 
 def clamp(value: int, lower: int, upper: int) -> int:
@@ -488,11 +490,30 @@ class RawI2CPca9685Backend:
 class GimbalController:
     def __init__(self) -> None:
         self.state = GimbalState()
+        self._load_position()
         self._step = STEP_DEFAULT
         self.i2c = RawI2CPca9685Backend()
         self.serial = SerialLobotBackend()
         self.pwm = SysfsPwmBackend()
         self._backend: str | None = None
+
+    def _load_position(self) -> None:
+        try:
+            with open(POSITION_STATE, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.state.yaw = clamp(data.get("yaw", SERVO_CENTER), SERVO_MIN, SERVO_MAX)
+            self.state.pitch = clamp(data.get("pitch", SERVO_CENTER), SERVO_MIN, SERVO_MAX)
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _save_position(self) -> None:
+        try:
+            tmp = f"{POSITION_STATE}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"yaw": self.state.yaw, "pitch": self.state.pitch}, fh)
+            os.replace(tmp, POSITION_STATE)
+        except OSError:
+            pass
 
     def _try_pwm(self) -> tuple[bool, str]:
         if BACKEND_PREF == "serial":
@@ -593,6 +614,7 @@ class GimbalController:
         if ok:
             self.state.yaw = target
             self.state.last_command = f"yaw={target}"
+            self._save_position()
             return True, detail
         self.state.last_error = detail
         return False, detail
@@ -603,6 +625,7 @@ class GimbalController:
         if ok:
             self.state.pitch = target
             self.state.last_command = f"pitch={target}"
+            self._save_position()
             return True, detail
         self.state.last_error = detail
         return False, detail
@@ -616,6 +639,7 @@ class GimbalController:
             self.state.pitch = SERVO_CENTER
         if ok1 and ok2:
             self.state.last_command = "center"
+            self._save_position()
             return True, self.state.target
         detail = detail1 if not ok1 else detail2
         self.state.last_error = detail
