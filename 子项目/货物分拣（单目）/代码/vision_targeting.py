@@ -6,6 +6,14 @@ import cv2
 import numpy as np
 
 
+def split_stereo(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Split a side-by-side stereo frame into equal left and right views."""
+    if frame.ndim != 3 or frame.shape[1] < 2:
+        raise ValueError("expected a side-by-side stereo frame")
+    width = frame.shape[1] // 2
+    return frame[:, :width].copy(), frame[:, width:width * 2].copy()
+
+
 @dataclass(frozen=True)
 class Roi:
     x1: int

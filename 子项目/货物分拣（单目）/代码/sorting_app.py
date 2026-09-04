@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from vision_targeting import box_is_target, draw_target_roi, split_stereo
+from sorting_gimbal import SortingGimbal
 
 
 CAMERA_DEVICE = os.getenv(
@@ -57,6 +58,7 @@ class SortingApp:
 
         self.running = True
         self.pose_ready = False
+        self.gimbal_ready = False
         self.sort_enabled = False
         self.paused = False
         self.action_busy = False
@@ -74,6 +76,7 @@ class SortingApp:
         self.status_text = tk.StringVar(value="摄像头待机，按开始分拣")
         self.detect_text = tk.StringVar(value="等待识别")
         self._build_ui()
+        threading.Thread(target=self._prepare_gimbal, daemon=True).start()
 
         threading.Thread(target=self._capture_loop, daemon=True).start()
         threading.Thread(target=self._detect_loop, daemon=True).start()
@@ -306,7 +309,8 @@ class SortingApp:
         self.root.after(0, lambda: self._set_ready_state(True if ok else False))
 
     def ready_robot(self) -> None:
-        if self.action_busy:
+        if self.action_busy or not self.gimbal_ready:
+            self._set_status("请等待云台归位完成")
             return
         self._set_status("正在进入就绪姿态")
         threading.Thread(target=self._ready_robot_async, daemon=True).start()
@@ -322,7 +326,7 @@ class SortingApp:
         self._set_status("已进入就绪姿态" if ok else f"就绪失败：{error or '机械臂未执行'}")
 
     def start_sorting(self) -> None:
-        if self.sort_enabled or self.action_busy or not self.pose_ready:
+        if self.sort_enabled or self.action_busy or not self.pose_ready or not self.gimbal_ready:
             return
         self.sort_enabled = True
         self.paused = False
@@ -379,6 +383,15 @@ class SortingApp:
         self.pause_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.DISABLED)
         self.restore_btn.configure(state=tk.NORMAL if not self.action_busy and not self.sort_enabled else tk.DISABLED)
+
+    def _prepare_gimbal(self) -> None:
+        self.action_busy = True
+        self._set_status("正在检查云台分拣视角")
+        ok, detail = SortingGimbal().move_to_target(self._set_status)
+        self.gimbal_ready = ok
+        self.action_busy = False
+        self.root.after(0, lambda: self._set_ready_state(ok))
+        self._set_status(f"云台已到分拣视角：{detail}" if ok else f"云台归位失败：{detail}")
 
     def _set_status(self, text: str) -> None:
         self.root.after(0, lambda: self.status_text.set(text))
