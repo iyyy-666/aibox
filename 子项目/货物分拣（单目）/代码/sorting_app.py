@@ -14,14 +14,16 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 
+from vision_targeting import box_is_target, draw_target_roi, split_stereo
+
 
 CAMERA_DEVICE = os.getenv(
     "SORTING_CAMERA_DEVICE",
-    "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0",
+    "/dev/video41",
 )
 CAMERA_WIDTH = int(os.getenv("SORTING_CAMERA_WIDTH", "1280"))
-CAMERA_HEIGHT = int(os.getenv("SORTING_CAMERA_HEIGHT", "720"))
-CAMERA_FPS = int(os.getenv("SORTING_CAMERA_FPS", "25"))
+CAMERA_HEIGHT = int(os.getenv("SORTING_CAMERA_HEIGHT", "480"))
+CAMERA_FPS = int(os.getenv("SORTING_CAMERA_FPS", "30"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("SORTING_CAPTURE_INTERVAL_SEC", "0.03"))
 DETECT_INTERVAL_SEC = float(os.getenv("SORTING_DETECT_INTERVAL_SEC", "0.06"))
 MIN_AREA = int(os.getenv("SORTING_MIN_AREA", "700"))
@@ -197,7 +199,8 @@ class SortingApp:
                 frame = None if self.frame is None else self.frame.copy()
 
             if frame is not None and not self.paused and not self.action_busy:
-                detected = self._detect_color(frame)
+                left, _right = split_stereo(frame)
+                detected = self._detect_color(left)
                 with self.detection_lock:
                     self.detection = detected
                 self._handle_candidate(detected)
@@ -260,7 +263,13 @@ class SortingApp:
                 x, y, w, h = cv2.boundingRect(contour)
                 if w < 18 or h < 18:
                     continue
-                if area / max(1, w * h) < 0.22:
+                if not box_is_target(
+                    small,
+                    (x, y, x + w, y + h),
+                    min_area=max(MIN_AREA * scale * scale, small.shape[0] * small.shape[1] * 0.004),
+                    max_area_ratio=0.45,
+                    min_side=24,
+                ):
                     continue
                 box = (int(x / scale), int(y / scale), int(w / scale), int(h / scale))
                 candidate = (color, box, float(area / (scale * scale)))
@@ -376,12 +385,18 @@ class SortingApp:
 
     def _annotate(self, frame: np.ndarray, detected) -> np.ndarray:
         out = frame.copy()
+        left_width = out.shape[1] // 2
+        left = out[:, :left_width]
+        draw_target_roi(left)
         if detected is not None:
             color, (x, y, w, h), _ = detected
             draw_color = (40, 40, 230) if color == RED else (230, 100, 40)
-            cv2.rectangle(out, (x, y), (x + w, y + h), draw_color, 4)
-            cv2.putText(out, COLOR_LABELS.get(color, "COLOR"), (x, max(35, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw_color, 3, cv2.LINE_AA)
-        cv2.putText(out, f"FPS {self.fps:.1f}", (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 255, 180), 2, cv2.LINE_AA)
+            cv2.rectangle(left, (x, y), (x + w, y + h), draw_color, 4)
+            cv2.putText(left, COLOR_LABELS.get(color, "COLOR"), (x, max(35, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw_color, 3, cv2.LINE_AA)
+        cv2.line(out, (left_width, 0), (left_width, out.shape[0]), (92, 104, 116), 2)
+        cv2.putText(out, "LEFT", (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 255, 180), 2, cv2.LINE_AA)
+        cv2.putText(out, "RIGHT", (left_width + 16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 255, 180), 2, cv2.LINE_AA)
+        cv2.putText(out, f"FPS {self.fps:.1f}", (16, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 255, 180), 2, cv2.LINE_AA)
         return out
 
     def _update_view(self) -> None:
