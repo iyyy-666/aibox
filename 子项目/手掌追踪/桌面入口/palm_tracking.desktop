@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=手掌追踪
+Name[zh_CN]=手掌追踪
+Comment=双目摄像头手掌追踪与慢速云台联动
+Exec=/usr/local/bin/palm_tracking.sh
+Terminal=false
+Categories=Utility;
+Icon=/root/robot_arm/assets/icons/palm_tracking.svg
