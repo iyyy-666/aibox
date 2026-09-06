@@ -13,6 +13,8 @@ export PLATE_STABLE_HITS=${PLATE_STABLE_HITS:-2}
 LOCK_DIR=${XDG_RUNTIME_DIR:-/tmp}
 exec 9>"$LOCK_DIR/plate_recognition.lock"
 flock -n 9 || exit 0
+exec 8>"$LOCK_DIR/aibox_gimbal_serial.lock"
+flock -n 8 || exit 0
 v4l2-ctl -d /dev/video41 --set-ctrl=saturation=74 >/dev/null 2>&1 || true
 cd /root/robot_arm
 exec python3 /root/robot_arm/plate_recognition_app.py

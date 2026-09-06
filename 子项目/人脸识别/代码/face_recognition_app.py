@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from vision_targeting import box_is_target, draw_target_roi, split_stereo
+from gimbal_controls import GimbalControls
 
 
 CAMERA_DEVICE = os.getenv("FACE_CAMERA_DEVICE", "/dev/video41")
@@ -133,6 +134,7 @@ class FaceRecognitionApp:
         self.result_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
         self.result_box.insert("1.0", "等待识别")
         self.result_box.configure(state=tk.DISABLED)
+        self.gimbal_controls = GimbalControls(side, self.root, self._set_status)
 
         ttk.Button(side, text="保存当前画面", command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
         ttk.Button(side, text="退出", command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))

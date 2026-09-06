@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from vision_targeting import box_is_target, draw_target_roi, split_stereo, stable_filter
+from gimbal_controls import GimbalControls
 
 CAMERA_DEVICE = os.getenv("PLATE_CAMERA_DEVICE", "/dev/video41")
 CAMERA_WIDTH = int(os.getenv("PLATE_CAMERA_WIDTH", "1280"))
@@ -116,6 +117,7 @@ class PlateRecognitionApp:
         self.result_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
         self.result_box.insert("1.0", T_WAIT_DETECT)
         self.result_box.configure(state=tk.DISABLED)
+        self.gimbal_controls = GimbalControls(side, self.root, self._set_status)
         ttk.Button(side, text=T_SAVE, command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
         ttk.Button(side, text=T_EXIT, command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))
         tk.Label(side, textvariable=self.summary_text, bg="#181d22", fg="#9fb0c2", justify=tk.LEFT, font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 16))

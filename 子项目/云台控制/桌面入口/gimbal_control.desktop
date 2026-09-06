@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=云台控制
-Name[zh_CN]=云台控制
-Comment=使用串口对双轴舵机云台进行微调控制
-Exec=/usr/local/bin/gimbal_control.sh
-Terminal=false
-Categories=Utility;
-Icon=/root/robot_arm/assets/icons/gimbal_control.svg
