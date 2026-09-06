@@ -128,7 +128,7 @@ class CameraViewApp:
             return False
         finally:
             if self.ffmpeg is not None:
-                self.ffmpeg.terminate()
+                self.ffmpeg.kill()
                 self.ffmpeg = None
 
     def _set_status(self, text: str) -> None:
@@ -174,7 +174,7 @@ class CameraViewApp:
         if self.cap is not None:
             self.cap.release()
         if self.ffmpeg is not None:
-            self.ffmpeg.terminate()
+            self.ffmpeg.kill()
         self.root.after(80, self.root.destroy)
 
     def run(self) -> None:
