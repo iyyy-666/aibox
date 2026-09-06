@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -21,6 +23,15 @@ CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
 DISPLAY_INTERVAL_MS = int(os.getenv("CAMERA_DISPLAY_INTERVAL_MS", "33"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("CAMERA_CAPTURE_INTERVAL_SEC", "0.025"))
 SNAPSHOT_DIR = Path(os.getenv("CAMERA_SNAPSHOT_DIR", "/root/robot_arm/assets/camera_snapshots"))
+USE_HARDWARE_DECODER = os.getenv("CAMERA_USE_HARDWARE_DECODER", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def hardware_capture_command() -> list[str]:
+    return [
+        "ffmpeg", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg",
+        "-video_size", f"{CAMERA_WIDTH}x{CAMERA_HEIGHT}", "-framerate", str(CAMERA_FPS),
+        "-i", CAMERA_DEVICE, "-c:v", "mjpeg_rkmpp", "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1",
+    ]
 
 
 class CameraViewApp:
@@ -35,6 +46,7 @@ class CameraViewApp:
         self.mode = tk.StringVar(value="left")
         self.status_text = tk.StringVar(value="\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934...")
         self.cap: cv2.VideoCapture | None = None
+        self.ffmpeg: subprocess.Popen | None = None
         self.frame: np.ndarray | None = None
         self.frame_lock = threading.Lock()
         self.photo: tk.PhotoImage | None = None
@@ -71,6 +83,9 @@ class CameraViewApp:
         return cap
 
     def _capture_loop(self) -> None:
+        if USE_HARDWARE_DECODER and shutil.which("ffmpeg") and self._capture_hardware_loop():
+            return
+        self._set_status("硬件解码不可用，已切换为兼容采集")
         retry_at = 0.0
         while self.running:
             if self.cap is None or not self.cap.isOpened():
@@ -92,6 +107,29 @@ class CameraViewApp:
             with self.frame_lock:
                 self.frame = frame
             time.sleep(CAPTURE_INTERVAL_SEC)
+
+    def _capture_hardware_loop(self) -> bool:
+        frame_size = CAMERA_WIDTH * CAMERA_HEIGHT * 3
+        try:
+            self.ffmpeg = subprocess.Popen(
+                hardware_capture_command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=frame_size * 2,
+            )
+            assert self.ffmpeg.stdout is not None
+            self._set_status(f"已打开 {CAMERA_DEVICE} 硬件解码 {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
+            while self.running:
+                raw = self.ffmpeg.stdout.read(frame_size)
+                if len(raw) != frame_size:
+                    break
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape(CAMERA_HEIGHT, CAMERA_WIDTH, 3).copy()
+                with self.frame_lock:
+                    self.frame = frame
+            return not self.running
+        except Exception:
+            return False
+        finally:
+            if self.ffmpeg is not None:
+                self.ffmpeg.terminate()
+                self.ffmpeg = None
 
     def _set_status(self, text: str) -> None:
         self.root.after(0, lambda: self.status_text.set(text))
@@ -135,6 +173,8 @@ class CameraViewApp:
         self.running = False
         if self.cap is not None:
             self.cap.release()
+        if self.ffmpeg is not None:
+            self.ffmpeg.terminate()
         self.root.after(80, self.root.destroy)
 
     def run(self) -> None:
