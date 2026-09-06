@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -26,12 +24,12 @@ SNAPSHOT_DIR = Path(os.getenv("CAMERA_SNAPSHOT_DIR", "/root/robot_arm/assets/cam
 USE_HARDWARE_DECODER = os.getenv("CAMERA_USE_HARDWARE_DECODER", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def hardware_capture_command() -> list[str]:
-    return [
-        "ffmpeg", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg",
-        "-video_size", f"{CAMERA_WIDTH}x{CAMERA_HEIGHT}", "-framerate", str(CAMERA_FPS),
-        "-i", CAMERA_DEVICE, "-c:v", "mjpeg_rkmpp", "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1",
-    ]
+def gstreamer_capture_pipeline() -> str:
+    return (
+        f"v4l2src device={CAMERA_DEVICE} ! image/jpeg,width={CAMERA_WIDTH},height={CAMERA_HEIGHT},"
+        f"framerate={CAMERA_FPS}/1 ! mppjpegdec ! videoconvert ! video/x-raw,format=BGR ! "
+        "appsink name=sink sync=false max-buffers=1 drop=true"
+    )
 
 
 class CameraViewApp:
@@ -46,7 +44,6 @@ class CameraViewApp:
         self.mode = tk.StringVar(value="left")
         self.status_text = tk.StringVar(value="\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934...")
         self.cap: cv2.VideoCapture | None = None
-        self.ffmpeg: subprocess.Popen | None = None
         self.frame: np.ndarray | None = None
         self.frame_lock = threading.Lock()
         self.photo: tk.PhotoImage | None = None
@@ -83,7 +80,7 @@ class CameraViewApp:
         return cap
 
     def _capture_loop(self) -> None:
-        if USE_HARDWARE_DECODER and shutil.which("ffmpeg") and self._capture_hardware_loop():
+        if USE_HARDWARE_DECODER and self._capture_hardware_loop():
             return
         self._set_status("硬件解码不可用，已切换为兼容采集")
         retry_at = 0.0
@@ -109,27 +106,37 @@ class CameraViewApp:
             time.sleep(CAPTURE_INTERVAL_SEC)
 
     def _capture_hardware_loop(self) -> bool:
-        frame_size = CAMERA_WIDTH * CAMERA_HEIGHT * 3
         try:
-            self.ffmpeg = subprocess.Popen(
-                hardware_capture_command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=frame_size * 2,
-            )
-            assert self.ffmpeg.stdout is not None
+            import gi
+
+            gi.require_version("Gst", "1.0")
+            from gi.repository import Gst
+
+            Gst.init(None)
+            pipeline = Gst.parse_launch(gstreamer_capture_pipeline())
+            sink = pipeline.get_by_name("sink")
+            pipeline.set_state(Gst.State.PLAYING)
             self._set_status(f"已打开 {CAMERA_DEVICE} 硬件解码 {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
             while self.running:
-                raw = self.ffmpeg.stdout.read(frame_size)
-                if len(raw) != frame_size:
+                sample = sink.emit("try-pull-sample", Gst.SECOND)
+                if sample is None:
                     break
-                frame = np.frombuffer(raw, dtype=np.uint8).reshape(CAMERA_HEIGHT, CAMERA_WIDTH, 3).copy()
+                buffer = sample.get_buffer()
+                ok, mapping = buffer.map(Gst.MapFlags.READ)
+                if not ok:
+                    continue
+                try:
+                    frame = np.frombuffer(mapping.data, dtype=np.uint8).reshape(CAMERA_HEIGHT, CAMERA_WIDTH, 3).copy()
+                finally:
+                    buffer.unmap(mapping)
                 with self.frame_lock:
                     self.frame = frame
             return not self.running
         except Exception:
             return False
         finally:
-            if self.ffmpeg is not None:
-                self.ffmpeg.kill()
-                self.ffmpeg = None
+            if "pipeline" in locals():
+                pipeline.set_state(Gst.State.NULL)
 
     def _set_status(self, text: str) -> None:
         self.root.after(0, lambda: self.status_text.set(text))
@@ -173,8 +180,6 @@ class CameraViewApp:
         self.running = False
         if self.cap is not None:
             self.cap.release()
-        if self.ffmpeg is not None:
-            self.ffmpeg.kill()
         self.root.after(80, self.root.destroy)
 
     def run(self) -> None:

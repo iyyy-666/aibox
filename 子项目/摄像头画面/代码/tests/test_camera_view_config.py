@@ -17,12 +17,12 @@ def test_camera_preview_default_refreshes_at_30_fps() -> None:
     assert values["DISPLAY_INTERVAL_MS"] <= 34
 
 
-def test_hardware_capture_command_uses_rk3588_mjpeg_decoder() -> None:
+def test_hardware_capture_pipeline_uses_rk3588_mjpeg_decoder() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     sys.modules["vision_targeting"] = type("Vision", (), {"split_stereo": lambda frame: (frame, frame)})()
     import camera_view_app
 
-    command = camera_view_app.hardware_capture_command()
+    pipeline = camera_view_app.gstreamer_capture_pipeline()
 
-    assert "mjpeg_rkmpp" in command
-    assert command[-2:] == ["rawvideo", "pipe:1"]
+    assert "mppjpegdec" in pipeline
+    assert "appsink name=sink" in pipeline
