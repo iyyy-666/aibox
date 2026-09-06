@@ -18,7 +18,7 @@ CAMERA_DEVICE = os.getenv("CAMERA_DEVICE", "/dev/video41")
 CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "1280"))
 CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
-DISPLAY_INTERVAL_MS = int(os.getenv("CAMERA_DISPLAY_INTERVAL_MS", "95"))
+DISPLAY_INTERVAL_MS = int(os.getenv("CAMERA_DISPLAY_INTERVAL_MS", "33"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("CAMERA_CAPTURE_INTERVAL_SEC", "0.025"))
 SNAPSHOT_DIR = Path(os.getenv("CAMERA_SNAPSHOT_DIR", "/root/robot_arm/assets/camera_snapshots"))
 
