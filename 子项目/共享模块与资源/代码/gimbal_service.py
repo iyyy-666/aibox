@@ -44,7 +44,7 @@ class GimbalService:
         tmp.write_text(json.dumps({"yaw": self.yaw, "pitch": self.pitch}), encoding="utf-8")
         os.replace(tmp, self.state_path)
 
-    def move(self, axis: str, direction: int, *, step_pwm: int = 20, time_ms: int = 350) -> tuple[bool, str]:
+    def move(self, axis: str, direction: int, *, step_pwm: int = 40, time_ms: int = 350) -> tuple[bool, str]:
         if axis not in ("yaw", "pitch") or direction not in (-1, 1):
             return False, "invalid gimbal direction"
         current = self.yaw if axis == "yaw" else self.pitch

@@ -11,7 +11,7 @@ class GimbalControls:
         self.root = root
         self.status = status
         self.service = GimbalService()
-        self.step = tk.StringVar(value="20")
+        self.step = tk.StringVar(value="40")
         self.position = tk.StringVar()
         self._busy = False
         self._refresh()
@@ -39,7 +39,7 @@ class GimbalControls:
         try:
             step = max(1, min(500, int(self.step.get())))
         except ValueError:
-            self.step.set("20")
+            self.step.set("40")
             self.status("云台步长应为数字")
             return
         self._busy = True
