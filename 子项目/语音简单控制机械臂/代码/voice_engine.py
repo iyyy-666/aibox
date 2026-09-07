@@ -59,6 +59,8 @@ MIN_TRIGGER_MARGIN = float(os.getenv("VOICE_MIN_TRIGGER_MARGIN", "0.009"))
 MAX_DYNAMIC_TRIGGER = float(os.getenv("VOICE_MAX_DYNAMIC_TRIGGER", "0.22"))
 MAX_DYNAMIC_SILENCE = float(os.getenv("VOICE_MAX_DYNAMIC_SILENCE", "0.14"))
 EDGE_TRIM_SEC = float(os.getenv("VOICE_EDGE_TRIM_SEC", "0.18"))
+TRIGGER_CONFIRM_FRAMES = max(1, int(os.getenv("VOICE_TRIGGER_CONFIRM_FRAMES", "3")))
+POST_COMMAND_COOLDOWN_SEC = float(os.getenv("VOICE_POST_COMMAND_COOLDOWN_SEC", "0.35"))
 
 COMMAND_ALIASES = {
     "直立": ("直立", "直", "立", "竖", "站", "起", "起来", "直起", "立起", "站立", "竖立", "竖直", "立正", "抬起", "升起", "立起来", "竖起来", "竖直起来", "之力", "直力", "支立", "之立", "只立", "智力", "治理", "实力", "纸币", "指令"),
@@ -202,6 +204,22 @@ def adaptive_threshold(noise: float, base: float, multiplier: float, margin: flo
     return max(base, min(maximum, noise * multiplier + margin))
 
 
+def clamp_level(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def dbfs_percent(rms: float, floor_db: float = -60.0) -> int:
+    level = clamp_level(rms)
+    if level <= 0.0:
+        return 0
+    db = max(floor_db, 20.0 * np.log10(level))
+    return int(round(max(0.0, min(100.0, (db - floor_db) * 100.0 / -floor_db))))
+
+
+def trigger_confirmed(previous_frames: int, above_trigger: bool, required_frames: int = TRIGGER_CONFIRM_FRAMES) -> bool:
+    return above_trigger and previous_frames + 1 >= max(1, required_frames)
+
+
 def put_latest(command_queue: queue.Queue, item) -> None:
     """Replace queued work so only the newest command remains pending."""
     while True:
@@ -329,6 +347,7 @@ class VoiceEngine:
         self.commands = {}
         self._device = VOICE_DEVICE or self._find_mic()
         self.last_peak = 0.0
+        self.last_rms = 0.0
         self.last_text = ""
         self.last_raw_text = ""
         self.last_normalized_text = ""
@@ -338,6 +357,7 @@ class VoiceEngine:
         self.last_command = ""
         self.last_error = ""
         self._last_recog_time = 0.0
+        self._last_command_time = 0.0
         self._robot = None
         self._noise_floor = 0.0
         self._dynamic_trigger = TRIGGER_PEAK
@@ -629,6 +649,11 @@ class VoiceEngine:
                     busy_seen = False
                     consecutive_misses = 0
 
+                if time.monotonic() - self._last_command_time < POST_COMMAND_COOLDOWN_SEC:
+                    self._drain_pcm(inp, 2)
+                    time.sleep(0.03)
+                    continue
+
                 t_record = time.time()
                 audio, peak = self._record_utterance(inp)
                 record_sec = time.time() - t_record
@@ -681,6 +706,7 @@ class VoiceEngine:
                 )
                 print(f"[语音] {self.last_text}", flush=True)
                 self._match(self.last_text)
+                self._last_command_time = time.monotonic()
             except Exception as e:
                 self._busy = False
                 self.last_error = str(e)
@@ -701,6 +727,7 @@ class VoiceEngine:
         short_utterance_samples = max(1, int(SHORT_UTTERANCE_SEC * SAMPLE_RATE))
         captured_samples = 0
         silence_samples = 0
+        trigger_frames = 0
 
         while self.running:
             try:
@@ -719,14 +746,16 @@ class VoiceEngine:
 
             boosted = np.clip(raw.astype(np.float32) * GAIN, -32768, 32767).astype(np.int16)
             frame_peak = float(np.max(np.abs(boosted))) / 32768.0
-            self.last_peak = frame_peak
+            self.last_peak = clamp_level(float(np.max(np.abs(raw.astype(np.float32))) / 32768.0))
+            self.last_rms = clamp_level(float(np.sqrt(np.mean(raw.astype(np.float32) ** 2)) / 32768.0))
             pre_roll.append(boosted.tobytes())
 
             trigger_peak = self._dynamic_trigger
             silence_peak = self._dynamic_silence
 
             if frame_peak >= trigger_peak:
-                if not speaking:
+                trigger_frames += 1
+                if not speaking and trigger_confirmed(trigger_frames - 1, True):
                     speaking = True
                     frames.extend(pre_roll)
                     captured_samples += sum(len(frame) // 2 for frame in pre_roll)
@@ -747,6 +776,9 @@ class VoiceEngine:
                 else:
                     silence_frames = 0
                     silence_samples = 0
+                trigger_frames = 0
+            else:
+                trigger_frames = 0
                 fast_done = (
                     captured_samples >= min_samples
                     and captured_samples <= short_utterance_samples
@@ -1086,6 +1118,7 @@ class VoiceEngine:
             "channels": 1,
             "pcm_format": "s16le",
             "peak": float(self.last_peak if self.running else 0.0),
+            "rms": float(self.last_rms if self.running else 0.0),
             "noise_floor": self._noise_floor,
             "trigger_peak": self._dynamic_trigger,
             "silence_peak": self._dynamic_silence,

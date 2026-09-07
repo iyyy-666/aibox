@@ -260,47 +260,17 @@ def voice_stop():
 
 @app.get("/api/voice/level")
 def voice_level():
-    """Read a tiny slice from M260C for UI level display only."""
-    try:
-        import alsaaudio
-        import numpy as np
-        device = voice_input_device()
-        pcm = alsaaudio.PCM(
-            alsaaudio.PCM_CAPTURE,
-            alsaaudio.PCM_NORMAL,
-            device,
-            channels=1,
-            rate=16000,
-            format=alsaaudio.PCM_FORMAT_S16_LE,
-            periodsize=320,
-        )
-        chunks = []
-        for _ in range(5):
-            length, data = pcm.read()
-            if length > 0 and data:
-                chunks.append(data)
-        raw = b"".join(chunks)
-        if not raw:
-            return {"success": False, "peak": 0.0, "rms": 0.0, "error": "no audio"}
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        raw_peak = float(np.max(np.abs(samples)) / 32768.0) if samples.size else 0.0
-        raw_rms = float(np.sqrt(np.mean(samples * samples)) / 32768.0) if samples.size else 0.0
-        gain = float(os.getenv("VOICE_LEVEL_GAIN", "3.0"))
-        boosted = np.clip(samples * gain, -32768.0, 32767.0)
-        peak = float(np.max(np.abs(boosted)) / 32768.0) if boosted.size else 0.0
-        rms = float(np.sqrt(np.mean(boosted * boosted)) / 32768.0) if boosted.size else 0.0
-        return {
-            "success": True,
-            "peak": peak,
-            "rms": rms,
-            "raw_peak": raw_peak,
-            "raw_rms": raw_rms,
-            "gain": gain,
-            "device": device,
-            "output_device": audio_output_device(),
-        }
-    except Exception as exc:
-        return {"success": False, "peak": 0.0, "rms": 0.0, "error": str(exc)}
+    """Return the shared meter from the running recognizer; never open ALSA twice."""
+    state = voice.status()
+    return {
+        "success": bool(state.get("loaded")),
+        "peak": max(0.0, min(1.0, float(state.get("peak", 0.0)))),
+        "rms": max(0.0, min(1.0, float(state.get("rms", 0.0)))),
+        "noise_floor": max(0.0, min(1.0, float(state.get("noise_floor", 0.0)))),
+        "trigger_peak": max(0.0, min(1.0, float(state.get("trigger_peak", 0.0)))),
+        "device": state.get("input_device", ""),
+        "output_device": audio_output_device(),
+    }
 
 @app.get("/api/voice/poll")
 def voice_poll():

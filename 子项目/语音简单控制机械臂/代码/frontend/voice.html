@@ -123,13 +123,17 @@ const API = '';
 let voiceOn = false;
 let lastVoiceText = '';
 let logLines = [];
+let smoothVoicePercent = 0;
 
 function updateVoiceLevel(v) {
-  const peak = Math.max(0, Number(v.peak || 0));
+  const peak = Math.max(0, Math.min(1, Number(v.peak || 0)));
+  const rms = Math.max(0, Math.min(1, Number(v.rms || 0)));
   const noiseFloor = Number(v.noise_floor || 0.008);
   const trigger = Math.max(0.015, Number(v.trigger_peak || 0.05));
-  const effective = Math.max(0, peak - noiseFloor);
-  const pct = Math.max(0, Math.min(100, Math.round((effective / trigger) * 100)));
+  const effective = Math.max(0, rms - noiseFloor);
+  const targetPct = Math.max(0, Math.min(100, Math.round((effective / trigger) * 100)));
+  smoothVoicePercent = Math.round(smoothVoicePercent * 0.7 + targetPct * 0.3);
+  const pct = smoothVoicePercent;
   const rawPct = Math.max(0, Math.min(100, Math.round(peak * 100)));
   const fill = document.getElementById('voice-peak-fill');
   const text = document.getElementById('voice-peak-text');
@@ -158,7 +162,7 @@ async function refreshVoiceLevel() {
   try {
     const res = await fetch(API + '/api/voice/level');
     const lv = await res.json();
-    updateVoiceLevel({running: voiceOn, peak: lv.peak || 0, trigger_peak: 0.05, noise_floor: 0.008});
+    updateVoiceLevel({running: voiceOn, peak: lv.peak || 0, rms: lv.rms || 0, trigger_peak: lv.trigger_peak || 0.05, noise_floor: lv.noise_floor || 0.008});
   } catch (e) {}
 }
 
