@@ -32,7 +32,7 @@ def is_start_ready(box: Box | None, image_size: tuple[int, int]) -> bool:
 class PalmTrackingApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("鎵嬫帉杩借釜")
+        self.root.title("手掌追踪")
         self.root.geometry("1180x720")
         self.root.minsize(960, 560)
         self.root.configure(bg="#111417")
@@ -72,8 +72,8 @@ class PalmTrackingApp:
         self.image_size = (CAMERA_WIDTH // 2, CAMERA_HEIGHT)
         self.cap: cv2.VideoCapture | None = None
         self.photo: tk.PhotoImage | None = None
-        self.status_text = tk.StringVar(value="姝ｅ湪鎵撳紑鎽勫儚澶?..")
-        self.detail_text = tk.StringVar(value="璇峰皢鎵嬫帉鏀惧湪鐢婚潰涓ぎ")
+        self.status_text = tk.StringVar(value="正在打开摄像头...")
+        self.detail_text = tk.StringVar(value="请将手掌放在画面中央")
         self.button_text = tk.StringVar(value="开始追踪")
         self.start_button: tk.Button | None = None
         self.calibration_button: tk.Button | None = None
@@ -90,7 +90,7 @@ class PalmTrackingApp:
         top = tk.Frame(self.root, bg="#1c2228", height=54)
         top.pack(fill=tk.X)
         top.pack_propagate(False)
-        tk.Label(top, text="鎵嬫帉杩借釜", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=(16, 18))
+        tk.Label(top, text="手掌追踪", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=(16, 18))
         tk.Label(top, textvariable=self.status_text, bg="#1c2228", fg="#aeb8c5", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT)
 
         body = tk.Frame(self.root, bg="#111417")
@@ -100,14 +100,14 @@ class PalmTrackingApp:
         side = tk.Frame(body, bg="#181d22", width=268)
         side.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 12), pady=12)
         side.pack_propagate(False)
-        tk.Label(side, text="杩借釜鎺у埗", bg="#181d22", fg="#f1f5f9", font=("Microsoft YaHei", 13, "bold")).pack(anchor="w", padx=16, pady=(18, 12))
+        tk.Label(side, text="追踪控制", bg="#181d22", fg="#f1f5f9", font=("Microsoft YaHei", 13, "bold")).pack(anchor="w", padx=16, pady=(18, 12))
         tk.Label(side, textvariable=self.detail_text, bg="#181d22", fg="#aeb8c5", justify=tk.LEFT, wraplength=230, font=("Microsoft YaHei", 11)).pack(anchor="w", padx=16, pady=(0, 18))
         self.start_button = tk.Button(side, textvariable=self.button_text, command=self.toggle_tracking, state=tk.DISABLED, bg="#2a9d68", fg="#ffffff", activebackground="#38b97c", activeforeground="#ffffff", relief=tk.FLAT, font=("Microsoft YaHei", 12, "bold"), padx=12, pady=10)
         self.start_button.pack(fill=tk.X, padx=16, pady=(0, 10))
-        self.calibration_button = tk.Button(side, text="鏂瑰悜鏍″噯", command=self.start_direction_calibration, bg="#34516b", fg="#ffffff", activebackground="#456a89", relief=tk.FLAT, font=("Microsoft YaHei", 11), padx=12, pady=9)
+        self.calibration_button = tk.Button(side, text="方向校准", command=self.start_direction_calibration, bg="#34516b", fg="#ffffff", activebackground="#456a89", relief=tk.FLAT, font=("Microsoft YaHei", 11), padx=12, pady=9)
         self.calibration_button.pack(fill=tk.X, padx=16, pady=(0, 10))
         tk.Button(side, text="退出", command=self.close, bg="#263039", fg="#e7edf3", activebackground="#394651", activeforeground="#ffffff", relief=tk.FLAT, font=("Microsoft YaHei", 11), padx=12, pady=9).pack(fill=tk.X, padx=16)
-        tk.Label(side, text=f"鏈€澶ч€熷害 {self.controller.config.max_degrees_per_second:g}掳/s\n涓績鍖哄煙鍐呰嚜鍔ㄥ仠姝㈠井璋僜n鎵嬫帉涓㈠け 0.5 绉掑悗鏆傚仠", bg="#181d22", fg="#8393a4", justify=tk.LEFT, font=("Microsoft YaHei", 10)).pack(anchor="w", padx=16, pady=(26, 0))
+        tk.Label(side, text=f"最大速度 {self.controller.config.max_degrees_per_second:g}°/s\n中心区域内自动停止微调\n手掌丢失 0.5 秒后暂停", bg="#181d22", fg="#8393a4", justify=tk.LEFT, font=("Microsoft YaHei", 10)).pack(anchor="w", padx=16, pady=(26, 0))
 
     def _open_camera(self) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
@@ -126,10 +126,10 @@ class PalmTrackingApp:
                     self._set_status(f"摄像头打开失败：{CAMERA_DEVICE}")
                     time.sleep(1.5)
                     continue
-                self._set_status(f"宸叉墦寮€ {CAMERA_DEVICE}")
+                self._set_status(f"已打开摄像头 {CAMERA_DEVICE}")
             ok, frame = self.cap.read()
             if not ok or frame is None:
-                self._set_status("璇诲彇鐢婚潰澶辫触锛屾鍦ㄩ噸璇?..")
+                self._set_status("读取画面失败，正在重试...")
                 self.cap.release()
                 self.cap = None
                 continue
@@ -152,7 +152,7 @@ class PalmTrackingApp:
                         else:
                             self.current_box = boxes[0] if boxes else None
                 except Exception as exc:
-                    self._set_status(f"鎵嬫帉妫€娴嬪紓甯革細{exc}")
+                    self._set_status(f"手掌检测异常：{exc}")
             time.sleep(DETECT_INTERVAL_SEC)
 
     def start_tracking(self) -> bool:
@@ -164,8 +164,8 @@ class PalmTrackingApp:
         self.current_box = locked
         self.controller.start(locked, time.monotonic())
         self.tracking_enabled = True
-        self.button_text.set("鍋滄杩借釜")
-        self._set_status("姝ｅ湪杩借釜")
+        self.button_text.set("停止追踪")
+        self._set_status("正在追踪")
         return True
 
     def stop_tracking(self, reason: str) -> None:
@@ -237,7 +237,7 @@ class PalmTrackingApp:
         self.controller.save_direction_config(DIRECTION_CONFIG)
         self._calibration_axis = None
         self._calibration_before = None
-        self._set_status("鏂瑰悜鏍″噯瀹屾垚锛屾柟鍚戝凡淇濆瓨")
+        self._set_status("方向校准完成，方向已保存")
 
     def _annotate(self, image: np.ndarray, box: Box | None) -> np.ndarray:
         out = image.copy()
@@ -263,7 +263,7 @@ class PalmTrackingApp:
         canvas_width = max(1, self.canvas.winfo_width())
         canvas_height = max(1, self.canvas.winfo_height())
         if frame is None:
-            self.canvas.create_text(canvas_width // 2, canvas_height // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="姝ｅ湪鎵撳紑鎽勫儚澶?..")
+            self.canvas.create_text(canvas_width // 2, canvas_height // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="正在打开摄像头...")
         else:
             left, _right = split_stereo(frame)
             view = self._annotate(left, box)
