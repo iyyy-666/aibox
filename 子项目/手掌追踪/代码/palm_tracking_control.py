@@ -164,6 +164,8 @@ class PalmTrackingController:
     def load_direction_config(path: str | os.PathLike[str]) -> tuple[int, int] | None:
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
+            if int(data.get("version", 0)) != 2:
+                return None
             yaw, pitch = int(data["yaw_sign"]), int(data["pitch_sign"])
             return (1 if yaw >= 0 else -1, 1 if pitch >= 0 else -1)
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
@@ -172,7 +174,7 @@ class PalmTrackingController:
     def save_direction_config(self, path: str | os.PathLike[str]) -> None:
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"yaw_sign": self.yaw_sign, "pitch_sign": self.pitch_sign}, indent=2), encoding="utf-8")
+        target.write_text(json.dumps({"version": 2, "yaw_sign": self.yaw_sign, "pitch_sign": self.pitch_sign}, indent=2), encoding="utf-8")
 
     def _axis_delta(self, offset: float, elapsed: float, sign: int) -> int:
         if abs(offset) <= self.config.deadband_ratio:

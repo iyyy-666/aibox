@@ -42,6 +42,24 @@ def test_axis_sign_reverses_yaw_command() -> None:
     assert controller.update((580, 220, 40, 40), (640, 480), now=0.1).yaw_delta_pwm < 0
 
 
+def test_default_direction_moves_right_hand_left_toward_center() -> None:
+    controller = PalmTrackingController(TrackingConfig(smoothing_alpha=1.0, yaw_sign=-1))
+    controller.start((580, 220, 40, 40), now=0.0)
+
+    decision = controller.update((580, 220, 40, 40), (640, 480), now=0.1)
+
+    assert decision.yaw_delta_pwm < 0
+
+
+def test_default_direction_moves_low_hand_up_toward_center() -> None:
+    controller = PalmTrackingController(TrackingConfig(smoothing_alpha=1.0, pitch_sign=-1))
+    controller.start((300, 420, 40, 40), now=0.0)
+
+    decision = controller.update((300, 420, 40, 40), (640, 480), now=0.1)
+
+    assert decision.pitch_delta_pwm < 0
+
+
 def test_feedback_observation_never_reverses_configured_axis() -> None:
     controller = PalmTrackingController(TrackingConfig(smoothing_alpha=1.0))
     controller.start((300, 220, 40, 40), now=0.0)

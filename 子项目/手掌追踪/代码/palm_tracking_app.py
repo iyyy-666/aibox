@@ -48,8 +48,8 @@ class PalmTrackingApp:
             pwm_per_degree=float(os.getenv("PALM_TRACK_PWM_PER_DEGREE", "11.11")),
             min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
             max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
-            yaw_sign=saved_direction[0] if saved_direction else int(os.getenv("PALM_TRACK_YAW_SIGN", "1")),
-            pitch_sign=saved_direction[1] if saved_direction else int(os.getenv("PALM_TRACK_PITCH_SIGN", "1")),
+            yaw_sign=saved_direction[0] if saved_direction else int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
+            pitch_sign=saved_direction[1] if saved_direction else int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
         )
         self.controller = PalmTrackingController(config)
         self.target_lock = PalmTargetLock()
