@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
+import os
 
 
 Box = tuple[int, int, int, int]
@@ -83,8 +86,6 @@ class PalmTrackingController:
         self._smooth_y = 0.0
         self.yaw_sign = self.config.yaw_sign
         self.pitch_sign = self.config.pitch_sign
-        self._feedback_x: tuple[float, int] | None = None
-        self._feedback_y: tuple[float, int] | None = None
 
     def start(self, box: Box, now: float) -> None:
         self.active = True
@@ -92,8 +93,6 @@ class PalmTrackingController:
         self._last_command_at = now
         self._smooth_x = 0.0
         self._smooth_y = 0.0
-        self._feedback_x = None
-        self._feedback_y = None
 
     def stop(self) -> None:
         self.active = False
@@ -129,22 +128,51 @@ class PalmTrackingController:
         self._last_command_at = now
         if yaw == 0 and pitch == 0:
             return TrackingDecision(state="centered", offset_x=self._smooth_x, offset_y=self._smooth_y)
-        if yaw:
-            self._feedback_x = (self._smooth_x, yaw)
-        if pitch:
-            self._feedback_y = (self._smooth_y, pitch)
         return TrackingDecision(yaw, pitch, "tracking", self._smooth_x, self._smooth_y)
 
     def observe_feedback(self, *, offset_x: float, offset_y: float) -> tuple[bool, bool]:
-        yaw_reversed = self._feedback_x is not None and abs(offset_x) > abs(self._feedback_x[0]) + 0.04
-        pitch_reversed = self._feedback_y is not None and abs(offset_y) > abs(self._feedback_y[0]) + 0.04
-        if yaw_reversed:
-            self.yaw_sign *= -1
-        if pitch_reversed:
-            self.pitch_sign *= -1
-        self._feedback_x = None
-        self._feedback_y = None
-        return yaw_reversed, pitch_reversed
+        del offset_x, offset_y
+        return False, False
+
+    def infer_axis_sign(self, *, axis: str, command_delta: int, before_offset: float, after_offset: float) -> int:
+        """Infer a fixed axis sign from a physical test step, then apply it."""
+        if axis not in {"yaw", "pitch"}:
+            raise ValueError("axis must be 'yaw' or 'pitch'")
+        # A positive command that reduces absolute error is already oriented correctly.
+        sign = 1 if abs(after_offset) < abs(before_offset) else -1
+        if command_delta < 0:
+            sign *= -1
+        if axis == "yaw":
+            self.yaw_sign = sign
+        else:
+            self.pitch_sign = sign
+        return sign
+
+    def infer_axis_sign_from_motion(self, *, axis: str, command_delta: int, before_position: float, after_position: float) -> int:
+        """Infer correction sign from the observed image displacement of a test step."""
+        if axis not in {"yaw", "pitch"}:
+            raise ValueError("axis must be 'yaw' or 'pitch'")
+        movement = after_position - before_position
+        sign = 1 if movement == 0 else (-1 if movement * command_delta > 0 else 1)
+        if axis == "yaw":
+            self.yaw_sign = sign
+        else:
+            self.pitch_sign = sign
+        return sign
+
+    @staticmethod
+    def load_direction_config(path: str | os.PathLike[str]) -> tuple[int, int] | None:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            yaw, pitch = int(data["yaw_sign"]), int(data["pitch_sign"])
+            return (1 if yaw >= 0 else -1, 1 if pitch >= 0 else -1)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return None
+
+    def save_direction_config(self, path: str | os.PathLike[str]) -> None:
+        target = Path(path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"yaw_sign": self.yaw_sign, "pitch_sign": self.pitch_sign}, indent=2), encoding="utf-8")
 
     def _axis_delta(self, offset: float, elapsed: float, sign: int) -> int:
         if abs(offset) <= self.config.deadband_ratio:

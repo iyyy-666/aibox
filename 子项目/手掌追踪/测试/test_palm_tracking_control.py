@@ -42,14 +42,41 @@ def test_axis_sign_reverses_yaw_command() -> None:
     assert controller.update((580, 220, 40, 40), (640, 480), now=0.1).yaw_delta_pwm < 0
 
 
-def test_feedback_reverses_axis_when_a_command_increases_error() -> None:
+def test_feedback_observation_never_reverses_configured_axis() -> None:
     controller = PalmTrackingController(TrackingConfig(smoothing_alpha=1.0))
     controller.start((300, 220, 40, 40), now=0.0)
     controller.update((500, 220, 40, 40), (640, 480), now=0.1)
 
     reversed_axes = controller.observe_feedback(offset_x=0.75, offset_y=0.0)
 
-    assert reversed_axes == (True, False)
+    assert reversed_axes == (False, False)
+    assert controller.yaw_sign == 1
+
+
+def test_calibration_sets_axis_sign_when_test_step_reduces_error() -> None:
+    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
+
+    sign = controller.infer_axis_sign(axis="yaw", command_delta=8, before_offset=0.40, after_offset=0.25)
+
+    assert sign == 1
+    assert controller.yaw_sign == 1
+
+
+def test_calibration_flips_axis_sign_when_test_step_increases_error() -> None:
+    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
+
+    sign = controller.infer_axis_sign(axis="yaw", command_delta=8, before_offset=0.40, after_offset=0.55)
+
+    assert sign == -1
+    assert controller.yaw_sign == -1
+
+
+def test_motion_calibration_maps_positive_pwm_to_correction_sign() -> None:
+    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
+
+    sign = controller.infer_axis_sign_from_motion(axis="yaw", command_delta=8, before_position=320, after_position=335)
+
+    assert sign == -1
     assert controller.yaw_sign == -1
 
 
