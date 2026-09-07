@@ -21,7 +21,6 @@ CAMERA_FPS = int(os.getenv("PALM_TRACK_CAMERA_FPS", "30"))
 DISPLAY_INTERVAL_MS = int(os.getenv("PALM_TRACK_DISPLAY_INTERVAL_MS", "50"))
 DETECT_INTERVAL_SEC = float(os.getenv("PALM_TRACK_DETECT_INTERVAL_SEC", "0.08"))
 CONTROL_INTERVAL_MS = int(os.getenv("PALM_TRACK_CONTROL_INTERVAL_MS", "100"))
-DIRECTION_CONFIG = os.getenv("PALM_TRACK_DIRECTION_CONFIG", os.path.expanduser("~/.config/aibox/palm_tracking_direction.json"))
 
 
 def is_start_ready(box: Box | None, image_size: tuple[int, int]) -> bool:
@@ -38,7 +37,6 @@ class PalmTrackingApp:
         self.root.configure(bg="#111417")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        saved_direction = PalmTrackingController.load_direction_config(DIRECTION_CONFIG)
         config = TrackingConfig(
             deadband_ratio=float(os.getenv("PALM_TRACK_DEADBAND_RATIO", "0.07")),
             smoothing_alpha=float(os.getenv("PALM_TRACK_SMOOTHING_ALPHA", "0.35")),
@@ -48,8 +46,8 @@ class PalmTrackingApp:
             pwm_per_degree=float(os.getenv("PALM_TRACK_PWM_PER_DEGREE", "11.11")),
             min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
             max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
-            yaw_sign=saved_direction[0] if saved_direction else int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
-            pitch_sign=saved_direction[1] if saved_direction else int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
+            yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
+            pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
         )
         self.controller = PalmTrackingController(config)
         self.target_lock = PalmTargetLock()
@@ -76,9 +74,6 @@ class PalmTrackingApp:
         self.detail_text = tk.StringVar(value="请将手掌放在画面中央")
         self.button_text = tk.StringVar(value="开始追踪")
         self.start_button: tk.Button | None = None
-        self.calibration_button: tk.Button | None = None
-        self._calibration_axis: str | None = None
-        self._calibration_before: float | None = None
 
         self._build_ui()
         threading.Thread(target=self._capture_loop, daemon=True).start()
@@ -104,8 +99,6 @@ class PalmTrackingApp:
         tk.Label(side, textvariable=self.detail_text, bg="#181d22", fg="#aeb8c5", justify=tk.LEFT, wraplength=230, font=("Microsoft YaHei", 11)).pack(anchor="w", padx=16, pady=(0, 18))
         self.start_button = tk.Button(side, textvariable=self.button_text, command=self.toggle_tracking, state=tk.DISABLED, bg="#2a9d68", fg="#ffffff", activebackground="#38b97c", activeforeground="#ffffff", relief=tk.FLAT, font=("Microsoft YaHei", 12, "bold"), padx=12, pady=10)
         self.start_button.pack(fill=tk.X, padx=16, pady=(0, 10))
-        self.calibration_button = tk.Button(side, text="方向校准", command=self.start_direction_calibration, bg="#34516b", fg="#ffffff", activebackground="#456a89", relief=tk.FLAT, font=("Microsoft YaHei", 11), padx=12, pady=9)
-        self.calibration_button.pack(fill=tk.X, padx=16, pady=(0, 10))
         tk.Button(side, text="退出", command=self.close, bg="#263039", fg="#e7edf3", activebackground="#394651", activeforeground="#ffffff", relief=tk.FLAT, font=("Microsoft YaHei", 11), padx=12, pady=9).pack(fill=tk.X, padx=16)
         tk.Label(side, text=f"最大速度 {self.controller.config.max_degrees_per_second:g}°/s\n中心区域内自动停止微调\n手掌丢失 0.5 秒后暂停", bg="#181d22", fg="#8393a4", justify=tk.LEFT, font=("Microsoft YaHei", 10)).pack(anchor="w", padx=16, pady=(26, 0))
 
@@ -199,45 +192,6 @@ class PalmTrackingApp:
                     self._set_status("已保持在画面中心")
         if self.running:
             self.root.after(CONTROL_INTERVAL_MS, self._control_tick)
-
-    def start_direction_calibration(self) -> None:
-        if self.tracking_enabled or self._calibration_axis is not None or self.current_box is None:
-            return
-        box = self.current_box
-        self._calibration_axis = "yaw"
-        self._calibration_before = box[0] + box[2] / 2.0
-        self._set_status("正在校准水平轴方向")
-        ok, detail = self.gimbal.move(8, 0, 500)
-        if not ok:
-            self._calibration_axis = None
-            self._set_status(f"方向校准失败：{detail}")
-            return
-        self.root.after(700, self._finish_yaw_calibration)
-
-    def _finish_yaw_calibration(self) -> None:
-        if self._calibration_axis != "yaw" or self._calibration_before is None or self.current_box is None:
-            return
-        after = self.current_box[0] + self.current_box[2] / 2.0
-        self.controller.infer_axis_sign_from_motion(axis="yaw", command_delta=8, before_position=self._calibration_before, after_position=after)
-        self._calibration_axis = "pitch"
-        self._calibration_before = self.current_box[1] + self.current_box[3] / 2.0
-        self._set_status("正在校准俯仰轴方向")
-        ok, detail = self.gimbal.move(0, 8, 500)
-        if not ok:
-            self._calibration_axis = None
-            self._set_status(f"方向校准失败：{detail}")
-            return
-        self.root.after(700, self._finish_pitch_calibration)
-
-    def _finish_pitch_calibration(self) -> None:
-        if self._calibration_axis != "pitch" or self._calibration_before is None or self.current_box is None:
-            return
-        after = self.current_box[1] + self.current_box[3] / 2.0
-        self.controller.infer_axis_sign_from_motion(axis="pitch", command_delta=8, before_position=self._calibration_before, after_position=after)
-        self.controller.save_direction_config(DIRECTION_CONFIG)
-        self._calibration_axis = None
-        self._calibration_before = None
-        self._set_status("方向校准完成，方向已保存")
 
     def _annotate(self, image: np.ndarray, box: Box | None) -> np.ndarray:
         out = image.copy()

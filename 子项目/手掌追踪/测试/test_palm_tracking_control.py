@@ -71,32 +71,6 @@ def test_feedback_observation_never_reverses_configured_axis() -> None:
     assert controller.yaw_sign == 1
 
 
-def test_calibration_sets_axis_sign_when_test_step_reduces_error() -> None:
-    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
-
-    sign = controller.infer_axis_sign(axis="yaw", command_delta=8, before_offset=0.40, after_offset=0.25)
-
-    assert sign == 1
-    assert controller.yaw_sign == 1
-
-
-def test_calibration_flips_axis_sign_when_test_step_increases_error() -> None:
-    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
-
-    sign = controller.infer_axis_sign(axis="yaw", command_delta=8, before_offset=0.40, after_offset=0.55)
-
-    assert sign == -1
-    assert controller.yaw_sign == -1
-
-
-def test_motion_calibration_maps_positive_pwm_to_correction_sign() -> None:
-    controller = PalmTrackingController(TrackingConfig(yaw_sign=1))
-
-    sign = controller.infer_axis_sign_from_motion(axis="yaw", command_delta=8, before_position=320, after_position=335)
-
-    assert sign == -1
-    assert controller.yaw_sign == -1
-
 
 def test_loss_after_half_second_stops_control() -> None:
     controller = PalmTrackingController(TrackingConfig(lost_timeout_sec=0.5))
