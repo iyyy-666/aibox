@@ -11,7 +11,7 @@ if [ ! -d "$RUNTIME_DIR" ] || [ ! -w "$RUNTIME_DIR" ]; then
   RUNTIME_DIR="/tmp"
 fi
 AUDIO_LOG="$RUNTIME_DIR/ai_assistant_amixer.log"
-amixer -c Device sset PCM 100% unmute >"$AUDIO_LOG" 2>&1 || true
+amixer -c 0 sset PCM 50% unmute >"$AUDIO_LOG" 2>&1 || true
 export TTS_DEVICE=${TTS_DEVICE:-plughw:CARD=Device,DEV=0}
 export ASR_BACKEND=${ASR_BACKEND:-paraformer}
 export PARAFORMER_ASR_DIR=${PARAFORMER_ASR_DIR:-/root/sherpa_models/paraformer-large-int8}
@@ -30,8 +30,8 @@ export AI_MIN_VALID_PEAK_MARGIN=${AI_MIN_VALID_PEAK_MARGIN:-0.003}
 export AI_BARGE_IN_ENABLED=${AI_BARGE_IN_ENABLED:-1}
 export AI_BARGE_IN_TRIGGER_PEAK=${AI_BARGE_IN_TRIGGER_PEAK:-0.095}
 export AI_SECOND_PASS_ASR=${AI_SECOND_PASS_ASR:-1}
-export AI_LLM_PRELOAD=${AI_LLM_PRELOAD:-0}
-export AI_LLM_MIN_AVAILABLE_MB=${AI_LLM_MIN_AVAILABLE_MB:-3600}
+export AI_LLM_PRELOAD=${AI_LLM_PRELOAD:-1}
+export AI_LLM_MIN_AVAILABLE_MB=${AI_LLM_MIN_AVAILABLE_MB:-1800}
 export AI_TTS_OUTPUT_GAIN=${AI_TTS_OUTPUT_GAIN:-1.45}
 export AI_TTS_TARGET_PEAK=${AI_TTS_TARGET_PEAK:-0.72}
 export AI_TTS_MAX_GAIN=${AI_TTS_MAX_GAIN:-2400}

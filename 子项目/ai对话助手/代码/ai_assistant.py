@@ -45,7 +45,7 @@ SENSEVOICE_MODEL = os.getenv(
 )
 LLM_MODEL = os.getenv("LLM_MODEL", "/root/llm_models/qwen2.5-3b-instruct-q4_k_m.gguf")
 LLM_PRELOAD = os.getenv("AI_LLM_PRELOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
-LLM_MIN_AVAILABLE_MB = int(os.getenv("AI_LLM_MIN_AVAILABLE_MB", "3600"))
+LLM_MIN_AVAILABLE_MB = int(os.getenv("AI_LLM_MIN_AVAILABLE_MB", "1800"))
 TTS_MODEL = os.getenv("TTS_MODEL", "/root/piper_voices/zh_CN-huayan-medium.onnx")
 TTS_CONFIG = os.getenv("TTS_CONFIG", "/root/piper_voices/zh_CN-huayan-medium.onnx.json")
 VOICE_DEVICE = voice_input_device()
