@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>语音简单控制机械臂</title>
+<title>Voice-controlled Robot Arm</title>
 <style>
 :root {
   color-scheme: dark;
@@ -46,6 +46,7 @@ h2 { margin: 0; font-size: 15px; }
 .btn:hover { border-color: var(--green); color: var(--green); }
 .btn-primary { border-color: transparent; background: var(--green); color: #08120d; }
 .btn-primary:hover { color: #08120d; box-shadow: 0 14px 30px rgba(63,212,125,0.18); }
+.btn:disabled { cursor: wait; opacity: 0.55; box-shadow: none; }
 .level-wrap { margin-top: 12px; padding: 12px; background: var(--surface2); border: 1px solid rgba(255,255,255,0.06); border-radius: var(--radius); }
 .level-head { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--muted); font-size:13px; margin-bottom:9px; }
 .level-bar { height: 16px; overflow:hidden; border-radius:999px; background:#0b0f12; border:1px solid rgba(255,255,255,0.08); }
@@ -66,61 +67,64 @@ h2 { margin: 0; font-size: 15px; }
 <div class="app">
   <header class="topbar">
     <div class="brand">
-      <div class="brand-mark">??</div>
-      <div><h1>语音简单控制机械臂</h1><p class="subtitle">普通话识别 · 简单指令控制 · 语音输出</p></div>
+      <div class="brand-mark">&#127908;</div>
+      <div><h1>Voice-controlled Robot Arm</h1><p class="subtitle">English speech recognition · Simple commands · Voice feedback</p></div>
     </div>
-    <a class="link-btn" href="/button">? 按钮控制</a>
+    <a class="link-btn" href="/button">&#8592; Button Control</a>
   </header>
 
   <section class="status-grid">
-    <div class="status-tile"><div><span class="status-label">串口连接</span><span class="status-value" id="serial-text">检查中</span></div><span id="serial-dot" class="dot"></span></div>
-    <div class="status-tile"><div><span class="status-label">语音状态</span><span class="status-value" id="voice-state">待机</span></div><span id="voice-dot" class="dot"></span></div>
+    <div class="status-tile"><div><span class="status-label">Serial Connection</span><span class="status-value" id="serial-text">Checking</span></div><span id="serial-dot" class="dot"></span></div>
+    <div class="status-tile"><div><span class="status-label">Voice Status</span><span class="status-value" id="voice-state">Idle</span></div><span id="voice-dot" class="dot"></span></div>
   </section>
 
   <main>
     <section>
       <div class="panel">
-        <div class="panel-head"><div><h2>语音监听</h2><p class="section-note">点击开始后直接说指令词</p></div></div>
-        <button class="btn btn-primary" id="voice-btn" onclick="toggleVoice()" style="width:100%;min-height:64px;font-size:20px;">开启语音监听</button>
+        <div class="panel-head"><div><h2>Voice Control</h2><p class="section-note">Start listening, then say a command clearly.</p></div></div>
+        <button class="btn btn-primary" id="voice-btn" onclick="toggleVoice()" style="width:100%;min-height:64px;font-size:20px;">Start Listening</button>
         <div class="level-wrap">
-          <div class="level-head"><span>&#36755;&#20837;&#38899;&#37327;</span><strong id="voice-peak-text">0%</strong></div>
+          <div class="level-head"><span>Input Level</span><strong id="voice-peak-text">0%</strong></div>
           <div class="level-bar"><div class="level-fill" id="voice-peak-fill"></div></div>
-          <div class="level-hint" id="voice-level-hint">&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;&#36755;&#20837;&#38899;&#37327;?</div>
+          <div class="level-hint" id="voice-level-hint">Waiting for voice input</div>
         </div>
 
         <div style="margin-top:12px;display:grid;gap:8px;">
-          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">最近识别 <span id="voice-text-display" style="color:var(--green);">-</span></div>
-          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">最近执行 <span id="last-cmd" style="color:var(--green);">-</span></div>
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">Last Recognition <span id="voice-text-display" style="color:var(--green);">-</span></div>
+          <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">Last Action <span id="last-cmd" style="color:var(--green);">-</span></div>
         </div>
       </div>
 
       <div class="panel">
-        <div class="panel-head"><div><h2>识别记录</h2><p class="section-note">最近的识别与执行结果</p></div></div>
-        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>语音助手已就绪</span></div></div>
+        <div class="panel-head"><div><h2>Recognition Log</h2><p class="section-note">Recent recognition and action results.</p></div></div>
+        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>Voice control ready</span></div></div>
       </div>
     </section>
 
     <aside>
       <div class="panel">
-        <div class="panel-head"><div><h2>可用指令</h2><p class="section-note">尽量用短句、清楚地说</p></div></div>
+        <div class="panel-head"><div><h2>Available Commands</h2><p class="section-note">Use a short phrase and speak clearly.</p></div></div>
         <div class="chips">
-          <span class="chip">直立</span>
-          <span class="chip">放平</span>
-          <span class="chip">抓取</span>
-          <span class="chip">搬运</span>
-          <span class="chip">停止</span>
-          <span class="chip">张开</span>
-          <span class="chip">闭合</span>
-          <span class="chip">复位</span>
+          <span class="chip">Stand Up</span>
+          <span class="chip">Lay Flat</span>
+          <span class="chip">Grab</span>
+          <span class="chip">Move</span>
+          <span class="chip">Stop</span>
+          <span class="chip">Open</span>
+          <span class="chip">Close</span>
+          <span class="chip">Reset</span>
         </div>
       </div>
     </aside>
   </main>
-  <footer class="footer">语音简单控制机械臂 &middot; RK3588</footer>
+  <footer class="footer">Voice-controlled Robot Arm &middot; RK3588</footer>
 </div>
 <script>
 const API = '';
+const DISPLAY_NAMES = {'\u76f4\u7acb':'Stand Up','\u653e\u5e73':'Lay Flat','\u6293\u53d6':'Grab','\u642c\u8fd0':'Move','\u505c\u6b62':'Stop','\u5f20\u5f00':'Open','\u95ed\u5408':'Close','\u590d\u4f4d':'Reset'};
+const displayName = value => DISPLAY_NAMES[value] || value || '-';
 let voiceOn = false;
+let voiceStarting = false;
 let lastVoiceText = '';
 let logLines = [];
 let smoothVoicePercent = 0;
@@ -142,16 +146,16 @@ function updateVoiceLevel(v) {
   fill.style.width = pct + '%';
   fill.className = 'level-fill' + (pct >= 100 ? ' hot' : '');
   text.textContent = pct + '% / raw ' + rawPct + '%';
-  if (!v.running) hint.innerHTML = '&#30417;&#21548;&#26410;&#24320;&#21551;';
-  else if (pct <= 2) hint.innerHTML = '&#24213;&#22122;&#65292;&#26410;&#26816;&#27979;&#21040;&#35828;&#35805;';
-  else if (pct < 45) hint.innerHTML = '&#38899;&#37327;&#20559;&#23567;&#65292;&#35831;&#38752;&#36817;&#40614;&#20811;&#39118;';
-  else if (pct >= 100) hint.innerHTML = '&#24050;&#36798;&#21040;&#35302;&#21457;&#32447;&#65292;&#21487;&#20197;&#35782;&#21035;';
-  else hint.innerHTML = '&#36755;&#20837;&#27491;&#24120;';
+  if (!v.running) hint.textContent = 'Listening is off';
+  else if (pct <= 2) hint.textContent = 'No speech detected';
+  else if (pct < 45) hint.textContent = 'Speak closer to the microphone';
+  else if (pct >= 100) hint.textContent = 'Voice detected and ready to recognize';
+  else hint.textContent = 'Input level is good';
 }
 
 function addLog(text, kind='') {
   const now = new Date();
-  const stamp = now.toLocaleTimeString('zh-CN', {hour12:false});
+  const stamp = now.toLocaleTimeString('en-US', {hour12:false});
   logLines.unshift({stamp, text, kind});
   logLines = logLines.slice(0, 12);
   const box = document.getElementById('log-list');
@@ -171,34 +175,48 @@ async function refreshStatus() {
     const res = await fetch(API + '/api/status');
     const s = await res.json();
     document.getElementById('serial-dot').className = 'dot ' + ((s.serial && s.serial.connected) ? 'on' : 'warn');
-    document.getElementById('serial-text').textContent = (s.serial && s.serial.connected) ? '已连接' : '未连接';
+    document.getElementById('serial-text').textContent = (s.serial && s.serial.connected) ? 'Connected' : 'Disconnected';
     const v = s.voice || {};
+    const loading = Boolean(v.loading) || voiceStarting;
     document.getElementById('voice-dot').className = 'dot ' + (v.running ? 'on' : 'warn');
-    document.getElementById('voice-state').textContent = v.last_error ? ('异常: ' + v.last_error) : (v.busy ? '识别中' : (v.running ? '监听中' : '待机'));
-    document.getElementById('voice-btn').textContent = v.running ? '关闭语音监听' : '开启语音监听';
+    document.getElementById('voice-state').textContent = loading ? 'Loading Voice Model' : (v.last_error ? ('Error: ' + v.last_error) : (v.busy ? 'Recognizing' : (v.running ? 'Listening' : 'Idle')));
+    const voiceButton = document.getElementById('voice-btn');
+    voiceButton.disabled = loading;
+    voiceButton.textContent = loading ? 'Loading Voice Model...' : (v.running ? 'Stop Listening' : 'Start Listening');
     voiceOn = v.running;
     updateVoiceLevel(v);
     const voiceText = v.last_text || v.text || '-';
     document.getElementById('voice-text-display').textContent = voiceText;
-    document.getElementById('last-cmd').textContent = v.last_command || '-';
+    document.getElementById('last-cmd').textContent = displayName(v.last_command);
     if (voiceText !== '-' && voiceText !== lastVoiceText) {
       lastVoiceText = voiceText;
-      addLog('识别: ' + voiceText, '');
+      addLog('Recognized: ' + voiceText, '');
     }
   } catch (e) {
     document.getElementById('serial-dot').className = 'dot warn';
-    document.getElementById('serial-text').textContent = '离线';
+    document.getElementById('serial-text').textContent = 'Offline';
   }
 }
 
 async function toggleVoice() {
+  if (voiceStarting) return;
+  const starting = !voiceOn;
+  const voiceButton = document.getElementById('voice-btn');
+  if (starting) {
+    voiceStarting = true;
+    voiceButton.disabled = true;
+    voiceButton.textContent = 'Loading Voice Model...';
+    document.getElementById('voice-state').textContent = 'Loading Voice Model';
+  }
   try {
-    const url = voiceOn ? '/api/voice/stop' : '/api/voice/start';
+    const url = starting ? '/api/voice/start' : '/api/voice/stop';
     const res = await fetch(API + url);
     const r = await res.json();
-    addLog(r.success ? (voiceOn ? '语音监听已关闭' : '语音监听已开启') : '语音切换失败', r.success ? 'ok' : 'err');
+    addLog(r.success ? (starting ? 'Voice control started' : 'Voice control stopped') : ('Failed to switch voice control' + (r.error ? ': ' + r.error : '')), r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('语音请求失败', 'err');
+    addLog('Voice request failed', 'err');
+  } finally {
+    voiceStarting = false;
   }
   setTimeout(refreshStatus, 300);
 }

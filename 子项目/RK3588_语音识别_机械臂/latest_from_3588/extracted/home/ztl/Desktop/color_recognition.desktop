@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=颜色识别
-Name[zh_CN]=颜色识别
-Comment=使用双目摄像头识别物品颜色
+Name=Color Recognition
+Name[zh_CN]=Color Recognition
+Comment=Detect object colors with the stereo camera
 Exec=/usr/local/bin/color_recognition.sh
 Icon=/root/robot_arm/assets/icons/color.png
 Terminal=false

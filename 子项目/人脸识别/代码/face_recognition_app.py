@@ -44,14 +44,14 @@ CASCADE_PATHS = [
 class FaceRecognitionApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("人脸识别")
+        self.root.title("Face Detection")
         self.root.geometry("1180x720")
         self.root.minsize(960, 560)
         self.root.configure(bg="#111417")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        self.status_text = tk.StringVar(value="正在打开摄像头...")
-        self.summary_text = tk.StringVar(value="等待画面")
+        self.status_text = tk.StringVar(value="Opening camera...")
+        self.summary_text = tk.StringVar(value="Waiting for video")
         self.running = True
         self.cap: cv2.VideoCapture | None = None
         self.frame: np.ndarray | None = None
@@ -68,7 +68,7 @@ class FaceRecognitionApp:
 
         self._build_ui()
         if not self.face_detectors and self.yunet is None and self.dnn is None:
-            self.status_text.set("人脸模型加载失败")
+            self.status_text.set("Face model failed to load")
         threading.Thread(target=self._capture_loop, daemon=True).start()
         threading.Thread(target=self._detect_loop, daemon=True).start()
         self._update_view()
@@ -117,7 +117,7 @@ class FaceRecognitionApp:
         top.pack(side=tk.TOP, fill=tk.X)
         top.pack_propagate(False)
 
-        tk.Label(top, text="人脸识别", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=(16, 18))
+        tk.Label(top, text="Face Detection", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=(16, 18))
         tk.Label(top, textvariable=self.status_text, bg="#1c2228", fg="#aeb8c5", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT)
 
         body = tk.Frame(self.root, bg="#111417")
@@ -129,15 +129,15 @@ class FaceRecognitionApp:
         side.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 12), pady=12)
         side.pack_propagate(False)
 
-        tk.Label(side, text="识别结果", bg="#181d22", fg="#f1f5f9", font=("Microsoft YaHei", 13, "bold")).pack(anchor="w", padx=16, pady=(16, 10))
+        tk.Label(side, text="Detection Results", bg="#181d22", fg="#f1f5f9", font=("Microsoft YaHei", 13, "bold")).pack(anchor="w", padx=16, pady=(16, 10))
         self.result_box = tk.Text(side, height=18, bg="#0f1317", fg="#e8eef5", insertbackground="#e8eef5", relief=tk.FLAT, font=("Microsoft YaHei", 11), wrap=tk.WORD)
         self.result_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
-        self.result_box.insert("1.0", "等待识别")
+        self.result_box.insert("1.0", "Waiting for detection")
         self.result_box.configure(state=tk.DISABLED)
         self.gimbal_controls = GimbalControls(side, self.root, self._set_status)
 
-        ttk.Button(side, text="保存当前画面", command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
-        ttk.Button(side, text="退出", command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))
+        ttk.Button(side, text="Save Snapshot", command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
+        ttk.Button(side, text="Exit", command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))
         tk.Label(side, textvariable=self.summary_text, bg="#181d22", fg="#9fb0c2", justify=tk.LEFT, font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 16))
 
     def _open_camera(self) -> cv2.VideoCapture:
@@ -158,14 +158,14 @@ class FaceRecognitionApp:
                     continue
                 self.cap = self._open_camera()
                 if not self.cap.isOpened():
-                    self._set_status(f"摄像头打开失败: {CAMERA_DEVICE}")
+                    self._set_status(f"Failed to open camera: {CAMERA_DEVICE}")
                     retry_at = time.time() + 2.0
                     continue
-                self._set_status(f"已打开 {CAMERA_DEVICE}  {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
+                self._set_status(f"Opened {CAMERA_DEVICE}  {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
 
             ok, frame = self.cap.read()
             if not ok or frame is None:
-                self._set_status("读取画面失败，正在重试...")
+                self._set_status("Camera read failed; retrying...")
                 self.cap.release()
                 self.cap = None
                 time.sleep(0.4)
@@ -319,16 +319,16 @@ class FaceRecognitionApp:
         if faces:
             lines = []
             for idx, (x, y, w, h, score) in enumerate(faces, 1):
-                conf = "" if score <= 0 else f"  置信度{score:.2f}"
-                lines.append(f"{idx}. 人脸  位置({x + w // 2}, {y + h // 2})  大小({w}x{h}){conf}")
+                conf = "" if score <= 0 else f"  Confidence{score:.2f}"
+                lines.append(f"{idx}. Face  Position({x + w // 2}, {y + h // 2})  Size({w}x{h}){conf}")
             text = "\n".join(lines)
         else:
-            text = "未检测到人脸"
+            text = "No face detected"
         self.result_box.configure(state=tk.NORMAL)
         self.result_box.delete("1.0", tk.END)
         self.result_box.insert("1.0", text)
         self.result_box.configure(state=tk.DISABLED)
-        self.summary_text.set(f"device: {CAMERA_DEVICE}\ninput: {CAMERA_WIDTH}x{CAMERA_HEIGHT}\nview: 正常画面\nfaces: {len(faces)}\nfps: {self.fps:.1f}")
+        self.summary_text.set(f"device: {CAMERA_DEVICE}\ninput: {CAMERA_WIDTH}x{CAMERA_HEIGHT}\nview: Standard View\nfaces: {len(faces)}\nfps: {self.fps:.1f}")
 
     def _update_view(self) -> None:
         with self.frame_lock:
@@ -340,7 +340,7 @@ class FaceRecognitionApp:
         ch = max(1, self.canvas.winfo_height())
         self.canvas.delete("all")
         if frame is None:
-            self.canvas.create_text(cw // 2, ch // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="等待摄像头画面")
+            self.canvas.create_text(cw // 2, ch // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="Waiting for camera")
         else:
             normal = self._normal_frame(frame)
             view = self._annotate(normal, faces)
@@ -360,12 +360,12 @@ class FaceRecognitionApp:
 
     def save_snapshot(self) -> None:
         if self.last_view is None:
-            self._set_status("还没有可保存的画面")
+            self._set_status("No frame available to save")
             return
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         path = SNAPSHOT_DIR / time.strftime("face_%Y%m%d_%H%M%S.jpg")
         cv2.imwrite(str(path), self.last_view, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
-        self._set_status(f"已保存: {path}")
+        self._set_status(f"Saved: {path}")
 
     def close(self) -> None:
         self.running = False

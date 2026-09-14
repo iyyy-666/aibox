@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import glob
 import fcntl
+import json
 import os
 import struct
 import threading
@@ -47,6 +48,7 @@ I2C_ADDR_YAW = int(os.getenv("GIMBAL_I2C_ADDR_YAW", "0x40"), 0)
 I2C_ADDR_PITCH = int(os.getenv("GIMBAL_I2C_ADDR_PITCH", "0x41"), 0)
 I2C_CH_YAW = int(os.getenv("GIMBAL_I2C_CH_YAW", "0"), 0)
 I2C_CH_PITCH = int(os.getenv("GIMBAL_I2C_CH_PITCH", "1"), 0)
+POSITION_STATE = os.getenv("AIBOX_GIMBAL_POSITION_STATE", "/tmp/aibox_gimbal_position.json")
 
 
 def clamp(value: int, lower: int, upper: int) -> int:
@@ -449,7 +451,7 @@ class RawI2CPca9685Backend:
                 if mapped_addr == addr:
                     detail = mapped_detail
                     break
-            axis = "横向" if side == "yaw" else "纵向"
+            axis = "Horizontal" if side == "yaw" else "Vertical"
             parts.append(f"{axis}:{detail or f'0x{addr:02x}'}/ch{channel}")
         return ", ".join(parts)
 
@@ -488,11 +490,30 @@ class RawI2CPca9685Backend:
 class GimbalController:
     def __init__(self) -> None:
         self.state = GimbalState()
+        self._load_position()
         self._step = STEP_DEFAULT
         self.i2c = RawI2CPca9685Backend()
         self.serial = SerialLobotBackend()
         self.pwm = SysfsPwmBackend()
         self._backend: str | None = None
+
+    def _load_position(self) -> None:
+        try:
+            with open(POSITION_STATE, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.state.yaw = clamp(data.get("yaw", SERVO_CENTER), SERVO_MIN, SERVO_MAX)
+            self.state.pitch = clamp(data.get("pitch", SERVO_CENTER), SERVO_MIN, SERVO_MAX)
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _save_position(self) -> None:
+        try:
+            tmp = f"{POSITION_STATE}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"yaw": self.state.yaw, "pitch": self.state.pitch}, fh)
+            os.replace(tmp, POSITION_STATE)
+        except OSError:
+            pass
 
     def _try_pwm(self) -> tuple[bool, str]:
         if BACKEND_PREF == "serial":
@@ -593,6 +614,7 @@ class GimbalController:
         if ok:
             self.state.yaw = target
             self.state.last_command = f"yaw={target}"
+            self._save_position()
             return True, detail
         self.state.last_error = detail
         return False, detail
@@ -603,6 +625,7 @@ class GimbalController:
         if ok:
             self.state.pitch = target
             self.state.last_command = f"pitch={target}"
+            self._save_position()
             return True, detail
         self.state.last_error = detail
         return False, detail
@@ -616,6 +639,7 @@ class GimbalController:
             self.state.pitch = SERVO_CENTER
         if ok1 and ok2:
             self.state.last_command = "center"
+            self._save_position()
             return True, self.state.target
         detail = detail1 if not ok1 else detail2
         self.state.last_error = detail
@@ -631,7 +655,7 @@ class GimbalController:
 class GimbalApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("云台控制")
+        self.root.title("Gimbal Control")
         self.root.geometry("1080x680")
         self.root.minsize(900, 580)
         self.root.configure(bg="#0d1114")
@@ -642,8 +666,8 @@ class GimbalApp:
         self._next_link_check = time.monotonic() + 1.0
         self.log_lines: list[tuple[str, str, str]] = []
         self.step_var = tk.StringVar(value=str(self.controller.step()))
-        self.serial_text = tk.StringVar(value="未连接")
-        self.pose_text = tk.StringVar(value="等待")
+        self.serial_text = tk.StringVar(value="Disconnected")
+        self.pose_text = tk.StringVar(value="Waiting")
         self.command_text = tk.StringVar(value="-")
         self.error_text = tk.StringVar(value="")
         self.yaw_text = tk.StringVar(value=str(SERVO_CENTER))
@@ -658,21 +682,21 @@ class GimbalApp:
         top.pack_propagate(False)
         tk.Label(
             top,
-            text="云台控制",
+            text="Gimbal Control",
             bg="#171d22",
             fg="#f2f5f2",
             font=("Microsoft YaHei", 16, "bold"),
         ).pack(side=tk.LEFT, padx=(16, 16))
         tk.Label(
             top,
-            text="两轴微调 · 自动识别控制后端 · 独立云台软件",
+            text="Two-axis precision gimbal control",
             bg="#171d22",
             fg="#9aa7a1",
             font=("Microsoft YaHei", 10),
         ).pack(side=tk.LEFT)
         tk.Button(
             top,
-            text="连接设备",
+            text="Connect",
             command=self.toggle_serial,
             bg="#1f272d",
             fg="#f2f5f2",
@@ -684,7 +708,7 @@ class GimbalApp:
         ).pack(side=tk.RIGHT, padx=10, pady=10)
         tk.Button(
             top,
-            text="回中",
+            text="Center",
             command=self.center,
             bg="#1f272d",
             fg="#f2f5f2",
@@ -706,22 +730,22 @@ class GimbalApp:
 
         tiles = tk.Frame(left, bg="#0d1114")
         tiles.pack(fill=tk.X)
-        self._tile(tiles, "连接状态", self.serial_text, 0)
-        self._tile(tiles, "当前横向", self.yaw_text, 1)
-        self._tile(tiles, "当前纵向", self.pitch_text, 2)
+        self._tile(tiles, "Connection", self.serial_text, 0)
+        self._tile(tiles, "Current Horizontal", self.yaw_text, 1)
+        self._tile(tiles, "Current Vertical", self.pitch_text, 2)
 
         panel = tk.Frame(left, bg="#171d22", bd=0, highlightthickness=1, highlightbackground="#2f3a42")
         panel.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         tk.Label(
             panel,
-            text="微调控制",
+            text="Fine Control",
             bg="#171d22",
             fg="#f2f5f2",
             font=("Microsoft YaHei", 13, "bold"),
         ).pack(anchor="w", padx=16, pady=(16, 6))
         tk.Label(
             panel,
-            text="每次只挪一点点，适合把云台慢慢拨到位。",
+            text="Adjust the gimbal in small steps.",
             bg="#171d22",
             fg="#9aa7a1",
             font=("Microsoft YaHei", 10),
@@ -730,19 +754,19 @@ class GimbalApp:
         grid = tk.Frame(panel, bg="#171d22")
         grid.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 14))
 
-        self._control_button(grid, "左微调", lambda: self._step_yaw(-self.controller.step()), 0, 0, "#1f272d")
-        self._control_button(grid, "右微调", lambda: self._step_yaw(self.controller.step()), 0, 1, "#1f272d")
-        self._control_button(grid, "上微调", lambda: self._step_pitch(-self.controller.step()), 1, 0, "#1f272d")
-        self._control_button(grid, "下微调", lambda: self._step_pitch(self.controller.step()), 1, 1, "#1f272d")
+        self._control_button(grid, "Left", lambda: self._step_yaw(-self.controller.step()), 0, 0, "#1f272d")
+        self._control_button(grid, "Right", lambda: self._step_yaw(self.controller.step()), 0, 1, "#1f272d")
+        self._control_button(grid, "Up", lambda: self._step_pitch(-self.controller.step()), 1, 0, "#1f272d")
+        self._control_button(grid, "Down", lambda: self._step_pitch(self.controller.step()), 1, 1, "#1f272d")
 
         control_row = tk.Frame(panel, bg="#171d22")
         control_row.pack(fill=tk.X, padx=16, pady=(0, 16))
-        tk.Label(control_row, text="步长", bg="#171d22", fg="#9aa7a1", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT)
+        tk.Label(control_row, text="Step", bg="#171d22", fg="#9aa7a1", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT)
         step_entry = tk.Entry(control_row, textvariable=self.step_var, width=6, justify="center")
         step_entry.pack(side=tk.LEFT, padx=8)
         tk.Button(
             control_row,
-            text="应用",
+            text="Apply",
             command=self.apply_step,
             bg="#1f272d",
             fg="#f2f5f2",
@@ -754,7 +778,7 @@ class GimbalApp:
         log_panel.pack(fill=tk.BOTH, expand=False, pady=(12, 0))
         tk.Label(
             log_panel,
-            text="操作记录",
+            text="Activity Log",
             bg="#171d22",
             fg="#f2f5f2",
             font=("Microsoft YaHei", 13, "bold"),
@@ -775,7 +799,7 @@ class GimbalApp:
         side_panel.pack(fill=tk.BOTH, expand=True)
         tk.Label(
             side_panel,
-            text="状态",
+            text="Status",
             bg="#171d22",
             fg="#f2f5f2",
             font=("Microsoft YaHei", 13, "bold"),
@@ -864,56 +888,56 @@ class GimbalApp:
             self.controller.set_step(int(self.step_var.get()))
         except ValueError:
             self.step_var.set(str(self.controller.step()))
-            self._log("步长不是数字", "err")
+            self._log("Step must be a number", "err")
             return
         self.step_var.set(str(self.controller.step()))
-        self._log(f"步长已设为 {self.controller.step()}")
+        self._log(f"Step set to  {self.controller.step()}")
 
     def toggle_serial(self) -> None:
         if self.controller.state.connected:
             self.controller.disconnect()
-            self.serial_text.set("未连接")
+            self.serial_text.set("Disconnected")
             self.backend_text.set("auto")
-            self._log("设备已断开")
+            self._log("Device disconnected")
             return
         ok = self.controller.connect()
-        self.serial_text.set(self.controller.state.target if ok else "未连接")
+        self.serial_text.set(self.controller.state.target if ok else "Disconnected")
         self.backend_text.set(self.controller.state.backend or "auto")
         self.error_text.set(self.controller.state.last_error)
         self._log(
-            f"连接{'成功' if ok else '失败'}: {self.controller.state.backend or self.controller.state.last_error}",
+            f"Connect{'Success' if ok else 'Failed'}: {self.controller.state.backend or self.controller.state.last_error}",
             "ok" if ok else "err",
         )
 
     def _step_yaw(self, delta: int) -> None:
         ok, detail = self.controller.move_yaw(delta)
         self._sync_state()
-        self._log(f"横向微调 {delta:+d}" if ok else f"横向微调失败: {detail}", "ok" if ok else "err")
+        self._log(f"Horizontal adjustment {delta:+d}" if ok else f"Horizontal adjustment failed: {detail}", "ok" if ok else "err")
 
     def _step_pitch(self, delta: int) -> None:
         ok, detail = self.controller.move_pitch(delta)
         self._sync_state()
-        self._log(f"纵向微调 {delta:+d}" if ok else f"纵向微调失败: {detail}", "ok" if ok else "err")
+        self._log(f"Vertical adjustment {delta:+d}" if ok else f"Vertical adjustment failed: {detail}", "ok" if ok else "err")
 
     def center(self) -> None:
         ok, detail = self.controller.center()
         self._sync_state()
-        self._log("回到中位" if ok else f"回中失败: {detail}", "ok" if ok else "err")
+        self._log("Centered" if ok else f"Centering failed: {detail}", "ok" if ok else "err")
 
     def _sync_state(self) -> None:
-        self.serial_text.set(self.controller.state.target if self.controller.state.connected else "未连接")
+        self.serial_text.set(self.controller.state.target if self.controller.state.connected else "Disconnected")
         self.backend_text.set(self.controller.state.backend or "auto")
         self.yaw_text.set(str(self.controller.state.yaw))
         self.pitch_text.set(str(self.controller.state.pitch))
         self.command_text.set(self.controller.state.last_command or "-")
         self.error_text.set(self.controller.state.last_error or "")
-        self.pose_text.set("已连接" if self.controller.state.connected else "待机")
+        self.pose_text.set("Connected" if self.controller.state.connected else "Idle")
 
     def _refresh_ui(self) -> None:
         now = time.monotonic()
         if self.controller.state.connected and now >= self._next_link_check:
             if not self.controller.check_alive():
-                self._log(f"连接断开: {self.controller.state.last_error}", "err")
+                self._log(f"Connection lost: {self.controller.state.last_error}", "err")
             self._next_link_check = now + 1.0
         self._sync_state()
         if self.running:

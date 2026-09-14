@@ -30,7 +30,7 @@ voice = VoiceEngine()
 ws_clients: list[WebSocket] = []
 
 # ---- FastAPI ----
-app = FastAPI(title="KM1 机械臂控制台", version="2.0")
+app = FastAPI(title="KM1 Robot Arm Console", version="2.0")
 
 # ---- 系统 API ----
 
@@ -167,7 +167,7 @@ def execute_sequence(seq_name: str):
 def sorting_ready():
     ok = robot.prepare_sorting_pose()
     broadcast_status()
-    return {"success": ok, "pose": "分拣待命"}
+    return {"success": ok, "pose": "Sorting Ready"}
 
 
 @app.post("/api/robot/sorting/{side}")
@@ -202,7 +202,7 @@ def save_pose(data: dict):
     pwms = data.get("pwms", [])
     time_ms = data.get("time", 1500)
     if not name or len(pwms) != 6:
-        return {"success": False, "error": "名称或PWM值无效"}
+        return {"success": False, "error": "Invalid name or PWM values"}
     ok = robot.save_pose(name, pwms, time_ms)
     return {"success": ok, "name": name}
 
@@ -220,7 +220,7 @@ def delete_pose(pose_name: str):
             config.POSES_FILE.write_text(
                 json.dumps(poses, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"success": True}
-    return {"success": False, "error": "姿势不存在"}
+    return {"success": False, "error": "Pose does not exist"}
 
 
 # ---- 语音 API ----

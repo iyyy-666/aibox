@@ -1,9 +1,9 @@
 ﻿<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>按钮控制机械臂</title>
+<title>Robot Arm Control</title>
 <style>
 :root {
   color-scheme: dark;
@@ -78,64 +78,64 @@ h2 { margin: 0; font-size: 15px; }
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">&#129470;</div>
-      <div><h1>按钮控制机械臂</h1><p class="subtitle">按钮动作 · 夹爪控制 · 关节控制 · 串口通信</p></div>
+      <div><h1>Robot Arm Control</h1><p class="subtitle">Preset actions · Gripper control · Joint control · Serial communication</p></div>
     </div>
     <nav style="display:flex;gap:10px;flex-wrap:wrap;">
-      <a class="link-btn" href="/calibrate">&#9881; 舵机校准</a>
-      <button class="link-btn" onclick="toggleSerial()" id="serial-btn">&#128268; 连接串口</button>
+      <a class="link-btn" href="/calibrate">&#9881; Servo Calibration</a>
+      <button class="link-btn" onclick="toggleSerial()" id="serial-btn">&#128268; Connect Serial</button>
     </nav>
   </header>
 
   <section class="status-grid">
-    <div class="status-tile"><div><span class="status-label">串口连接</span><span class="status-value" id="serial-text">检查中</span></div><span id="serial-dot" class="dot"></span></div>
-    <div class="status-tile"><div><span class="status-label">当前姿态</span><span class="status-value" id="pose-text">未知</span></div><span class="dot warn"></span></div>
-    <div class="status-tile"><div><span class="status-label">最后指令</span><span class="status-value" id="last-cmd" style="font-size:12px;word-break:break-all;">-</span></div></div>
+    <div class="status-tile"><div><span class="status-label">Serial Connection</span><span class="status-value" id="serial-text">Checking</span></div><span id="serial-dot" class="dot"></span></div>
+    <div class="status-tile"><div><span class="status-label">Current Pose</span><span class="status-value" id="pose-text">Unknown</span></div><span class="dot warn"></span></div>
+    <div class="status-tile"><div><span class="status-label">Last Command</span><span class="status-value" id="last-cmd" style="font-size:12px;word-break:break-all;">-</span></div></div>
   </section>
 
   <main>
     <section>
       <div class="panel">
-        <div class="panel-head"><div><h2>预设姿态</h2><p class="section-note">点击执行预设动作，操作前确保机械臂周围空间充足。</p></div></div>
+        <div class="panel-head"><div><h2>Preset Poses</h2><p class="section-note">Keep the area around the arm clear before running a pose.</p></div></div>
         <div class="pose-grid" id="pose-grid">
-          <button class="pose-btn stand" onclick="doPose('直立')"><span class="pose-icon">&#8613;</span><span class="pose-title">直立</span><span class="pose-desc">归中待命 · 0°</span></button>
-          <button class="pose-btn flat" onclick="doPose('放平')"><span class="pose-icon">&#8596;</span><span class="pose-title">放平</span><span class="pose-desc">前倾85°笔直展开</span></button>
-          <button class="pose-btn grab" onclick="doSequence('抓取')"><span class="pose-icon">&#9758;</span><span class="pose-title">抓取</span><span class="pose-desc">A形拱桥·四步序列</span></button>
-          <button class="pose-btn" style="background:linear-gradient(145deg,rgba(63,212,125,0.22),rgba(31,39,45,0.98))" onclick="doSequence('搬运')"><span class="pose-icon">&#128666;</span><span class="pose-title">搬运</span><span class="pose-desc">抓取→搬运→释放</span></button>
+          <button class="pose-btn stand" onclick="doPose('\u76f4\u7acb')"><span class="pose-icon">&#8613;</span><span class="pose-title">Upright</span><span class="pose-desc">Centered standby · 0°</span></button>
+          <button class="pose-btn flat" onclick="doPose('\u653e\u5e73')"><span class="pose-icon">&#8596;</span><span class="pose-title">Lay Flat</span><span class="pose-desc">Extend forward at 85°</span></button>
+          <button class="pose-btn grab" onclick="doSequence('\u6293\u53d6')"><span class="pose-icon">&#9758;</span><span class="pose-title">Grab</span><span class="pose-desc">Four-step grab sequence</span></button>
+          <button class="pose-btn" style="background:linear-gradient(145deg,rgba(63,212,125,0.22),rgba(31,39,45,0.98))" onclick="doSequence('\u642c\u8fd0')"><span class="pose-icon">&#128666;</span><span class="pose-title">Move</span><span class="pose-desc">Grab → move → release</span></button>
         </div>
-        <button class="stop-btn" onclick="doStop()">&#9632; 急停</button>
+        <button class="stop-btn" onclick="doStop()">&#9632; Emergency Stop</button>
       </div>
 
       <div class="panel">
-        <div class="panel-head"><div><h2>操作日志</h2><p class="section-note">最近操作记录。</p></div></div>
-        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>系统就绪</span></div></div>
+        <div class="panel-head"><div><h2>Activity Log</h2><p class="section-note">Recent control actions.</p></div></div>
+        <div class="log-list" id="log-list"><div><time>--:--:--</time><span>System ready</span></div></div>
       </div>
 
     </section>
 
     <aside>
       <div class="panel">
-        <div class="panel-head"><div><h2>快捷动作</h2><p class="section-note">夹爪控制和复位。</p></div></div>
+        <div class="panel-head"><div><h2>Quick Actions</h2><p class="section-note">Gripper controls and reset.</p></div></div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="doGripper('open')">&#9776; 夹爪张开</button>
-          <button class="quick-btn" onclick="doGripper('half')">&#9644; 夹爪半开</button>
-          <button class="quick-btn" onclick="doGripper('close')">&#8854; 夹爪闭合</button>
-          <button class="quick-btn" onclick="doGripperStep(-60)">&#9664; 夹爪微开</button>
-          <button class="quick-btn" onclick="doGripperStep(60)">&#9654; 夹爪微合</button>
+          <button class="quick-btn" onclick="doGripper('open')">&#9776; Open Gripper</button>
+          <button class="quick-btn" onclick="doGripper('half')">&#9644; Half Open</button>
+          <button class="quick-btn" onclick="doGripper('close')">&#8854; Close Gripper</button>
+          <button class="quick-btn" onclick="doGripperStep(-60)">&#9664; Open Slightly</button>
+          <button class="quick-btn" onclick="doGripperStep(60)">&#9654; Close Slightly</button>
         </div>
-        <button class="quick-btn large-btn" onclick="doAllCenter()" style="width:100%;margin-top:12px;">&#8635; 全部复位到中心</button>
+        <button class="quick-btn large-btn" onclick="doAllCenter()" style="width:100%;margin-top:12px;">&#8635; Center All Servos</button>
         <div style="margin-top:10px;display:grid;gap:6px;" id="joint-controls"></div>
       </div>
 
       <div class="panel">
         <div style="display:grid;gap:8px;">
           <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
-            &#127760; Web控制: <code style="color:var(--green);">http://192.168.11.106:8000</code>
+            &#127760; Web Control: <code style="color:var(--green);">http://192.168.137.3:8000</code>
           </div>
           <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
-            &#128187; VNC桌面: <code style="color:var(--green);">192.168.11.106:5901</code>
+            &#128187; VNC Desktop: <code style="color:var(--green);">192.168.137.3:5901</code>
           </div>
           <div style="padding:10px;background:var(--surface2);border-radius:var(--radius);font-size:13px;">
-            &#9000; SSH终端: <code style="color:var(--green);">ssh root@192.168.11.106</code>
+            &#9000; SSH Terminal: <code style="color:var(--green);">ssh root@192.168.137.3</code>
           </div>
         </div>
       </div>
@@ -146,13 +146,15 @@ h2 { margin: 0; font-size: 15px; }
 
 <script>
 const API = '';
+const DISPLAY_NAMES = {'\u76f4\u7acb':'Stand Up','\u653e\u5e73':'Lay Flat','\u6293\u53d6':'Grab','\u642c\u8fd0':'Move','\u6293\u53d6\u4f4d':'Grab Position'};
+const displayName = value => DISPLAY_NAMES[value] || value || '-';
 let serialConnected = false;
 let logLines = [];
 const JOINT_STEP_PWM = 60;
 
 function addLog(text, kind='') {
   const now = new Date();
-  const stamp = now.toLocaleTimeString('zh-CN', {hour12:false});
+  const stamp = now.toLocaleTimeString('en-US', {hour12:false});
   logLines.unshift({stamp, text, kind});
   logLines = logLines.slice(0, 50);
   const box = document.getElementById('log-list');
@@ -161,7 +163,7 @@ function addLog(text, kind='') {
 
 function renderPoses(poses) {
   const grid = document.getElementById('pose-grid');
-  const builtin = ['直立', '放平', '抓取', '搬运'];
+  const builtin = ['\u76f4\u7acb', '\u653e\u5e73', '\u6293\u53d6', '\u642c\u8fd0', '\u6293\u53d6\u4f4d', '\u8f6c\u79fb', '\u53f3\u8f6c\u79fb', '\u5de6\u8f6c\u79fb'];
   poses.forEach(p => {
     if (builtin.includes(p.name)) return;
     if (document.getElementById('pose-' + p.name)) return;
@@ -180,15 +182,15 @@ async function refreshStatus() {
     const s = await res.json();
     serialConnected = Boolean(s.serial && s.serial.connected);
     document.getElementById('serial-dot').className = 'dot ' + (serialConnected ? 'on' : '');
-    document.getElementById('serial-text').textContent = serialConnected ? '已连接' : '未连接';
-    document.getElementById('serial-btn').textContent = serialConnected ? '断开串口' : '连接串口';
-    document.getElementById('pose-text').textContent = s.robot ? s.robot.current_pose : '未知';
+    document.getElementById('serial-text').textContent = serialConnected ? 'Connected' : 'Disconnected';
+    document.getElementById('serial-btn').textContent = serialConnected ? 'Disconnect Serial' : 'Connect Serial';
+    document.getElementById('pose-text').textContent = s.robot ? displayName(s.robot.current_pose) : 'Unknown';
     document.getElementById('last-cmd').textContent = s.serial ? (s.serial.last_command || '-') : '-';
     if (s.robot && s.robot.available_poses) renderPoses(s.robot.available_poses);
     if (s.robot && s.robot.servo_pwms) updateJointPwms(s.robot.servo_pwms);
   } catch (e) {
     document.getElementById('serial-dot').className = 'dot warn';
-    document.getElementById('serial-text').textContent = '服务离线';
+    document.getElementById('serial-text').textContent = 'Service Offline';
   }
 }
 
@@ -197,81 +199,81 @@ async function toggleSerial() {
     if (serialConnected) {
       const res = await fetch(API + '/api/serial/disconnect');
       const r = await res.json();
-      addLog(r.success ? '串口已断开' : '串口断开失败', r.success ? 'ok' : 'err');
+      addLog(r.success ? 'Serial disconnected' : 'Failed to disconnect serial', r.success ? 'ok' : 'err');
     } else {
       const res = await fetch(API + '/api/serial/connect');
       const r = await res.json();
-      addLog(r.success ? '串口已连接 ' + r.port : '串口连接失败', r.success ? 'ok' : 'err');
+      addLog(r.success ? 'Serial connected: ' + r.port : 'Failed to connect serial', r.success ? 'ok' : 'err');
     }
   } catch (e) {
-    addLog('串口请求失败', 'err');
+    addLog('Serial request failed', 'err');
   }
   refreshStatus();
 }
 
 async function doPose(name) {
-  addLog('执行姿态: ' + name, 'ok');
+  addLog('Running pose: ' + displayName(name), 'ok');
   try {
     const res = await fetch(API + '/api/robot/pose/' + encodeURIComponent(name), { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+    addLog(displayName(name) + (r.success ? ' complete' : ' failed'), r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('请求失败', 'err');
+    addLog('Request failed', 'err');
   }
   refreshStatus();
 }
 
 async function doSequence(name) {
-  addLog('执行序列: ' + name, 'ok');
+  addLog('Running sequence: ' + displayName(name), 'ok');
   try {
     const res = await fetch(API + '/api/robot/sequence/' + encodeURIComponent(name), { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+    addLog(displayName(name) + (r.success ? ' complete' : ' failed'), r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('序列请求失败', 'err');
+    addLog('Sequence request failed', 'err');
   }
   refreshStatus();
 }
 
 async function doStop() {
-  addLog('急停', 'err');
+  addLog('Emergency stop', 'err');
   try {
     const res = await fetch(API + '/api/robot/stop', { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? '急停完成' : '急停失败', r.success ? 'ok' : 'err');
+    addLog(r.success ? 'Emergency stop complete' : 'Emergency stop failed', r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('请求失败', 'err');
+    addLog('Request failed', 'err');
   }
   refreshStatus();
 }
 
 async function doGripper(action) {
-  const names = {open:'夹爪张开', close:'夹爪闭合', half:'夹爪半开'};
+  const names = {open:'Open Gripper', close:'Close Gripper', half:'Half Open'};
   addLog(names[action] || action, 'ok');
   try {
     const res = await fetch(API + '/api/robot/gripper/' + action, { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? (names[action] || action) + ' 完成' : (names[action] || action) + ' 失败', r.success ? 'ok' : 'err');
+    addLog((names[action] || action) + (r.success ? ' complete' : ' failed'), r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('请求失败', 'err');
+    addLog('Request failed', 'err');
   }
   refreshStatus();
 }
 
 async function doGripperStep(delta) {
-  const name = delta < 0 ? '夹爪微开' : '夹爪微合';
+  const name = delta < 0 ? 'Open Gripper Slightly' : 'Close Gripper Slightly';
   addLog(name, 'ok');
   try {
     const res = await fetch(API + '/api/robot/gripper_adjust?delta=' + delta, { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? name + ' 完成' : name + ' 失败', r.success ? 'ok' : 'err');
+    addLog(displayName(name) + (r.success ? ' complete' : ' failed'), r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('请求失败', 'err');
+    addLog('Request failed', 'err');
   }
   refreshStatus();
 }
 
-const JOINT_NAMES = ['底座', '肩部', '肘部1', '肘部2', '腕部', '夹爪'];
+const JOINT_NAMES = ['Base', 'Shoulder', 'Elbow 1', 'Elbow 2', 'Wrist', 'Gripper'];
 function renderJoints() {
   const c = document.getElementById('joint-controls');
   c.innerHTML = JOINT_NAMES.map((n, i) => `
@@ -298,18 +300,18 @@ async function doJointStep(id, dir) {
     addLog(JOINT_NAMES[id] + (dir === 'plus' ? ' PWM+' : ' PWM-') + JOINT_STEP_PWM + pwmText, 'ok');
     refreshStatus();
   } else {
-    addLog(JOINT_NAMES[id] + ' 失败', 'err');
+    addLog(JOINT_NAMES[id] + ' failed', 'err');
   }
 }
 
 async function doAllCenter() {
-  addLog('全部复位到中心', 'ok');
+  addLog('Centering all servos', 'ok');
   try {
     const res = await fetch(API + '/api/robot/all_center', { method: 'POST' });
     const r = await res.json();
-    addLog(r.success ? '复位完成' : '复位失败', r.success ? 'ok' : 'err');
+    addLog(r.success ? 'Reset complete' : 'Reset failed', r.success ? 'ok' : 'err');
   } catch (e) {
-    addLog('请求失败', 'err');
+    addLog('Request failed', 'err');
   }
   refreshStatus();
 }

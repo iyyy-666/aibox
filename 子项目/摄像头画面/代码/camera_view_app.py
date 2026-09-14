@@ -35,14 +35,14 @@ def gstreamer_capture_pipeline() -> str:
 class CameraViewApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("\u6444\u50cf\u5934\u753b\u9762")
+        self.root.title("Camera View")
         self.root.geometry("1180x720")
         self.root.minsize(960, 560)
         self.root.configure(bg="#111417")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.running = True
         self.mode = tk.StringVar(value="left")
-        self.status_text = tk.StringVar(value="\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934...")
+        self.status_text = tk.StringVar(value="Opening camera...")
         self.cap: cv2.VideoCapture | None = None
         self.frame: np.ndarray | None = None
         self.frame_lock = threading.Lock()
@@ -56,7 +56,7 @@ class CameraViewApp:
         top = tk.Frame(self.root, bg="#1c2228", height=54)
         top.pack(fill=tk.X)
         top.pack_propagate(False)
-        tk.Label(top, text="\u6444\u50cf\u5934\u753b\u9762", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=16)
+        tk.Label(top, text="Camera View", bg="#1c2228", fg="#f5f7fa", font=("Microsoft YaHei", 16, "bold")).pack(side=tk.LEFT, padx=16)
         tk.Label(top, textvariable=self.status_text, bg="#1c2228", fg="#aeb8c5").pack(side=tk.LEFT)
         body = tk.Frame(self.root, bg="#111417")
         body.pack(fill=tk.BOTH, expand=True)
@@ -65,10 +65,10 @@ class CameraViewApp:
         panel = tk.Frame(body, bg="#181d22", width=220)
         panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 12), pady=12)
         panel.pack_propagate(False)
-        for text, value in (("\u666e\u901a\u753b\u9762", "left"), ("\u5de6\u76ee", "left"), ("\u53f3\u76ee", "right"), ("\u539f\u59cb\u53cc\u76ee", "raw")):
+        for text, value in (("Standard View", "left"), ("Left Camera", "left"), ("Right Camera", "right"), ("Raw Stereo", "raw")):
             ttk.Radiobutton(panel, text=text, variable=self.mode, value=value).pack(anchor="w", padx=16, pady=8)
-        ttk.Button(panel, text="\u4fdd\u5b58\u5f53\u524d\u753b\u9762", command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(20, 8))
-        ttk.Button(panel, text="\u9000\u51fa", command=self.close).pack(fill=tk.X, padx=16)
+        ttk.Button(panel, text="Save Snapshot", command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(20, 8))
+        ttk.Button(panel, text="Exit", command=self.close).pack(fill=tk.X, padx=16)
 
     def _open_camera(self) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
@@ -82,7 +82,7 @@ class CameraViewApp:
     def _capture_loop(self) -> None:
         if USE_HARDWARE_DECODER and self._capture_hardware_loop():
             return
-        self._set_status("硬件解码不可用，已切换为兼容采集")
+        self._set_status("Hardware decoding unavailable; using compatible capture")
         retry_at = 0.0
         while self.running:
             if self.cap is None or not self.cap.isOpened():
@@ -91,15 +91,15 @@ class CameraViewApp:
                     continue
                 self.cap = self._open_camera()
                 if not self.cap.isOpened():
-                    self._set_status(f"\u6444\u50cf\u5934\u6253\u5f00\u5931\u8d25: {CAMERA_DEVICE}")
+                    self._set_status(f"Failed to open camera: {CAMERA_DEVICE}")
                     retry_at = time.time() + 2.0
                     continue
-                self._set_status(f"\u5df2\u6253\u5f00 {CAMERA_DEVICE} {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
+                self._set_status(f"Opened {CAMERA_DEVICE} {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
             ok, frame = self.cap.read()
             if not ok or frame is None:
                 self.cap.release()
                 self.cap = None
-                self._set_status("\u8bfb\u53d6\u753b\u9762\u5931\u8d25\uff0c\u6b63\u5728\u91cd\u8bd5...")
+                self._set_status("Camera read failed; retrying...")
                 continue
             with self.frame_lock:
                 self.frame = frame
@@ -116,7 +116,7 @@ class CameraViewApp:
             pipeline = Gst.parse_launch(gstreamer_capture_pipeline())
             sink = pipeline.get_by_name("sink")
             pipeline.set_state(Gst.State.PLAYING)
-            self._set_status(f"已打开 {CAMERA_DEVICE} 硬件解码 {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
+            self._set_status(f"Opened {CAMERA_DEVICE} Hardware Decode {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}")
             while self.running:
                 sample = sink.emit("try-pull-sample", Gst.SECOND)
                 if sample is None:
@@ -154,7 +154,7 @@ class CameraViewApp:
         self.canvas.delete("all")
         width, height = max(1, self.canvas.winfo_width()), max(1, self.canvas.winfo_height())
         if frame is None:
-            self.canvas.create_text(width // 2, height // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="\u7b49\u5f85\u6444\u50cf\u5934\u753b\u9762")
+            self.canvas.create_text(width // 2, height // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="Waiting for camera")
         else:
             view = self._compose_frame(frame)
             self.last_view = view.copy()
@@ -169,12 +169,12 @@ class CameraViewApp:
 
     def save_snapshot(self) -> None:
         if self.last_view is None:
-            self._set_status("\u8fd8\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u753b\u9762")
+            self._set_status("No frame available to save")
             return
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         path = SNAPSHOT_DIR / time.strftime("camera_%Y%m%d_%H%M%S.jpg")
         cv2.imwrite(str(path), self.last_view)
-        self._set_status(f"\u5df2\u4fdd\u5b58: {path}")
+        self._set_status(f"Saved: {path}")
 
     def close(self) -> None:
         self.running = False

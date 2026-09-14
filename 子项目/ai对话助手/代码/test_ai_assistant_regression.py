@@ -20,8 +20,8 @@ def test_normal_questions_are_not_treated_as_greetings():
     assert not module.is_fast_greeting("1+1等于多少")
 
 
-def test_launcher_uses_preload_and_fifty_percent_output():
+def test_launcher_uses_preload_and_full_output():
     launcher = MODULE_PATH.with_name("..") / "启动脚本" / "ai_assistant.sh"
     text = launcher.resolve().read_text(encoding="utf-8")
     assert "AI_LLM_PRELOAD=${AI_LLM_PRELOAD:-1}" in text
-    assert "amixer -c 0 sset PCM 50% unmute" in text
+    assert "amixer -c 0 sset PCM 100% unmute" in text

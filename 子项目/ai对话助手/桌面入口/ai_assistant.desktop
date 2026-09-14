@@ -1,6 +1,7 @@
 [Desktop Entry]
+Comment=Local English AI voice assistant
 Type=Application
-Name=AI对话助手
+Name=AI Assistant
 Exec=/usr/local/bin/ai_assistant.sh
 Icon=/root/robot_arm/assets/icons/ai.png
 Terminal=false

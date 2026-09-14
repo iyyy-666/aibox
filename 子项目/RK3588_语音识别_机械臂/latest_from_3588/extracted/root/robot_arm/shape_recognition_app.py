@@ -12,7 +12,8 @@ import tkinter as tk
 import cv2
 import numpy as np
 
-from vision_targeting import draw_target_roi, target_roi
+from vision_targeting import draw_target_roi, split_stereo, target_roi
+from gimbal_controls import GimbalControls
 
 CAMERA_DEVICE = os.getenv("SHAPE_CAMERA_DEVICE", "/dev/video41")
 CAMERA_WIDTH = int(os.getenv("SHAPE_CAMERA_WIDTH", "1280"))
@@ -26,34 +27,34 @@ MAX_RESULTS = int(os.getenv("SHAPE_MAX_RESULTS", "3"))
 STABLE_HITS = int(os.getenv("SHAPE_STABLE_HITS", "3"))
 SNAPSHOT_DIR = Path(os.getenv("SHAPE_SNAPSHOT_DIR", "/root/robot_arm/assets/shape_snapshots"))
 
-T_TITLE = "\u5f62\u72b6\u8bc6\u522b"
-T_OPENING = "\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934..."
-T_WAIT = "\u7b49\u5f85\u753b\u9762"
-T_RESULT = "\u8bc6\u522b\u7ed3\u679c"
-T_SAVE = "\u4fdd\u5b58\u5f53\u524d\u753b\u9762"
-T_EXIT = "\u9000\u51fa"
-T_WAIT_DETECT = "\u7b49\u5f85\u8bc6\u522b"
-T_NO_SHAPE = "\u672a\u68c0\u6d4b\u5230\u660e\u663e\u5f62\u72b6"
-T_SAVED = "\u5df2\u4fdd\u5b58"
-T_NO_SAVE = "\u8fd8\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u753b\u9762"
-T_CAMERA_FAIL = "\u6444\u50cf\u5934\u6253\u5f00\u5931\u8d25"
-T_READ_FAIL = "\u8bfb\u53d6\u753b\u9762\u5931\u8d25\uff0c\u6b63\u5728\u91cd\u8bd5..."
-T_OPENED = "\u5df2\u6253\u5f00"
-T_NORMAL_VIEW = "\u6b63\u5e38\u753b\u9762"
-T_NAME = "\u5f62\u72b6"
-T_CENTER = "\u4f4d\u7f6e"
-T_CONF = "\u7f6e\u4fe1\u5ea6"
-T_AREA = "\u9762\u79ef"
+T_TITLE = "Shape Recognition"
+T_OPENING = "Opening camera..."
+T_WAIT = "Waiting for video"
+T_RESULT = "Detection Results"
+T_SAVE = "Save Snapshot"
+T_EXIT = "Exit"
+T_WAIT_DETECT = "Waiting for detection"
+T_NO_SHAPE = "No shape detected"
+T_SAVED = "Saved"
+T_NO_SAVE = "No frame available to save"
+T_CAMERA_FAIL = "Failed to open camera"
+T_READ_FAIL = "Camera read failed; retrying..."
+T_OPENED = "Opened"
+T_NORMAL_VIEW = "Standard View"
+T_NAME = "Shape"
+T_CENTER = "Position"
+T_CONF = "Confidence"
+T_AREA = "Area"
 
-SHAPE_TRIANGLE = "\u4e09\u89d2\u5f62"
-SHAPE_SQUARE = "\u6b63\u65b9\u5f62"
-SHAPE_RECTANGLE = "\u957f\u65b9\u5f62"
-SHAPE_CIRCLE = "\u5706\u5f62"
-SHAPE_ELLIPSE = "\u692d\u5706\u5f62"
-SHAPE_PENTAGON = "\u4e94\u8fb9\u5f62"
-SHAPE_HEXAGON = "\u516d\u8fb9\u5f62"
-SHAPE_STAR = "\u661f\u5f62"
-SHAPE_POLYGON = "\u591a\u8fb9\u5f62"
+SHAPE_TRIANGLE = "Triangle"
+SHAPE_SQUARE = "Square"
+SHAPE_RECTANGLE = "Rectangle"
+SHAPE_CIRCLE = "Circle"
+SHAPE_ELLIPSE = "Ellipse"
+SHAPE_PENTAGON = "Pentagon"
+SHAPE_HEXAGON = "Hexagon"
+SHAPE_STAR = "Star"
+SHAPE_POLYGON = "Polygon"
 
 COLORS = [
     (80, 220, 245),
@@ -125,6 +126,7 @@ class ShapeRecognitionApp:
         self.result_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
         self.result_box.insert("1.0", T_WAIT_DETECT)
         self.result_box.configure(state=tk.DISABLED)
+        self.gimbal_controls = GimbalControls(side, self.root, self._set_status)
         ttk.Button(side, text=T_SAVE, command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
         ttk.Button(side, text=T_EXIT, command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))
         tk.Label(side, textvariable=self.summary_text, bg="#181d22", fg="#9fb0c2", justify=tk.LEFT, font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 16))
@@ -171,8 +173,7 @@ class ShapeRecognitionApp:
         self.root.after(0, lambda: self.status_text.set(text))
 
     def _normal_frame(self, frame: np.ndarray) -> np.ndarray:
-        mid = frame.shape[1] // 2
-        return frame[:, :mid].copy()
+        return split_stereo(frame)[0]
 
     def _detect_loop(self) -> None:
         while self.running:

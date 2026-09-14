@@ -22,6 +22,7 @@ from speech_context import HOTWORDS, correct_text, match_command, normalize_text
 WHISPER_BIN = os.getenv("WHISPER_BIN", "/tmp/whisper.cpp/build/bin/whisper-cli")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "/tmp/whisper.cpp/models/ggml-base.bin")
 VOICE_BACKEND = os.getenv("VOICE_BACKEND", "auto").strip().lower()
+VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "en").strip().lower() or "en"
 PARAFORMER_MODEL_DIR = os.getenv("PARAFORMER_MODEL_DIR", "/root/sherpa_models/paraformer-large-int8")
 SHERPA_ASR_DIR = os.getenv(
     "SHERPA_ASR_DIR",
@@ -335,6 +336,8 @@ class VoiceEngine:
         self.running = False
         self._thread = None
         self._loaded = False
+        self._loading = False
+        self._load_lock = threading.Lock()
         self._busy = False
         self._backend = normalize_backend_name(VOICE_BACKEND)
         self._sherpa_model = None
@@ -367,6 +370,16 @@ class VoiceEngine:
         self._pending_watcher = None
 
     def load(self, device=None):
+        with self._load_lock:
+            if self._loaded:
+                return True
+            self._loading = True
+            try:
+                return self._load_once(device)
+            finally:
+                self._loading = False
+
+    def _load_once(self, device=None):
         if device:
             self._device = device
         elif VOICE_DEVICE:
@@ -377,6 +390,9 @@ class VoiceEngine:
         self._backend = self._pick_backend()
         if self._backend == "paraformer":
             if not self._load_paraformer_model():
+                return False
+        elif self._backend == "sensevoice":
+            if not self._load_sensevoice_model():
                 return False
         elif self._backend == "sherpa":
             if not self._load_sherpa_model():
@@ -406,6 +422,8 @@ class VoiceEngine:
         return True
 
     def _pick_backend(self) -> str:
+        if VOICE_BACKEND in {"sensevoice", "funasr"} and self._find_sensevoice_model():
+            return "sensevoice"
         if normalize_backend_name(VOICE_BACKEND) == "paraformer":
             return "paraformer"
         if VOICE_BACKEND in {"vosk", "auto"} and self._find_vosk_model():
@@ -635,13 +653,10 @@ class VoiceEngine:
         consecutive_misses = 0
         while self.running:
             try:
-                if self._robot_busy():
+                robot_busy = self._robot_busy()
+                if robot_busy:
                     busy_seen = True
-                    self._drain_pcm(inp, 4)
-                    time.sleep(0.05)
-                    continue
-
-                if busy_seen:
+                elif busy_seen:
                     self._close_pcm(inp)
                     time.sleep(0.18)
                     inp = self._open_pcm()
@@ -705,7 +720,7 @@ class VoiceEngine:
                     f"wav={debug_wav} raw={raw_text!r} normalized={normalized_text!r}"
                 )
                 print(f"[语音] {self.last_text}", flush=True)
-                self._match(self.last_text)
+                self._match(self.last_text, stop_only=robot_busy)
                 self._last_command_time = time.monotonic()
             except Exception as e:
                 self._busy = False
@@ -853,6 +868,8 @@ class VoiceEngine:
             return ""
 
     def _normalize_asr_text(self, text: str) -> str:
+        if not self.commands:
+            return (text or "").strip()
         return correct_text(text, "robot", strict=True)
 
     def _recognize_pair(self, audio: bytes) -> tuple[str, str]:
@@ -890,6 +907,8 @@ class VoiceEngine:
         )
 
     def _recognize_raw(self, audio: bytes) -> str:
+        if self._backend == "sensevoice":
+            return self._recognize_sensevoice(audio)
         if self._backend == "paraformer":
             return self._recognize_paraformer(audio)
         if self._backend == "sherpa":
@@ -923,7 +942,7 @@ class VoiceEngine:
                     "-m",
                     WHISPER_MODEL,
                     "-l",
-                    "zh",
+                    VOICE_LANGUAGE,
                     "-f",
                     wav_path,
                     "--no-timestamps",
@@ -1017,7 +1036,7 @@ class VoiceEngine:
             res = self._sensevoice_model.generate(
                 input=wav_path,
                 cache={},
-                language="zh",
+                language=VOICE_LANGUAGE,
                 use_itn=True,
             )
             if not res:
@@ -1040,13 +1059,16 @@ class VoiceEngine:
                 return text
         return ""
 
-    def _match(self, text):
+    def _match(self, text, *, stop_only: bool = False):
         if not text:
             return
         self._last_recog_time = time.time()
         matched = match_command(text, tuple(self.commands.keys()))
         if matched and not is_command_candidate(text, tuple(self.commands.keys())):
             timing_log(f"reject_unregistered_command text={text!r} matched={matched!r}")
+            return
+        if stop_only and matched != "停止":
+            timing_log(f"reject_command_while_robot_busy text={text!r} matched={matched!r}")
             return
 
         for kw, cb in self.commands.items():
@@ -1060,6 +1082,9 @@ class VoiceEngine:
 
     def _dispatch_callback(self, command, callback) -> None:
         if not callable(callback):
+            return
+        if command == "停止":
+            self._invoke_callback(command, callback)
             return
         with self._pending_callback_lock:
             self._pending_callback = (command, callback)
@@ -1103,11 +1128,16 @@ class VoiceEngine:
                 model_name += "+SenseVoice"
         elif self._backend == "whisper":
             model_name = Path(WHISPER_MODEL).name
+        elif self._backend == "paraformer":
+            model_name = Path(self._find_paraformer_model() or "").name
+        elif self._backend == "sensevoice":
+            model_name = Path(self._find_sensevoice_model() or "").name
         else:
             model_name = Path(self._find_vosk_model() or "").name
         return {
             "running": self.running,
             "loaded": self._loaded,
+            "loading": self._loading,
             "busy": self._busy,
             "backend": self._backend,
             "device": self._device,

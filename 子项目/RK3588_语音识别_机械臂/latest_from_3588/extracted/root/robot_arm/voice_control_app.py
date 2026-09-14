@@ -50,7 +50,7 @@ def main():
     _start_server_once()
     _wait_for_server()
     webview.create_window(
-        "语音简单控制机械臂",
+        "Voice-controlled Robot Arm",
         f"http://127.0.0.1:{WEB_PORT}/voice",
         width=980,
         height=720,

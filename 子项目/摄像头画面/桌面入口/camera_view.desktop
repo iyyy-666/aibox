@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=摄像头画面
-Name[zh_CN]=摄像头画面
-Comment=查看双目摄像头画面
+Name=Stereo Camera View
+Name[zh_CN]=Stereo Camera View
+Comment=View the stereo camera feed
 Exec=/usr/local/bin/camera_view.sh
 Icon=/root/robot_arm/assets/icons/camera.png
 Terminal=false

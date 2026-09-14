@@ -13,7 +13,8 @@ import tkinter as tk
 import cv2
 import numpy as np
 
-from vision_targeting import box_is_target, draw_target_roi, stable_filter
+from vision_targeting import box_is_target, draw_target_roi, split_stereo, stable_filter
+from gimbal_controls import GimbalControls
 
 CAMERA_DEVICE = os.getenv("PLATE_CAMERA_DEVICE", "/dev/video41")
 CAMERA_WIDTH = int(os.getenv("PLATE_CAMERA_WIDTH", "1280"))
@@ -26,30 +27,30 @@ MIN_PLATE_AREA = int(os.getenv("PLATE_MIN_AREA", "1600"))
 STABLE_HITS = int(os.getenv("PLATE_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("PLATE_SNAPSHOT_DIR", "/root/robot_arm/assets/plate_snapshots"))
 
-T_TITLE = "\u8f66\u724c\u8bc6\u522b"
-T_OPENING = "\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934..."
-T_WAIT = "\u7b49\u5f85\u753b\u9762"
-T_RESULT = "\u8bc6\u522b\u7ed3\u679c"
-T_SAVE = "\u4fdd\u5b58\u5f53\u524d\u753b\u9762"
-T_EXIT = "\u9000\u51fa"
-T_WAIT_DETECT = "\u7b49\u5f85\u8bc6\u522b"
-T_NO_PLATE = "\u672a\u68c0\u6d4b\u5230\u8f66\u724c"
-T_SAVED = "\u5df2\u4fdd\u5b58"
-T_NO_SAVE = "\u8fd8\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u753b\u9762"
-T_CAMERA_FAIL = "\u6444\u50cf\u5934\u6253\u5f00\u5931\u8d25"
-T_READ_FAIL = "\u8bfb\u53d6\u753b\u9762\u5931\u8d25\uff0c\u6b63\u5728\u91cd\u8bd5..."
-T_OPENED = "\u5df2\u6253\u5f00"
-T_NORMAL_VIEW = "\u6b63\u5e38\u753b\u9762"
-T_BLUE = "\u84dd\u724c"
-T_GREEN = "\u7eff\u724c"
-T_UNKNOWN = "\u672a\u77e5"
-T_OIL = "\u6cb9\u8f66"
-T_EV = "\u7535\u8f66"
-T_NUMBER = "\u8f66\u724c\u53f7"
-T_COLOR = "\u989c\u8272"
-T_TYPE = "\u7c7b\u578b"
-T_CONF = "\u7f6e\u4fe1\u5ea6"
-T_SOURCE = "\u6765\u6e90"
+T_TITLE = "Chinese License Plate Recognition"
+T_OPENING = "Opening camera..."
+T_WAIT = "Waiting for video"
+T_RESULT = "Detection Results"
+T_SAVE = "Save Snapshot"
+T_EXIT = "Exit"
+T_WAIT_DETECT = "Waiting for detection"
+T_NO_PLATE = "No license plate detected"
+T_SAVED = "Saved"
+T_NO_SAVE = "No frame available to save"
+T_CAMERA_FAIL = "Failed to open camera"
+T_READ_FAIL = "Camera read failed; retrying..."
+T_OPENED = "Opened"
+T_NORMAL_VIEW = "Standard View"
+T_BLUE = "Blue Plate"
+T_GREEN = "Green Plate"
+T_UNKNOWN = "Unknown"
+T_OIL = "Fuel Vehicle"
+T_EV = "Electric Vehicle"
+T_NUMBER = "Plate Number"
+T_COLOR = "Color"
+T_TYPE = "Type"
+T_CONF = "Confidence"
+T_SOURCE = "Source"
 
 BOX_BLUE = (245, 120, 40)
 BOX_GREEN = (70, 220, 90)
@@ -116,6 +117,7 @@ class PlateRecognitionApp:
         self.result_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
         self.result_box.insert("1.0", T_WAIT_DETECT)
         self.result_box.configure(state=tk.DISABLED)
+        self.gimbal_controls = GimbalControls(side, self.root, self._set_status)
         ttk.Button(side, text=T_SAVE, command=self.save_snapshot).pack(fill=tk.X, padx=16, pady=(4, 8))
         ttk.Button(side, text=T_EXIT, command=self.close).pack(fill=tk.X, padx=16, pady=(0, 14))
         tk.Label(side, textvariable=self.summary_text, bg="#181d22", fg="#9fb0c2", justify=tk.LEFT, font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 16))
@@ -171,8 +173,7 @@ class PlateRecognitionApp:
         self.root.after(0, lambda: self.status_text.set(text))
 
     def _normal_frame(self, frame: np.ndarray) -> np.ndarray:
-        mid = frame.shape[1] // 2
-        return frame[:, :mid].copy()
+        return split_stereo(frame)[0]
 
     def _detect_loop(self) -> None:
         while self.running:

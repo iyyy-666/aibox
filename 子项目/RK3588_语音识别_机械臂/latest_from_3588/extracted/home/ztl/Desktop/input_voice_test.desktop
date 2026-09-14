@@ -1,6 +1,7 @@
 [Desktop Entry]
+Comment=Test English speech recognition
 Type=Application
-Name=输入语音测试
+Name=English Voice Input Test
 Exec=/usr/local/bin/input_voice_test.sh
 Icon=/root/robot_arm/assets/icons/robot_voice.png
 Terminal=false

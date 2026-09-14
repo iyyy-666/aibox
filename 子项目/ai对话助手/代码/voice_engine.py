@@ -22,6 +22,7 @@ from speech_context import HOTWORDS, correct_text, match_command, normalize_text
 WHISPER_BIN = os.getenv("WHISPER_BIN", "/tmp/whisper.cpp/build/bin/whisper-cli")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "/tmp/whisper.cpp/models/ggml-base.bin")
 VOICE_BACKEND = os.getenv("VOICE_BACKEND", "auto").strip().lower()
+VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "en").strip().lower() or "en"
 PARAFORMER_MODEL_DIR = os.getenv("PARAFORMER_MODEL_DIR", "/root/sherpa_models/paraformer-large-int8")
 SHERPA_ASR_DIR = os.getenv(
     "SHERPA_ASR_DIR",
@@ -59,6 +60,8 @@ MIN_TRIGGER_MARGIN = float(os.getenv("VOICE_MIN_TRIGGER_MARGIN", "0.009"))
 MAX_DYNAMIC_TRIGGER = float(os.getenv("VOICE_MAX_DYNAMIC_TRIGGER", "0.22"))
 MAX_DYNAMIC_SILENCE = float(os.getenv("VOICE_MAX_DYNAMIC_SILENCE", "0.14"))
 EDGE_TRIM_SEC = float(os.getenv("VOICE_EDGE_TRIM_SEC", "0.18"))
+TRIGGER_CONFIRM_FRAMES = max(1, int(os.getenv("VOICE_TRIGGER_CONFIRM_FRAMES", "3")))
+POST_COMMAND_COOLDOWN_SEC = float(os.getenv("VOICE_POST_COMMAND_COOLDOWN_SEC", "0.35"))
 
 COMMAND_ALIASES = {
     "直立": ("直立", "直", "立", "竖", "站", "起", "起来", "直起", "立起", "站立", "竖立", "竖直", "立正", "抬起", "升起", "立起来", "竖起来", "竖直起来", "之力", "直力", "支立", "之立", "只立", "智力", "治理", "实力", "纸币", "指令"),
@@ -202,6 +205,22 @@ def adaptive_threshold(noise: float, base: float, multiplier: float, margin: flo
     return max(base, min(maximum, noise * multiplier + margin))
 
 
+def clamp_level(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def dbfs_percent(rms: float, floor_db: float = -60.0) -> int:
+    level = clamp_level(rms)
+    if level <= 0.0:
+        return 0
+    db = max(floor_db, 20.0 * np.log10(level))
+    return int(round(max(0.0, min(100.0, (db - floor_db) * 100.0 / -floor_db))))
+
+
+def trigger_confirmed(previous_frames: int, above_trigger: bool, required_frames: int = TRIGGER_CONFIRM_FRAMES) -> bool:
+    return above_trigger and previous_frames + 1 >= max(1, required_frames)
+
+
 def put_latest(command_queue: queue.Queue, item) -> None:
     """Replace queued work so only the newest command remains pending."""
     while True:
@@ -268,6 +287,7 @@ def is_command_candidate(text: str, commands: tuple[str, ...]) -> bool:
     for command in commands:
         allowed.add(_normalize_text(command))
         allowed.update(_normalize_text(alias) for alias in HOTWORDS.get("robot", {}).get(command, ()))
+        allowed.update(_normalize_text(alias) for alias in COMMAND_ALIASES.get(command, ()))
     return normalized in {item for item in allowed if item}
 
 
@@ -316,6 +336,8 @@ class VoiceEngine:
         self.running = False
         self._thread = None
         self._loaded = False
+        self._loading = False
+        self._load_lock = threading.Lock()
         self._busy = False
         self._backend = normalize_backend_name(VOICE_BACKEND)
         self._sherpa_model = None
@@ -328,6 +350,7 @@ class VoiceEngine:
         self.commands = {}
         self._device = VOICE_DEVICE or self._find_mic()
         self.last_peak = 0.0
+        self.last_rms = 0.0
         self.last_text = ""
         self.last_raw_text = ""
         self.last_normalized_text = ""
@@ -337,6 +360,7 @@ class VoiceEngine:
         self.last_command = ""
         self.last_error = ""
         self._last_recog_time = 0.0
+        self._last_command_time = 0.0
         self._robot = None
         self._noise_floor = 0.0
         self._dynamic_trigger = TRIGGER_PEAK
@@ -346,6 +370,16 @@ class VoiceEngine:
         self._pending_watcher = None
 
     def load(self, device=None):
+        with self._load_lock:
+            if self._loaded:
+                return True
+            self._loading = True
+            try:
+                return self._load_once(device)
+            finally:
+                self._loading = False
+
+    def _load_once(self, device=None):
         if device:
             self._device = device
         elif VOICE_DEVICE:
@@ -356,6 +390,9 @@ class VoiceEngine:
         self._backend = self._pick_backend()
         if self._backend == "paraformer":
             if not self._load_paraformer_model():
+                return False
+        elif self._backend == "sensevoice":
+            if not self._load_sensevoice_model():
                 return False
         elif self._backend == "sherpa":
             if not self._load_sherpa_model():
@@ -385,6 +422,8 @@ class VoiceEngine:
         return True
 
     def _pick_backend(self) -> str:
+        if VOICE_BACKEND in {"sensevoice", "funasr"} and self._find_sensevoice_model():
+            return "sensevoice"
         if normalize_backend_name(VOICE_BACKEND) == "paraformer":
             return "paraformer"
         if VOICE_BACKEND in {"vosk", "auto"} and self._find_vosk_model():
@@ -395,7 +434,7 @@ class VoiceEngine:
 
     def _find_paraformer_model(self) -> str | None:
         model_dir = Path(PARAFORMER_MODEL_DIR)
-        if (model_dir / "tokens.txt").exists() and ((model_dir / "model.int8.onnx").exists() or (model_dir / "model.onnx").exists()):
+        if (model_dir / "tokens.json").exists() and (model_dir / "model_quant.onnx").exists():
             return str(model_dir)
         return None
 
@@ -406,15 +445,13 @@ class VoiceEngine:
             print(f"[语音] {self.last_error}")
             return False
         try:
-            import sherpa_onnx
-            model_path = Path(model_dir) / ("model.int8.onnx" if (Path(model_dir) / "model.int8.onnx").exists() else "model.onnx")
-            model_config = sherpa_onnx.OfflineModelConfig(
-                paraformer=sherpa_onnx.OfflineParaformerModelConfig(str(model_path)),
-                tokens=str(Path(model_dir) / "tokens.txt"),
-                num_threads=max(1, int(os.getenv("VOICE_MODEL_THREADS", "4"))),
-                provider="cpu",
+            from funasr_onnx import Paraformer
+            self._paraformer_model = Paraformer(
+                model_dir,
+                device_id="-1",
+                quantize=True,
+                intra_op_num_threads=max(1, int(os.getenv("VOICE_MODEL_THREADS", "4"))),
             )
-            self._paraformer_model = sherpa_onnx.OfflineRecognizer(sherpa_onnx.OfflineRecognizerConfig(model_config=model_config))
             print(f"[语音] paraformer模型就绪 ({model_dir})")
             return True
         except Exception as exc:
@@ -616,19 +653,21 @@ class VoiceEngine:
         consecutive_misses = 0
         while self.running:
             try:
-                if self._robot_busy():
+                robot_busy = self._robot_busy()
+                if robot_busy:
                     busy_seen = True
-                    self._drain_pcm(inp, 4)
-                    time.sleep(0.05)
-                    continue
-
-                if busy_seen:
+                elif busy_seen:
                     self._close_pcm(inp)
                     time.sleep(0.18)
                     inp = self._open_pcm()
                     self._calibrate_noise(inp)
                     busy_seen = False
                     consecutive_misses = 0
+
+                if time.monotonic() - self._last_command_time < POST_COMMAND_COOLDOWN_SEC:
+                    self._drain_pcm(inp, 2)
+                    time.sleep(0.03)
+                    continue
 
                 t_record = time.time()
                 audio, peak = self._record_utterance(inp)
@@ -681,7 +720,8 @@ class VoiceEngine:
                     f"wav={debug_wav} raw={raw_text!r} normalized={normalized_text!r}"
                 )
                 print(f"[语音] {self.last_text}", flush=True)
-                self._match(self.last_text)
+                self._match(self.last_text, stop_only=robot_busy)
+                self._last_command_time = time.monotonic()
             except Exception as e:
                 self._busy = False
                 self.last_error = str(e)
@@ -702,6 +742,7 @@ class VoiceEngine:
         short_utterance_samples = max(1, int(SHORT_UTTERANCE_SEC * SAMPLE_RATE))
         captured_samples = 0
         silence_samples = 0
+        trigger_frames = 0
 
         while self.running:
             try:
@@ -720,14 +761,16 @@ class VoiceEngine:
 
             boosted = np.clip(raw.astype(np.float32) * GAIN, -32768, 32767).astype(np.int16)
             frame_peak = float(np.max(np.abs(boosted))) / 32768.0
-            self.last_peak = frame_peak
+            self.last_peak = clamp_level(float(np.max(np.abs(raw.astype(np.float32))) / 32768.0))
+            self.last_rms = clamp_level(float(np.sqrt(np.mean(raw.astype(np.float32) ** 2)) / 32768.0))
             pre_roll.append(boosted.tobytes())
 
             trigger_peak = self._dynamic_trigger
             silence_peak = self._dynamic_silence
 
             if frame_peak >= trigger_peak:
-                if not speaking:
+                trigger_frames += 1
+                if not speaking and trigger_confirmed(trigger_frames - 1, True):
                     speaking = True
                     frames.extend(pre_roll)
                     captured_samples += sum(len(frame) // 2 for frame in pre_roll)
@@ -748,6 +791,9 @@ class VoiceEngine:
                 else:
                     silence_frames = 0
                     silence_samples = 0
+                trigger_frames = 0
+            else:
+                trigger_frames = 0
                 fast_done = (
                     captured_samples >= min_samples
                     and captured_samples <= short_utterance_samples
@@ -822,6 +868,8 @@ class VoiceEngine:
             return ""
 
     def _normalize_asr_text(self, text: str) -> str:
+        if not self.commands:
+            return (text or "").strip()
         return correct_text(text, "robot", strict=True)
 
     def _recognize_pair(self, audio: bytes) -> tuple[str, str]:
@@ -859,6 +907,8 @@ class VoiceEngine:
         )
 
     def _recognize_raw(self, audio: bytes) -> str:
+        if self._backend == "sensevoice":
+            return self._recognize_sensevoice(audio)
         if self._backend == "paraformer":
             return self._recognize_paraformer(audio)
         if self._backend == "sherpa":
@@ -892,7 +942,7 @@ class VoiceEngine:
                     "-m",
                     WHISPER_MODEL,
                     "-l",
-                    "zh",
+                    VOICE_LANGUAGE,
                     "-f",
                     wav_path,
                     "--no-timestamps",
@@ -963,10 +1013,11 @@ class VoiceEngine:
             return ""
         try:
             samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-            stream = self._paraformer_model.create_stream()
-            stream.accept_waveform(SAMPLE_RATE, samples)
-            self._paraformer_model.decode_stream(stream)
-            return (self._paraformer_model.get_result(stream).text or "").strip()
+            result = self._paraformer_model(samples)
+            if not result:
+                return ""
+            pred = result[0].get("preds", "")
+            return (pred[0] if isinstance(pred, tuple) else pred or "").strip()
         except Exception as exc:
             self.last_error = str(exc)
             return ""
@@ -985,7 +1036,7 @@ class VoiceEngine:
             res = self._sensevoice_model.generate(
                 input=wav_path,
                 cache={},
-                language="zh",
+                language=VOICE_LANGUAGE,
                 use_itn=True,
             )
             if not res:
@@ -1008,11 +1059,17 @@ class VoiceEngine:
                 return text
         return ""
 
-    def _match(self, text):
+    def _match(self, text, *, stop_only: bool = False):
         if not text:
             return
         self._last_recog_time = time.time()
         matched = match_command(text, tuple(self.commands.keys()))
+        if matched and not is_command_candidate(text, tuple(self.commands.keys())):
+            timing_log(f"reject_unregistered_command text={text!r} matched={matched!r}")
+            return
+        if stop_only and matched != "停止":
+            timing_log(f"reject_command_while_robot_busy text={text!r} matched={matched!r}")
+            return
 
         for kw, cb in self.commands.items():
             if kw == matched:
@@ -1025,6 +1082,9 @@ class VoiceEngine:
 
     def _dispatch_callback(self, command, callback) -> None:
         if not callable(callback):
+            return
+        if command == "停止":
+            self._invoke_callback(command, callback)
             return
         with self._pending_callback_lock:
             self._pending_callback = (command, callback)
@@ -1068,11 +1128,16 @@ class VoiceEngine:
                 model_name += "+SenseVoice"
         elif self._backend == "whisper":
             model_name = Path(WHISPER_MODEL).name
+        elif self._backend == "paraformer":
+            model_name = Path(self._find_paraformer_model() or "").name
+        elif self._backend == "sensevoice":
+            model_name = Path(self._find_sensevoice_model() or "").name
         else:
             model_name = Path(self._find_vosk_model() or "").name
         return {
             "running": self.running,
             "loaded": self._loaded,
+            "loading": self._loading,
             "busy": self._busy,
             "backend": self._backend,
             "device": self._device,
@@ -1083,6 +1148,7 @@ class VoiceEngine:
             "channels": 1,
             "pcm_format": "s16le",
             "peak": float(self.last_peak if self.running else 0.0),
+            "rms": float(self.last_rms if self.running else 0.0),
             "noise_floor": self._noise_floor,
             "trigger_peak": self._dynamic_trigger,
             "silence_peak": self._dynamic_silence,

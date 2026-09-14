@@ -31,19 +31,19 @@ HOLD_MISSES = int(os.getenv("PALM_HOLD_MISSES", "3"))
 USE_MEDIAPIPE = os.getenv("PALM_MEDIAPIPE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 SNAPSHOT_DIR = Path(os.getenv("PALM_SNAPSHOT_DIR", "/root/robot_arm/assets/palm_snapshots"))
 
-T_TITLE = "\u624b\u638c\u8bc6\u522b\uff08\u53cc\u76ee\uff09"
-T_OPENING = "\u6b63\u5728\u6253\u5f00\u53cc\u76ee\u6444\u50cf\u5934..."
-T_RESULT = "\u8bc6\u522b\u7ed3\u679c"
-T_WAIT = "\u7b49\u5f85\u624b\u638c\u8fdb\u5165\u753b\u9762"
-T_NO_HAND = "\u672a\u68c0\u6d4b\u5230\u624b\u638c"
-T_SAVE = "\u4fdd\u5b58\u5f53\u524d\u753b\u9762"
-T_EXIT = "\u9000\u51fa"
-T_CAMERA_FAIL = "\u6444\u50cf\u5934\u6253\u5f00\u5931\u8d25"
-T_READ_FAIL = "\u8bfb\u53d6\u753b\u9762\u5931\u8d25\uff0c\u6b63\u5728\u91cd\u8bd5..."
-T_OPENED = "\u5df2\u6253\u5f00"
-T_NORMAL_VIEW = "\u53cc\u76ee\u6b63\u5e38\u753b\u9762"
-T_SAVED = "\u5df2\u4fdd\u5b58"
-T_NO_SAVE = "\u8fd8\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u753b\u9762"
+T_TITLE = "Palm and Gesture Recognition"
+T_OPENING = "Opening stereo camera..."
+T_RESULT = "Detection Results"
+T_WAIT = "Place a hand in view"
+T_NO_HAND = "No hand detected"
+T_SAVE = "Save Snapshot"
+T_EXIT = "Exit"
+T_CAMERA_FAIL = "Failed to open camera"
+T_READ_FAIL = "Camera read failed; retrying..."
+T_OPENED = "Opened"
+T_NORMAL_VIEW = "Stereo View"
+T_SAVED = "Saved"
+T_NO_SAVE = "No frame available to save"
 
 
 @dataclass
@@ -231,7 +231,7 @@ class PalmRecognitionApp:
             solidity = area / hull_area
             fingers = self._count_fingers(contour, (x, y, bw, bh))
             gesture, confidence = self._classify_gesture(fingers, solidity, bw, bh, area)
-            canonical = {"\u77f3\u5934": "rock", "\u526a\u5200": "scissors", "\u5e03": "paper"}.get(gesture)
+            canonical = {"Rock": "rock", "Scissors": "scissors", "Paper": "paper"}.get(gesture)
             if canonical is not None:
                 detections.append((canonical, (x, y, bw, bh), confidence, fingers))
         detections.sort(key=lambda item: item[2], reverse=True)
@@ -248,7 +248,7 @@ class PalmRecognitionApp:
                 candidates.append((gesture, box, confidence, fingers, "Contour"))
 
         detections: list[HandDetection] = []
-        labels = {"rock": "\u77f3\u5934", "scissors": "\u526a\u5200", "paper": "\u5e03", "hand": "\u624b\u638c"}
+        labels = {"rock": "Rock", "scissors": "Scissors", "paper": "Paper", "hand": "Palm"}
         for gesture, box, confidence, fingers, source in candidates[:1]:
             stereo = match_stereo_candidate(box, right_boxes, left.shape)
             tracked = self._tracker.update(box)
@@ -300,21 +300,21 @@ class PalmRecognitionApp:
     def _classify_gesture(self, fingers: int, solidity: float, w: int, h: int, area: float) -> tuple[str, float]:
         aspect = w / max(float(h), 1.0)
         if fingers >= 4 or (fingers >= 3 and solidity < 0.78):
-            return "\u5e03", min(0.95, 0.62 + fingers * 0.07)
+            return "Paper", min(0.95, 0.62 + fingers * 0.07)
         if fingers in (2, 3):
-            return "\u526a\u5200", 0.78 if aspect < 1.55 else 0.68
+            return "Scissors", 0.78 if aspect < 1.55 else 0.68
         if solidity > 0.72 or fingers <= 1:
-            return "\u77f3\u5934", 0.76 if area > MIN_AREA * 1.5 else 0.62
-        return "\u624b\u638c", 0.55
+            return "Rock", 0.76 if area > MIN_AREA * 1.5 else 0.62
+        return "Palm", 0.55
 
     def _annotate(self, image: np.ndarray, detections: list[HandDetection]) -> np.ndarray:
         out = image.copy()
         draw_target_roi(out)
         for det in detections:
             x, y, w, h = det.box
-            color = (80, 220, 245) if det.gesture == "\u5e03" else (245, 185, 75) if det.gesture == "\u526a\u5200" else (110, 210, 120)
+            color = (80, 220, 245) if det.gesture == "Paper" else (245, 185, 75) if det.gesture == "Scissors" else (110, 210, 120)
             cv2.rectangle(out, (x, y), (x + w, y + h), color, 3)
-            label = {"\u77f3\u5934": "Rock", "\u526a\u5200": "Scissors", "\u5e03": "Paper"}.get(det.gesture, "Hand")
+            label = {"Rock": "Rock", "Scissors": "Scissors", "Paper": "Paper"}.get(det.gesture, "Hand")
             text = f"{label} {det.confidence:.2f} {det.source}"
             text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.68, 2)
             tw, th = text_size
@@ -329,10 +329,10 @@ class PalmRecognitionApp:
             lines = []
             for idx, det in enumerate(detections, 1):
                 lines.append(
-                    f"{idx}. 手势：{det.gesture}\n"
-                    f"   位置：({det.center[0]}, {det.center[1]})\n"
-                    f"   置信度：{det.confidence:.2f}\n"
-                    f"   手指估计：{det.fingers}"
+                    f"{idx}. Gesture：{det.gesture}\n"
+                    f"   Position：({det.center[0]}, {det.center[1]})\n"
+                    f"   Confidence：{det.confidence:.2f}\n"
+                    f"   Estimated Fingers：{det.fingers}"
                 )
             text = "\n\n".join(lines)
         else:

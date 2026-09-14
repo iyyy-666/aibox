@@ -54,6 +54,21 @@ HOTWORDS["robot"].update({
     ),
 })
 
+_ENGLISH_ROBOT_ALIASES = {
+    "直立": ("stand up", "stand upright", "upright", "raise the arm"),
+    "放平": ("lay flat", "lie flat", "lower the arm", "put the arm down"),
+    "抓取": ("grab", "pick up", "pick it up", "grasp", "pickup"),
+    "搬运": ("move", "move it", "transfer", "carry", "transport"),
+    "停止": ("stop", "emergency stop", "halt", "pause"),
+    "张开": ("open", "open gripper", "open the gripper", "release"),
+    "闭合": ("close", "close gripper", "close the gripper", "grip"),
+    "复位": ("reset", "return to center", "center all servos", "home"),
+}
+for _command, _aliases in _ENGLISH_ROBOT_ALIASES.items():
+    HOTWORDS["robot"][_command] = tuple(
+        dict.fromkeys(HOTWORDS["robot"].get(_command, ()) + _aliases)
+    )
+
 _BANYUN_ALIASES = (
     "\u642c\u8fd0", "\u822c\u8fd0", "\u534a\u8fd0", "\u73ed\u8fd0", "\u5e2e\u8fd0",
     "\u642c\u4e91", "\u642c\u6655", "\u642c\u97f5", "\u642c\u7528", "\u642c\u5b55",

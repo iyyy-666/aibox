@@ -1,6 +1,6 @@
 """AI voice assistant for RK3588.
 
-Fast interruptible ASR -> local LLM -> Mandarin TTS pipeline.
+Fast interruptible ASR -> local LLM -> English TTS pipeline.
 """
 from __future__ import annotations
 
@@ -26,11 +26,13 @@ from tkinter import ttk
 from audio_config import audio_output_device, print_audio_devices, voice_input_device
 from audio_playback import normalize_playback_wav, play_blocking
 from speech_context import correct_text
+from voice_engine import adaptive_threshold, prefer_reviewed_asr, trim_audio_edges
 
 
 WHISPER_BIN = os.getenv("WHISPER_BIN", "/tmp/whisper.cpp/build/bin/whisper-cli")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "/tmp/whisper.cpp/models/ggml-base.bin")
-ASR_BACKEND = os.getenv("ASR_BACKEND", "sherpa").strip().lower()
+ASR_BACKEND = os.getenv("ASR_BACKEND", "auto").strip().lower()
+PARAFORMER_ASR_DIR = os.getenv("PARAFORMER_ASR_DIR", "/root/sherpa_models/paraformer-large-int8")
 SHERPA_ASR_DIR = os.getenv(
     "SHERPA_ASR_DIR",
     "/root/sherpa_models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01",
@@ -43,12 +45,12 @@ SENSEVOICE_MODEL = os.getenv(
 )
 LLM_MODEL = os.getenv("LLM_MODEL", "/root/llm_models/qwen2.5-3b-instruct-q4_k_m.gguf")
 LLM_PRELOAD = os.getenv("AI_LLM_PRELOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
-LLM_MIN_AVAILABLE_MB = int(os.getenv("AI_LLM_MIN_AVAILABLE_MB", "3600"))
+LLM_MIN_AVAILABLE_MB = int(os.getenv("AI_LLM_MIN_AVAILABLE_MB", "1800"))
 TTS_MODEL = os.getenv("TTS_MODEL", "/root/piper_voices/zh_CN-huayan-medium.onnx")
 TTS_CONFIG = os.getenv("TTS_CONFIG", "/root/piper_voices/zh_CN-huayan-medium.onnx.json")
 VOICE_DEVICE = voice_input_device()
 TTS_DEVICE = audio_output_device()
-EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "en-US-JennyNeural")
 EDGE_TTS_ENABLED = os.getenv("AI_EDGE_TTS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 SAMPLE_RATE = 16000
@@ -58,20 +60,20 @@ MANUAL_MAX_RECORD_SEC = float(os.getenv("AI_MANUAL_MAX_RECORD_SEC", "20.0"))
 MANUAL_EDGE_TRIM_SEC = float(os.getenv("AI_MANUAL_EDGE_TRIM_SEC", "0.20"))
 MANUAL_MIN_PEAK = float(os.getenv("AI_MANUAL_MIN_PEAK", "0.015"))
 MANUAL_MIN_RMS = float(os.getenv("AI_MANUAL_MIN_RMS", "0.003"))
-TRIGGER_PEAK = float(os.getenv("AI_TRIGGER_PEAK", "0.045"))
+TRIGGER_PEAK = float(os.getenv("AI_TRIGGER_PEAK", "0.038"))
 BARGE_IN_TRIGGER_PEAK = float(os.getenv("AI_BARGE_IN_TRIGGER_PEAK", "0.095"))
 BARGE_IN_ENABLED = os.getenv("AI_BARGE_IN_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
-SILENCE_PEAK = float(os.getenv("AI_SILENCE_PEAK", "0.026"))
-MIN_RECORD_SEC = float(os.getenv("AI_MIN_RECORD_SEC", "0.48"))
+SILENCE_PEAK = float(os.getenv("AI_SILENCE_PEAK", "0.022"))
+MIN_RECORD_SEC = float(os.getenv("AI_MIN_RECORD_SEC", "0.56"))
 MAX_RECORD_SEC = float(os.getenv("AI_MAX_RECORD_SEC", "5.2"))
-POST_SILENCE_SEC = float(os.getenv("AI_POST_SILENCE_SEC", "0.72"))
-FAST_POST_SILENCE_SEC = float(os.getenv("AI_FAST_POST_SILENCE_SEC", "0.62"))
+POST_SILENCE_SEC = float(os.getenv("AI_POST_SILENCE_SEC", "0.86"))
+FAST_POST_SILENCE_SEC = float(os.getenv("AI_FAST_POST_SILENCE_SEC", "0.72"))
 INTERRUPT_MIN_SEC = float(os.getenv("AI_INTERRUPT_MIN_SEC", "0.25"))
 NOISE_CALIBRATE_SEC = float(os.getenv("AI_NOISE_CALIBRATE_SEC", "0.35"))
 NOISE_TRIGGER_MULT = float(os.getenv("AI_NOISE_TRIGGER_MULT", "1.25"))
 NOISE_SILENCE_MULT = float(os.getenv("AI_NOISE_SILENCE_MULT", "1.05"))
-MAX_DYNAMIC_TRIGGER = float(os.getenv("AI_MAX_DYNAMIC_TRIGGER", "0.095"))
-MAX_DYNAMIC_SILENCE = float(os.getenv("AI_MAX_DYNAMIC_SILENCE", "0.060"))
+MAX_DYNAMIC_TRIGGER = float(os.getenv("AI_MAX_DYNAMIC_TRIGGER", "0.22"))
+MAX_DYNAMIC_SILENCE = float(os.getenv("AI_MAX_DYNAMIC_SILENCE", "0.14"))
 MIN_VALID_PEAK_MARGIN = float(os.getenv("AI_MIN_VALID_PEAK_MARGIN", "0.003"))
 MIN_VALID_AUDIO_SEC = float(os.getenv("AI_MIN_VALID_AUDIO_SEC", "0.12"))
 TTS_OUTPUT_GAIN = float(os.getenv("AI_TTS_OUTPUT_GAIN", "1.45"))
@@ -82,16 +84,15 @@ SHERPA_TTS_SPEED = float(os.getenv("AI_SHERPA_TTS_SPEED", "0.8"))
 SHERPA_TTS_LENGTH_SCALE = float(os.getenv("AI_SHERPA_TTS_LENGTH_SCALE", "1.05"))
 SHERPA_TTS_WAIT_SEC = float(os.getenv("AI_SHERPA_TTS_WAIT_SEC", "12.0"))
 TIMING_LOG = os.getenv("AI_TIMING_LOG", "/tmp/ai_assistant_timing.log")
-SECOND_PASS_ASR = os.getenv("AI_SECOND_PASS_ASR", "0").strip().lower() in {"1", "true", "yes", "on"}
-SECOND_PASS_MIN_SEC = float(os.getenv("AI_SECOND_PASS_MIN_SEC", "0.55"))
+SECOND_PASS_ASR = os.getenv("AI_SECOND_PASS_ASR", "1").strip().lower() in {"1", "true", "yes", "on"}
+SECOND_PASS_MIN_SEC = float(os.getenv("AI_SECOND_PASS_MIN_SEC", "0.45"))
 
 SYSTEM_PROMPT = (
-    "你是运行在本地设备上的中文语音对话助手，和用户像日常聊天一样交流。"
-    "用户喜欢你称呼他为“小帅”，开场、确认和合适的时候可以自然这样叫他，但不要每句话都重复。"
-    "回答先给结论，再补一两句关键原因；不要机械复述用户问题，不要说空泛套话。"
-    "用户的语音识别文本可能有同音错字，你要结合上下文猜真实意图；如果不确定，就用一句话追问确认。"
-    "默认用普通话中文回答，语气自然、聪明、简洁。英文、数字、代码或算式保留原义，但朗读时不要逐个念标点。"
-    "除非用户要求详细解释，否则控制在一到四句话；能直接办的事就直接说怎么做。"
+    "You are an English-speaking AI guide running locally on an RK3588 educational experiment box. "
+    "Answer naturally in clear, concise English. Begin with the direct answer, then add one or two useful details. "
+    "The speech transcript may contain recognition mistakes, so infer intent from context and ask a short clarifying question when needed. "
+    "Keep most answers between one and four sentences unless the user asks for more detail. "
+    "You can explain artificial intelligence, computer vision, speech recognition, robotics, and this AI experiment box."
 )
 
 PUNCT_TABLE = str.maketrans({
@@ -168,7 +169,7 @@ def normalize_common_asr(text: str) -> str:
     compact = re.sub(r"[\s，。！？,.!?]+", "", text)
     latin = re.sub(r"[^A-Za-z]+", "", text or "").lower()
     if latin in {"nihao", "ninhao", "hello", "hi", "hey"}:
-        return "你好"
+        return "hello"
     fixes = {
         "泥好": "你好",
         "你号": "你好",
@@ -180,11 +181,11 @@ def normalize_common_asr(text: str) -> str:
         "小谁": "小帅",
         "肖帅": "小帅",
         "晓帅": "小帅",
-        "小心星": "小星星",
-        "小猩猩": "小星星",
-        "两只老": "两只老虎",
-        "杨知老": "两只老虎",
-        "梁只老虎": "两只老虎",
+        "小心星": "Twinkle Twinkle Little Star",
+        "小猩猩": "Twinkle Twinkle Little Star",
+        "两只老": "Two Tigers",
+        "杨知老": "Two Tigers",
+        "梁只老虎": "Two Tigers",
     }
     for wrong, right in fixes.items():
         if wrong in compact:
@@ -252,15 +253,15 @@ def solve_simple_math(text: str) -> str | None:
     if op == "*":
         return f"{format_number(a)}×{format_number(b)}={format_number(a * b)}"
     if b == 0:
-        return "除数不能是 0"
+        return "The divisor cannot be zero."
     return f"{format_number(a)}÷{format_number(b)}={format_number(a / b)}"
 
 
 def tts_text(text: str) -> str:
     text = re.sub(r"[\u200b-\u200f\u202a-\u202e]", "", text)
-    text = text.replace("+", " 加 ").replace("=", " 等于 ")
-    text = text.replace("-", " 减 ").replace("×", " 乘 ").replace("*", " 乘 ")
-    text = text.replace("÷", " 除以 ")
+    text = text.replace("+", " plus ").replace("=", " equals ")
+    text = text.replace("-", " minus ").replace("×", " times ").replace("*", " times ")
+    text = text.replace("÷", " divided by ")
     text = text.translate(PUNCT_TABLE)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:260]
@@ -316,13 +317,13 @@ class AIAssistant:
         self._record_turn = 0
 
         self.win = tk.Tk()
-        self.win.title("AI对话助手")
+        self.win.title("AI Assistant")
         self.win.geometry("600x560")
         self.win.configure(bg="#202124")
 
         tk.Label(
             self.win,
-            text="AI对话助手",
+            text="AI Assistant",
             font=("Microsoft YaHei", 14, "bold"),
             bg="#202124",
             fg="#7ee787",
@@ -346,7 +347,7 @@ class AIAssistant:
         self.inp.bind("<Return>", lambda _e: self.send_text())
         tk.Button(
             row,
-            text="发送",
+            text="Send",
             font=("Microsoft YaHei", 11),
             bg="#7ee787",
             fg="#111111",
@@ -360,7 +361,7 @@ class AIAssistant:
         self.bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.voice_btn = tk.Button(
             bar_row,
-            text="开始听",
+            text="Start Listening",
             font=("Microsoft YaHei", 11),
             command=self.toggle_voice,
             bg="#58a6ff",
@@ -369,7 +370,7 @@ class AIAssistant:
         )
         self.voice_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
-        self.status = tk.Label(self.win, text="正在加载模型...", font=("Microsoft YaHei", 9), bg="#202124", fg="#a5a5a5")
+        self.status = tk.Label(self.win, text="Loading models...", font=("Microsoft YaHei", 9), bg="#202124", fg="#a5a5a5")
         self.status.pack(pady=(2, 12))
 
         self.win.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -381,7 +382,7 @@ class AIAssistant:
         if LLM_PRELOAD:
             threading.Thread(target=self._init_llm_delayed, daemon=True).start()
         else:
-            self._set_status("就绪，可打字或点“开始听”说话", "#7ee787")
+            self._set_status("Ready. Type a message or press Start Listening.", "#7ee787")
         threading.Thread(target=self._asr_worker, daemon=True).start()
         threading.Thread(target=self._tts_worker, daemon=True).start()
 
@@ -411,13 +412,24 @@ class AIAssistant:
         self.chat.see(tk.END)
 
     def _init_asr(self) -> None:
+        if ASR_BACKEND in ("paraformer", "paraformer_onnx", "auto"):
+            try:
+                from funasr_onnx import Paraformer
+                self.chat_insert("System: Loading Paraformer speech recognition...\n")
+                self._asr_model = Paraformer(PARAFORMER_ASR_DIR, device_id="-1", quantize=True, intra_op_num_threads=4)
+                self._asr_backend = "paraformer"
+                self._asr_ready = True
+                self.chat_insert("System: Paraformer speech recognition ready.\n")
+                return
+            except Exception as exc:
+                self.chat_insert(f"System: Paraformer failed; trying another backend: {exc}\n")
         if ASR_BACKEND in ("sherpa", "sherpa_onnx", "auto"):
             try:
                 model = Path(SHERPA_ASR_DIR) / "model.int8.onnx"
                 tokens = Path(SHERPA_ASR_DIR) / "tokens.txt"
                 if not model.exists() or not tokens.exists():
-                    raise FileNotFoundError(f"{SHERPA_ASR_DIR} 不完整")
-                self.chat_insert("系统: 正在加载 sherpa 实时语音识别...\n")
+                    raise FileNotFoundError(f"{SHERPA_ASR_DIR} is incomplete")
+                self.chat_insert("System: Loading Sherpa speech recognition...\n")
                 import sherpa_onnx
 
                 self._asr_model = sherpa_onnx.OnlineRecognizer.from_zipformer2_ctc(
@@ -427,22 +439,22 @@ class AIAssistant:
                     sample_rate=SAMPLE_RATE,
                     feature_dim=80,
                     enable_endpoint_detection=True,
-                    rule1_min_trailing_silence=0.8,
-                    rule2_min_trailing_silence=0.25,
-                    rule3_min_utterance_length=8.0,
+                    rule1_min_trailing_silence=0.55,
+                    rule2_min_trailing_silence=0.20,
+                    rule3_min_utterance_length=5.0,
                     decoding_method="greedy_search",
                     provider="cpu",
                 )
                 self._asr_backend = "sherpa"
                 self._asr_ready = True
-                self.chat_insert("系统: sherpa 实时语音识别已就绪。\n")
+                self.chat_insert("System: Sherpa speech recognition ready.\n")
                 return
             except Exception as exc:
-                self.chat_insert(f"系统: sherpa 语音识别加载失败，改用 SenseVoice: {exc}\n")
+                self.chat_insert(f"System: Sherpa failed; trying SenseVoice: {exc}\n")
 
         if ASR_BACKEND in ("sensevoice", "funasr", "auto"):
             try:
-                self.chat_insert("系统: 正在加载 SenseVoice 语音识别...\n")
+                self.chat_insert("System: Loading SenseVoice speech recognition...\n")
                 from funasr import AutoModel
 
                 self._asr_model = AutoModel(
@@ -452,17 +464,17 @@ class AIAssistant:
                 )
                 self._asr_backend = "sensevoice"
                 self._asr_ready = True
-                self.chat_insert("系统: SenseVoice 语音识别已就绪。\n")
+                self.chat_insert("System: SenseVoice speech recognition ready.\n")
                 return
             except Exception as exc:
-                self.chat_insert(f"系统: SenseVoice 加载失败，改用 whisper.cpp: {exc}\n")
+                self.chat_insert(f"System: SenseVoice failed; trying whisper.cpp: {exc}\n")
 
         self._asr_backend = "whisper"
         self._asr_ready = Path(WHISPER_BIN).exists() and Path(WHISPER_MODEL).exists()
         if self._asr_ready:
-            self.chat_insert("系统: whisper.cpp 语音识别已就绪。\n")
+            self.chat_insert("System: whisper.cpp speech recognition ready.\n")
         else:
-            self.chat_insert("系统: 没找到可用语音识别模型。\n")
+            self.chat_insert("System: No speech recognition model is available.\n")
 
     def _init_second_pass_asr(self) -> None:
         if not SECOND_PASS_ASR:
@@ -470,7 +482,7 @@ class AIAssistant:
         try:
             if not Path(SENSEVOICE_LOCAL).exists() and not str(SENSEVOICE_MODEL).startswith("/"):
                 return
-            self.chat_insert("系统: 正在加载二级精准识别...\n")
+            self.chat_insert("System: Loading secondary speech recognition...\n")
             from funasr import AutoModel
 
             self._sensevoice_model = AutoModel(
@@ -478,10 +490,10 @@ class AIAssistant:
                 trust_remote_code=True,
                 disable_update=True,
             )
-            self.chat_insert("系统: 二级精准识别已就绪。\n")
+            self.chat_insert("System: Secondary speech recognition ready.\n")
         except Exception as exc:
             self._sensevoice_model = None
-            self.chat_insert(f"系统: 二级精准识别加载失败: {exc}\n")
+            self.chat_insert(f"System: Secondary speech recognition failed: {exc}\n")
 
     def _init_sherpa_tts(self) -> None:
         try:
@@ -490,7 +502,7 @@ class AIAssistant:
             tokens = base / "tokens.txt"
             lexicon = base / "lexicon.txt"
             if not model.exists() or not tokens.exists() or not lexicon.exists():
-                raise FileNotFoundError(f"{SHERPA_TTS_DIR} 不完整")
+                raise FileNotFoundError(f"{SHERPA_TTS_DIR} is incomplete")
             import sherpa_onnx
 
             rule_fsts = ",".join(
@@ -513,19 +525,19 @@ class AIAssistant:
             )
             self._sherpa_tts = sherpa_onnx.OfflineTts(cfg)
             self._sherpa_tts_ready = True
-            self.chat_insert("系统: 本地中文语音包已就绪。\n")
+            self.chat_insert("System: Local speech synthesis ready.\n")
         except Exception as exc:
             self._sherpa_tts = None
             self._sherpa_tts_ready = False
-            self.chat_insert(f"系统: 本地中文语音包加载失败，保留 Edge/Piper 兜底: {exc}\n")
+            self.chat_insert(f"System: Local speech synthesis failed; using fallback: {exc}\n")
 
     def _init_llm(self) -> None:
         if self._llm_ready and self._llm is not None:
             return
         available = available_memory_mb()
         if available and available < LLM_MIN_AVAILABLE_MB:
-            raise RuntimeError(f"可用内存不足，当前约 {available}MB，暂不加载大模型")
-        self.chat_insert("系统: 正在加载本地大模型...\n")
+            raise RuntimeError(f"Not enough available memory: approximately {available} MB; dialogue model not loaded")
+        self.chat_insert("System: Loading local dialogue model...\n")
         try:
             from llama_cpp import Llama
 
@@ -537,11 +549,11 @@ class AIAssistant:
                 verbose=False,
             )
             self._llm_ready = True
-            self._set_status("就绪，可打字或点“开始听”说话", "#7ee787")
-            self.chat_insert("系统: 大模型已就绪。\n")
+            self._set_status("Ready. Type a message or press Start Listening.", "#7ee787")
+            self.chat_insert("System: Dialogue model ready.\n")
         except Exception as exc:
-            self._set_status("大模型加载失败", "#ff6b6b")
-            self.chat_insert(f"系统: 大模型加载失败: {exc}\n")
+            self._set_status("Dialogue model failed to load", "#ff6b6b")
+            self.chat_insert(f"System: Dialogue model failed to load: {exc}\n")
 
     def _init_llm_delayed(self) -> None:
         deadline = time.time() + 12.0
@@ -601,30 +613,30 @@ class AIAssistant:
     def ask(self, text: str, turn: int | None = None) -> None:
         if turn is None:
             turn = self.interrupt_current()
-        self.chat_insert(f"你: {text}\n")
+        self.chat_insert(f"You: {text}\n")
 
         math_reply = solve_simple_math(text)
         if math_reply:
             self.chat_insert(f"AI: {math_reply}\n")
-            self._tts_queue.put((turn, math_reply))
+            self._queue_tts_latest(turn, math_reply)
             return
 
         if is_fast_greeting(text):
-            reply = "小帅，我在。你直接说想问的事就行。"
+            reply = "Hello! I am ready. What would you like to know?"
             self.chat_insert(f"AI: {reply}\n")
             self._history.append(("user", text))
             self._history.append(("assistant", reply))
             self._history = self._history[-12:]
-            self._tts_queue.put((turn, reply))
+            self._queue_tts_latest(turn, reply)
             return
 
         if not self._llm_ready or self._llm is None:
             try:
                 self._init_llm()
             except Exception as exc:
-                msg = f"小帅，我现在先用轻量模式回答：我在。大模型暂时没加载，原因是{exc}。"
+                msg = f"The dialogue model is not available. Reason: {exc}."
                 self.chat_insert(f"AI: {msg}\n")
-                self._tts_queue.put((turn, msg))
+                self._queue_tts_latest(turn, msg)
                 return
         threading.Thread(target=self._llm_reply, args=(turn, text), daemon=True).start()
 
@@ -638,25 +650,25 @@ class AIAssistant:
         return "\n".join(parts)
 
     def _llm_reply(self, turn: int, user_text: str) -> None:
-        self._set_status("思考中...", "#ffcc66")
+        self._set_status("Thinking...", "#ffcc66")
         try:
             prompt = self._build_prompt(user_text)
             reply = self._generate_llm_text(turn, prompt)
             if self.is_stale(turn):
                 return
-            reply = reply.strip() or "我刚才没组织好语言，你再说一遍。"
+            reply = reply.strip() or "I could not generate a response. Please try again."
             reply = re.sub(r"<\|.*?\|>", "", reply).strip()
             self._history.append(("user", user_text))
             self._history.append(("assistant", reply))
             self._history = self._history[-12:]
             self.chat_insert(f"AI: {reply}\n")
-            self._tts_queue.put((turn, reply))
+            self._queue_tts_latest(turn, reply)
         except Exception as exc:
             if not self.is_stale(turn):
-                self.chat_insert(f"错误: {exc}\n")
+                self.chat_insert(f"Error: {exc}\n")
         finally:
             if not self.is_stale(turn):
-                self._set_status("就绪", "#7ee787")
+                self._set_status("Ready", "#7ee787")
 
     def _generate_llm_text(self, turn: int, prompt: str) -> str:
         kwargs = dict(
@@ -699,7 +711,7 @@ class AIAssistant:
         if not clean or self.is_stale(turn):
             return
         self._speaking = True
-        self._set_status("说话中，可直接打断", "#58a6ff")
+        self._set_status("Speaking - you can interrupt", "#58a6ff")
         try:
             wait_until = time.time() + SHERPA_TTS_WAIT_SEC
             while not self._sherpa_tts_ready and not self.is_stale(turn) and time.time() < wait_until:
@@ -709,12 +721,12 @@ class AIAssistant:
             if self.is_stale(turn):
                 return
             if not self._sherpa_tts_ready:
-                self._set_status("本地语音加载中...", "#ffcc66")
+                self._set_status("Loading speech synthesis...", "#ffcc66")
             else:
                 timing_log(f"tts_skip turn={turn} text={clean!r}")
         finally:
             if not self.is_stale(turn):
-                self._set_status("就绪", "#7ee787")
+                self._set_status("Ready", "#7ee787")
             self._speaking = False
 
     def _speak_sherpa_tts(self, turn: int, text: str) -> bool:
@@ -872,8 +884,8 @@ class AIAssistant:
     def toggle_voice(self) -> None:
         if self.running:
             self.running = False
-            self.voice_btn.config(text="开始听", bg="#58a6ff")
-            self._set_status("收音结束，准备识别...", "#ffcc66")
+            self.voice_btn.config(text="Start Listening", bg="#58a6ff")
+            self._set_status("Recording complete; preparing recognition...", "#ffcc66")
         else:
             turn = self.interrupt_current()
             with self._manual_audio_lock:
@@ -882,8 +894,8 @@ class AIAssistant:
                 self._record_turn = turn
             self._peak = 0.0
             self.running = True
-            self.voice_btn.config(text="停止听", bg="#ff6b6b")
-            self._set_status("监听中，说完后请点“停止听”", "#58a6ff")
+            self.voice_btn.config(text="Stop Listening", bg="#ff6b6b")
+            self._set_status("Listening. Press Stop Listening when finished.", "#58a6ff")
             self._voice_thread = threading.Thread(target=self._voice_loop, args=(turn,), daemon=True)
             self._voice_thread.start()
 
@@ -911,8 +923,8 @@ class AIAssistant:
             inp = self._open_pcm()
         except Exception as exc:
             self.running = False
-            self.win.after(0, lambda: self.voice_btn.config(text="开始听", bg="#58a6ff"))
-            self.chat_insert(f"系统: 麦克风打开失败: {exc}\n")
+            self.win.after(0, lambda: self.voice_btn.config(text="Start Listening", bg="#58a6ff"))
+            self.chat_insert(f"System: Failed to open microphone: {exc}\n")
             return
 
         start = time.time()
@@ -943,8 +955,8 @@ class AIAssistant:
                 captured_samples += boosted.size
                 if captured_samples >= max_samples:
                     self.running = False
-                    self.win.after(0, lambda: self.voice_btn.config(text="开始听", bg="#58a6ff"))
-                    self._set_status("收音已到最长时长，开始识别...", "#ffcc66")
+                    self.win.after(0, lambda: self.voice_btn.config(text="Start Listening", bg="#58a6ff"))
+                    self._set_status("Maximum recording time reached; recognizing...", "#ffcc66")
                     break
         finally:
             with self._manual_audio_lock:
@@ -961,10 +973,10 @@ class AIAssistant:
         sec = audio_seconds(audio)
         if not self._is_valid_manual_audio(audio, final_peak):
             timing_log(f"manual_drop turn={turn} sec={sec:.3f} peak={final_peak:.3f}")
-            self._set_status("没听清，请按开始听再说一遍", "#ffcc66")
+            self._set_status("I did not understand. Please try again.", "#ffcc66")
             return
         timing_log(f"manual_record turn={turn} sec={sec:.3f} elapsed={time.time() - start:.3f} bytes={len(audio)} peak={final_peak:.3f}")
-        self._set_status("识别中...", "#ffcc66")
+        self._set_status("Recognizing...", "#ffcc66")
         self._queue_asr(turn, audio)
 
     def _prepare_manual_audio(self, audio: bytes) -> bytes:
@@ -973,16 +985,7 @@ class AIAssistant:
         samples = np.frombuffer(audio, dtype=np.int16)
         if samples.size == 0:
             return b""
-        trim = max(0, int(MANUAL_EDGE_TRIM_SEC * SAMPLE_RATE))
-        abs_samples = np.abs(samples.astype(np.int32))
-        threshold = max(180, int(min(1800, np.percentile(abs_samples, 90) * 0.12)))
-        active = np.flatnonzero(abs_samples > threshold)
-        if active.size:
-            start = max(0, int(active[0]) - trim)
-            end = min(samples.size, int(active[-1]) + trim)
-            if end > start:
-                samples = samples[start:end]
-        return samples.astype(np.int16).tobytes()
+        return trim_audio_edges(samples.astype(np.int16).tobytes(), sample_rate=SAMPLE_RATE, edge_trim_sec=MANUAL_EDGE_TRIM_SEC)
 
     def _is_valid_manual_audio(self, audio: bytes, peak: float) -> bool:
         duration = audio_seconds(audio)
@@ -1018,8 +1021,10 @@ class AIAssistant:
         p75 = float(np.percentile(arr, 75))
         noise = min(p75, max(p50 * 1.6, p50 + 0.006))
         self._noise_peak = noise
-        self._dynamic_trigger = max(TRIGGER_PEAK, min(MAX_DYNAMIC_TRIGGER, noise * NOISE_TRIGGER_MULT + 0.012))
-        self._dynamic_silence = max(SILENCE_PEAK, min(MAX_DYNAMIC_SILENCE, self._dynamic_trigger * 0.70, noise * NOISE_SILENCE_MULT + 0.006))
+        self._dynamic_trigger = adaptive_threshold(
+            noise, TRIGGER_PEAK, NOISE_TRIGGER_MULT, 0.009, MAX_DYNAMIC_TRIGGER
+        )
+        self._dynamic_silence = max(SILENCE_PEAK, min(MAX_DYNAMIC_SILENCE, self._dynamic_trigger * 0.70, noise * NOISE_SILENCE_MULT + 0.005))
         timing_log(f"noise p50={p50:.3f} p75={p75:.3f} baseline={noise:.3f} trigger={self._dynamic_trigger:.3f} silence={self._dynamic_silence:.3f}")
 
     def _is_valid_audio(self, audio: bytes, peak: float) -> bool:
@@ -1037,10 +1042,20 @@ class AIAssistant:
         return True
 
     def _queue_asr(self, turn: int, audio: bytes) -> None:
-        while self._asr_queue.full():
+        while True:
             with suppress(queue.Empty):
                 self._asr_queue.get_nowait()
-        self._asr_queue.put((turn, audio))
+                continue
+            break
+        self._asr_queue.put_nowait((turn, audio))
+
+    def _queue_tts_latest(self, turn: int, text: str) -> None:
+        while True:
+            with suppress(queue.Empty):
+                self._tts_queue.get_nowait()
+                continue
+            break
+        self._tts_queue.put_nowait((turn, text))
 
     def _asr_worker(self) -> None:
         while True:
@@ -1121,14 +1136,20 @@ class AIAssistant:
         if text:
             self.win.after(0, lambda t=text: self._on_voice(turn, t))
         elif not self.is_stale(turn):
-            self._set_status("没识别到内容，请再说一遍", "#ffcc66")
+            self._set_status("No speech recognized. Please try again.", "#ffcc66")
 
     def _recognize(self, audio: bytes) -> str:
         if not self._asr_ready:
             return ""
         primary = ""
         with self._asr_lock:
-            if self._asr_backend == "sherpa" and self._asr_model is not None:
+            if self._asr_backend == "paraformer" and self._asr_model is not None:
+                samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
+                result = self._asr_model(samples)
+                if result:
+                    pred = result[0].get("preds", "")
+                    return (pred[0] if isinstance(pred, tuple) else pred or "").strip()
+            elif self._asr_backend == "sherpa" and self._asr_model is not None:
                 primary = self._recognize_sherpa(audio)
             elif self._asr_backend == "sensevoice" and self._asr_model is not None:
                 primary = self._recognize_sensevoice(audio, self._asr_model)
@@ -1142,7 +1163,7 @@ class AIAssistant:
         should_review = (
             SECOND_PASS_ASR
             and self._sensevoice_model is not None
-            and (duration >= SECOND_PASS_MIN_SEC or not primary)
+            and (not primary or is_incomplete_asr(primary))
         )
         if not should_review:
             return primary
@@ -1151,9 +1172,7 @@ class AIAssistant:
         with self._sensevoice_lock:
             reviewed = self._recognize_sensevoice(audio, self._sensevoice_model)
         timing_log(f"second_pass sec={time.time() - t0:.3f} primary={primary!r} reviewed={reviewed!r}")
-        if reviewed and reviewed != primary:
-            return reviewed
-        return primary
+        return prefer_reviewed_asr(primary, reviewed, audio_sec=duration, review_min_sec=SECOND_PASS_MIN_SEC)
 
     def _recognize_sherpa(self, audio: bytes) -> str:
         try:
@@ -1167,7 +1186,7 @@ class AIAssistant:
             result = self._asr_model.get_result_all(stream)
             return normalize_common_asr(clean_asr_text(result.text))
         except Exception as exc:
-            self.chat_insert(f"系统: sherpa 识别失败: {exc}\n")
+            self.chat_insert(f"System: sherpa recognition failed: {exc}\n")
             return ""
 
     def _recognize_sensevoice(self, audio: bytes, model=None) -> str:
@@ -1181,7 +1200,7 @@ class AIAssistant:
             res = active_model.generate(
                 input=wav_path,
                 cache={},
-                language="auto",
+                language="en",
                 use_itn=True,
             )
             if not res:
@@ -1189,7 +1208,7 @@ class AIAssistant:
             text = str(res[0].get("text", ""))
             return normalize_common_asr(clean_asr_text(text.split(">")[-1]))
         except Exception as exc:
-            self.chat_insert(f"系统: SenseVoice 识别失败: {exc}\n")
+            self.chat_insert(f"System: SenseVoice recognition failed: {exc}\n")
             return ""
         finally:
             with suppress(FileNotFoundError):
@@ -1206,7 +1225,7 @@ class AIAssistant:
                 [
                     WHISPER_BIN,
                     "-m", WHISPER_MODEL,
-                    "-l", "zh",
+                    "-l", "en",
                     "-f", wav_path,
                     "--no-timestamps",
                     "-np",
@@ -1214,7 +1233,7 @@ class AIAssistant:
                     "--beam-size", "1",
                     "--no-fallback",
                     "-t", str(max(4, min(6, os.cpu_count() or 4))),
-                    "--prompt", "简体中文日常对话，可能包含英文、数字、歌名和算式。",
+                    "--prompt", "English conversation, numbers, names, and common questions.",
                 ],
                 capture_output=True,
                 text=True,
@@ -1226,20 +1245,20 @@ class AIAssistant:
                 if text and not text.startswith(ignored):
                     return normalize_common_asr(text)
         except Exception as exc:
-            self.chat_insert(f"系统: whisper.cpp 识别失败: {exc}\n")
+            self.chat_insert(f"System: whisper.cpp recognition failed: {exc}\n")
         finally:
             with suppress(FileNotFoundError):
                 os.remove(wav_path)
         return ""
 
     def _on_voice(self, turn: int, text: str) -> None:
-        self._set_status("识别到语音", "#7ee787")
+        self._set_status("Speech recognized", "#7ee787")
         self.inp.delete(0, tk.END)
         self.inp.insert(0, text)
         if is_incomplete_asr(text):
             timing_log(f"asr_incomplete turn={turn} text={text!r}")
-            self.chat_insert(f"系统: 只听到“{text}”，这句不完整，我先不回答。\n")
-            self._set_status("没听完整，请再说一遍", "#ffcc66")
+            self.chat_insert(f'System: Only heard "{text}". The sentence was incomplete.\n')
+            self._set_status("Incomplete speech. Please try again.", "#ffcc66")
             return
         self.ask(text, turn)
 

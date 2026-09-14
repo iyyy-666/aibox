@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=货物分拣
-Name[zh_CN]=货物分拣
-Comment=使用双目摄像头进行红蓝物块分拣
+Name=Object Sorting
+Name[zh_CN]=Object Sorting
+Comment=Sort red and blue blocks automatically
 Exec=/usr/local/bin/sorting_app.sh
 Terminal=false
 Categories=Utility;

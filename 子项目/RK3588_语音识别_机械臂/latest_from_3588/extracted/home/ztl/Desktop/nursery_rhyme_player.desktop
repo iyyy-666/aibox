@@ -1,6 +1,7 @@
 [Desktop Entry]
+Comment=Play audio using voice commands
 Type=Application
-Name=语音儿歌播放
+Name=Voice-controlled Audio Player
 Exec=/usr/local/bin/nursery_rhyme_player.sh
 Icon=/root/robot_arm/assets/icons/nursery.png
 Terminal=false

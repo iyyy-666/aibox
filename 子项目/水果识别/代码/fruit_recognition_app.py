@@ -29,53 +29,53 @@ CONF_THRESHOLD = float(os.getenv("FRUIT_CONF", "0.28"))
 STABLE_HITS = int(os.getenv("FRUIT_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("FRUIT_SNAPSHOT_DIR", "/root/robot_arm/assets/fruit_snapshots"))
 
-T_TITLE = "\u6c34\u679c\u8bc6\u522b"
-T_OPENING = "\u6b63\u5728\u6253\u5f00\u6444\u50cf\u5934..."
-T_WAIT = "\u7b49\u5f85\u753b\u9762"
-T_RESULT = "\u8bc6\u522b\u7ed3\u679c"
-T_SAVE = "\u4fdd\u5b58\u5f53\u524d\u753b\u9762"
-T_EXIT = "\u9000\u51fa"
-T_NO_MODEL = "\u6a21\u578b\u52a0\u8f7d\u5931\u8d25"
-T_NO_FRUIT = "\u672a\u68c0\u6d4b\u5230\u6c34\u679c"
-T_WAIT_DETECT = "\u7b49\u5f85\u8bc6\u522b"
-T_SAVED = "\u5df2\u4fdd\u5b58"
-T_NO_SAVE = "\u8fd8\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u753b\u9762"
-T_CAMERA_FAIL = "\u6444\u50cf\u5934\u6253\u5f00\u5931\u8d25"
-T_READ_FAIL = "\u8bfb\u53d6\u753b\u9762\u5931\u8d25\uff0c\u6b63\u5728\u91cd\u8bd5..."
-T_OPENED = "\u5df2\u6253\u5f00"
-T_NORMAL_VIEW = "\u6b63\u5e38\u753b\u9762"
-T_IMAGE_MODE = "\u56fe\u7247\u8bc6\u522b"
+T_TITLE = "Fruit Recognition"
+T_OPENING = "Opening camera..."
+T_WAIT = "Waiting for video"
+T_RESULT = "Detection Results"
+T_SAVE = "Save Snapshot"
+T_EXIT = "Exit"
+T_NO_MODEL = "Model failed to load"
+T_NO_FRUIT = "No fruit detected"
+T_WAIT_DETECT = "Waiting for detection"
+T_SAVED = "Saved"
+T_NO_SAVE = "No frame available to save"
+T_CAMERA_FAIL = "Failed to open camera"
+T_READ_FAIL = "Camera read failed; retrying..."
+T_OPENED = "Opened"
+T_NORMAL_VIEW = "Standard View"
+T_IMAGE_MODE = "Image Detection"
 
 FRUIT_CN = {
-    "apple": "\u82f9\u679c",
-    "banana": "\u9999\u8549",
-    "orange": "\u6a59\u5b50",
-    "strawberry": "\u8349\u8393",
-    "pineapple": "\u83e0\u841d",
-    "grape": "\u8461\u8404",
-    "watermelon": "\u897f\u74dc",
-    "pear": "\u68a8",
-    "peach": "\u6843\u5b50",
-    "lemon": "\u67e0\u6aac",
-    "mango": "\u8292\u679c",
-    "kiwi": "\u7315\u7334\u6843",
+    "apple": "Apple",
+    "banana": "Banana",
+    "orange": "Orange",
+    "strawberry": "Strawberry",
+    "pineapple": "Pineapple",
+    "grape": "Grape",
+    "watermelon": "Watermelon",
+    "pear": "Pear",
+    "peach": "Peach",
+    "lemon": "Lemon",
+    "mango": "Mango",
+    "kiwi": "Kiwi",
 }
 FALLBACK_FRUIT_CLASS_IDS = {46, 47, 49}
 FRUIT_CLS_KEYWORDS = {
-    "apple": "\u82f9\u679c",
-    "banana": "\u9999\u8549",
-    "orange": "\u6a59\u5b50",
-    "strawberry": "\u8349\u8393",
-    "pineapple": "\u83e0\u841d",
-    "granny_smith": "\u82f9\u679c",
-    "lemon": "\u67e0\u6aac",
-    "fig": "\u65e0\u82b1\u679c",
-    "pomegranate": "\u77f3\u69b4",
-    "jackfruit": "\u83e0\u841d\u871c",
-    "custard_apple": "\u756a\u8354\u679d",
-    "acorn_squash": "\u74dc\u679c",
-    "cucumber": "\u9ec4\u74dc",
-    "bell_pepper": "\u751c\u6912",
+    "apple": "Apple",
+    "banana": "Banana",
+    "orange": "Orange",
+    "strawberry": "Strawberry",
+    "pineapple": "Pineapple",
+    "granny_smith": "Apple",
+    "lemon": "Lemon",
+    "fig": "Fig",
+    "pomegranate": "Pomegranate",
+    "jackfruit": "Jackfruit",
+    "custard_apple": "Custard Apple",
+    "acorn_squash": "Melon",
+    "cucumber": "Cucumber",
+    "bell_pepper": "Bell Pepper",
 }
 BOX_COLOR = (75, 210, 120)
 FALLBACK_BOX_COLOR = (80, 170, 255)
@@ -338,7 +338,7 @@ class FruitRecognitionApp:
         aspect = bw / max(1, bh)
         extent = best_area / max(1, bw * bh)
         name_en = "fruit"
-        name_cn = "\u6c34\u679c"
+        name_cn = "Fruit"
         if hue <= 10 or hue >= 168:
             name_en = "strawberry" if extent < 0.62 or bh > bw * 1.15 else "apple"
             name_cn = FRUIT_CN.get(name_en, name_cn)

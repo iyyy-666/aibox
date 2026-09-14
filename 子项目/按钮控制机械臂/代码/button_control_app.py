@@ -42,7 +42,7 @@ def main():
     _start_server_once()
     _wait_for_server()
     webview.create_window(
-        "按钮控制机械臂",
+        "Robot Arm Control",
         f"http://127.0.0.1:{WEB_PORT}/button",
         width=1100,
         height=750,

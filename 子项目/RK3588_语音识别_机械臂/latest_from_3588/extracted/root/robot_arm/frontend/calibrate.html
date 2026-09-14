@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>舵机校准 - KM1</title>
+<title>Servo Calibration - KM1</title>
 <style>
 :root {
   color-scheme: dark;
@@ -67,33 +67,33 @@ input[type="range"] { width: 100%; height: 28px; accent-color: var(--green); cur
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">&#9881;</div>
-      <div><h1>舵机校准</h1><p class="subtitle">实时调整 6 路 PWM，保存自定义姿态</p></div>
+      <div><h1>Servo Calibration</h1><p class="subtitle">Adjust six PWM channels and save custom poses</p></div>
     </div>
-    <a class="link-btn" href="/">&#8592; 返回控制台</a>
+    <a class="link-btn" href="/">&#8592; Back to Console</a>
   </header>
   <main>
     <section>
       <div class="panel">
-        <div class="panel-head"><div><h2>实时舵机控制</h2><p class="section-note">拖动滑杆实时发送指令，建议逐个调整。</p></div></div>
+        <div class="panel-head"><div><h2>Live Servo Control</h2><p class="section-note">Move one slider at a time to send live commands.</p></div></div>
         <div class="servo-stack" id="servos"></div>
       </div>
     </section>
     <aside>
       <div class="panel">
-        <div class="panel-head"><div><h2>保存当前姿态</h2><p class="section-note">为当前舵机位置命名保存。</p></div></div>
+        <div class="panel-head"><div><h2>Save Current Pose</h2><p class="section-note">Name and save the current servo positions.</p></div></div>
         <div class="save-row">
-          <input class="input" id="pose-name" placeholder="姿态名称，如：抓取位">
-          <button class="btn btn-primary" onclick="savePose()">保存</button>
+          <input class="input" id="pose-name" placeholder="Pose name, for example: Pickup Position">
+          <button class="btn btn-primary" onclick="savePose()">Save</button>
         </div>
       </div>
       <div class="panel">
-        <div class="panel-head"><div><h2>已保存姿态</h2><p class="section-note">点击载入PWM并移动机械臂。</p></div></div>
+        <div class="panel-head"><div><h2>Saved Poses</h2><p class="section-note">Select a pose to load its PWM values and move the arm.</p></div></div>
         <div class="pose-list" id="pose-list"></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><div><h2>快速复位</h2><p class="section-note">全部舵机回到中心值 P1500。</p></div></div>
-        <button class="btn btn-danger" onclick="allCenter()" style="width:100%;">全部复位到中心 P1500</button>
-        <p class="section-note" style="margin-top:10px;color:#ffad4d;">&#9888; 安全范围 P1280-P1720（±220），超出可能碰撞！</p>
+        <div class="panel-head"><div><h2>Quick Reset</h2><p class="section-note">Return every servo to the center value P1500.</p></div></div>
+        <button class="btn btn-danger" onclick="allCenter()" style="width:100%;">Center All Servos at P1500</button>
+        <p class="section-note" style="margin-top:10px;color:#ffad4d;">&#9888; Safe range: P1280-P1720 (±220). Values outside this range may cause a collision.</p>
       </div>
     </aside>
   </main>
@@ -102,7 +102,9 @@ input[type="range"] { width: 100%; height: 28px; accent-color: var(--green); cur
 
 <script>
 const API = '';
-const NAMES = ['底座 #0','肩部 #1','肘部1 #2','肘部2 #3','腕部 #4','夹爪 #5'];
+const DISPLAY_NAMES = {'\u76f4\u7acb':'Stand Up','\u653e\u5e73':'Lay Flat','\u6293\u53d6\u4f4d':'Grab Position'};
+const displayName = value => DISPLAY_NAMES[value] || value || '-';
+const NAMES = ['Base #0','Shoulder #1','Elbow 1 #2','Elbow 2 #3','Wrist #4','Gripper #5'];
 const CENTER = 1500;
 const lastSend = {};
 let toastTimer = null;
@@ -112,7 +114,7 @@ function init() {
   for(let i=0;i<6;i++){
     const row = document.createElement('div'); row.className = 'servo-row';
     const label = document.createElement('div'); label.className = 'servo-label';
-    const title = document.createElement('span'); title.className = 'servo-title'; title.textContent = '舵机 '+i;
+    const title = document.createElement('span'); title.className = 'servo-title'; title.textContent = 'Servo '+i;
     const name = document.createElement('span'); name.className = 'servo-name'; name.textContent = NAMES[i];
     const slider = document.createElement('input'); slider.type = 'range'; slider.id = 's'+i; slider.min='800'; slider.max='2200'; slider.value = CENTER; slider.addEventListener('input', ()=>onSlider(i));
     const val = document.createElement('div'); val.className = 'pwm-val'; val.id = 'v'+i; val.textContent = 'P'+CENTER;
@@ -127,50 +129,50 @@ function onSlider(i) {
   const now = Date.now();
   if(lastSend[i] && now-lastSend[i] < 50) return;
   lastSend[i] = now;
-  fetch(API+'/api/robot/servo/'+i+'?pwm='+pwm+'&time_ms=100',{method:'POST'}).catch(()=>toast('请求失败'));
+  fetch(API+'/api/robot/servo/'+i+'?pwm='+pwm+'&time_ms=100',{method:'POST'}).catch(()=>toast('Request failed'));
 }
 
 function allCenter() {
   for(let i=0;i<6;i++){ document.getElementById('s'+i).value=CENTER; document.getElementById('v'+i).textContent='P'+CENTER; }
-  fetch(API+'/api/robot/all_center',{method:'POST'}).then(r=>r.json()).then(r=>toast(r.success?'已复位':'失败')).catch(()=>toast('请求失败'));
+  fetch(API+'/api/robot/all_center',{method:'POST'}).then(r=>r.json()).then(r=>toast(r.success?'Reset complete':'Reset failed')).catch(()=>toast('Request failed'));
 }
 
 async function savePose() {
   const name = document.getElementById('pose-name').value.trim();
-  if(!name){ toast('请输入名称'); return; }
+  if(!name){ toast('Enter a pose name'); return; }
   const pwms = [];
   for(let i=0;i<6;i++) pwms.push(+document.getElementById('s'+i).value);
   try {
     const res = await fetch(API+'/api/calibrate/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,pwms,time:1500})});
     const r = await res.json();
-    if(r.success){ toast('已保存 '+name); document.getElementById('pose-name').value=''; loadPoses(); }
-    else toast('保存失败');
-  } catch(e) { toast('请求失败'); }
+    if(r.success){ toast('Saved '+name); document.getElementById('pose-name').value=''; loadPoses(); }
+    else toast('Save failed');
+  } catch(e) { toast('Request failed'); }
 }
 
 async function loadPoses() {
   const list = document.getElementById('pose-list');
-  list.innerHTML = '<span class="empty-state">加载中...</span>';
+  list.innerHTML = '<span class="empty-state">Loading...</span>';
   try {
     const res = await fetch(API+'/api/calibrate/poses');
     const poses = await res.json();
     list.innerHTML = '';
-    if(!poses.length){ list.innerHTML='<span class="empty-state">暂无保存的姿态。</span>'; return; }
+    if(!poses.length){ list.innerHTML='<span class="empty-state">No saved poses.</span>'; return; }
     poses.forEach(p=>{
       const chip = document.createElement('button');
-      chip.type='button'; chip.className='pose-chip'; chip.textContent=p.name;
+      chip.type='button'; chip.className='pose-chip'; chip.textContent=displayName(p.name);
       chip.addEventListener('click',()=>loadPose(p.name,p.pwms,chip));
       list.appendChild(chip);
     });
-  } catch(e) { list.innerHTML='<span class="empty-state">加载失败。</span>'; }
+  } catch(e) { list.innerHTML='<span class="empty-state">Loading failed.</span>'; }
 }
 
 function loadPose(name,pwms,chip){
   for(let i=0;i<6;i++){ const pwm=pwms[i]||CENTER; document.getElementById('s'+i).value=pwm; document.getElementById('v'+i).textContent='P'+pwm; fetch(API+'/api/robot/servo/'+i+'?pwm='+pwm+'&time_ms=500',{method:'POST'}).catch(()=>{}); }
-  document.getElementById('pose-name').value=name;
+  document.getElementById('pose-name').value=displayName(name);
   document.querySelectorAll('.pose-chip').forEach(e=>e.classList.remove('loaded'));
   if(chip) chip.classList.add('loaded');
-  toast('已载入 '+name);
+  toast('Loaded '+displayName(name));
 }
 
 function toast(msg){

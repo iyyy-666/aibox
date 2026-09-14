@@ -1,6 +1,7 @@
 [Desktop Entry]
+Comment=Control the robot arm with voice commands
 Type=Application
-Name=语音简单控制机械臂
+Name=Voice-controlled Robot Arm
 Exec=/usr/local/bin/voice_control.sh
 Icon=/root/robot_arm/assets/icons/robot_voice.png
 Terminal=false

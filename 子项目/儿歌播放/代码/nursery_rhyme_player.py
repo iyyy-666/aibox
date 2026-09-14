@@ -1,8 +1,9 @@
-"""Voice controlled Chinese nursery rhyme player for RK3588."""
+"""Voice-controlled children's song player for RK3588."""
 from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -28,6 +29,10 @@ SHERPA_ASR_DIR = os.getenv(
     "/root/sherpa_models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01",
 )
 SHERPA_TTS_DIR = os.getenv("SHERPA_TTS_DIR", "/root/sherpa_models/vits-melo-tts-zh_en")
+SENSEVOICE_MODEL = os.getenv(
+    "SENSEVOICE_MODEL",
+    "/home/ztl/.cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master",
+)
 SHERPA_TTS_SID = int(os.getenv("NURSERY_SHERPA_TTS_SID", "0"))
 SHERPA_TTS_SPEED = float(os.getenv("NURSERY_SHERPA_TTS_SPEED", "0.8"))
 SHERPA_TTS_LENGTH_SCALE = float(os.getenv("NURSERY_SHERPA_TTS_LENGTH_SCALE", "1.05"))
@@ -51,34 +56,34 @@ MAX_DYNAMIC_SILENCE = 0.070
 MIN_VALID_PEAK_MARGIN = 0.018
 MIN_VALID_AUDIO_SEC = 0.34
 
-PROMPT = "\u4f60\u597d\uff0c\u8bf7\u95ee\u60f3\u542c\u4ec0\u4e48\u6b4c\uff1f\u4e24\u53ea\u8001\u864e\uff0c\u8fd8\u662f\u5c0f\u661f\u661f\uff1f"
-WAITING_TEXT = "\u7b49\u5f85\u9009\u62e9\u6b4c\u66f2...\n\n" + PROMPT
+PROMPT = "Hello. Would you like Twinkle Twinkle Little Star or Two Tigers?"
+WAITING_TEXT = "Waiting for a song selection...\n\n" + PROMPT
 PROMPT_WAV = ASSET_DIR / "prompt_question.wav"
 
 SONGS = {
-    "\u5c0f\u661f\u661f": {
-        "aliases": ("\u5c0f\u661f\u661f", "\u5c0f\u661f", "\u661f\u661f", "\u5c0f\u5fc3\u661f", "\u5c0f\u7329\u7329", "\u5c0f\u65b0\u661f", "\u5c0f\u884c\u661f", "\u5c0f\u6b23\u6b23", "\u5c0f\u661f\u5fc3", "\u5c0f\u7329\u661f", "\u5c0f\u65b0\u65b0", "\u5c0f\u5fc3\u5fc3", "\u64ad\u653e\u5c0f\u661f\u661f", "\u6211\u8981\u542c\u5c0f\u661f\u661f", "\u4e00\u95ea\u4e00\u95ea", "\u4eae\u6676\u6676", "\u6ee1\u5929\u90fd\u662f\u5c0f\u661f\u661f"),
+    "Twinkle Twinkle Little Star": {
+        "aliases": ("Twinkle Twinkle Little Star", "\u5c0f\u661f", "\u661f\u661f", "\u5c0f\u5fc3\u661f", "\u5c0f\u7329\u7329", "\u5c0f\u65b0\u661f", "\u5c0f\u884c\u661f", "\u5c0f\u6b23\u6b23", "\u5c0f\u661f\u5fc3", "\u5c0f\u7329\u661f", "\u5c0f\u65b0\u65b0", "\u5c0f\u5fc3\u5fc3", "\u64ad\u653eTwinkle Twinkle Little Star", "\u6211\u8981\u542cTwinkle Twinkle Little Star", "\u4e00\u95ea\u4e00\u95ea", "\u4eae\u6676\u6676", "\u6ee1\u5929\u90fd\u662fTwinkle Twinkle Little Star"),
         "source_file": "xiaoxingxing_vocal.mp3",
         "lyrics": [
-            "\u4e00\u95ea\u4e00\u95ea\u4eae\u6676\u6676",
-            "\u6ee1\u5929\u90fd\u662f\u5c0f\u661f\u661f",
-            "\u6302\u5728\u5929\u7a7a\u653e\u5149\u660e",
-            "\u597d\u50cf\u8bb8\u591a\u5c0f\u773c\u775b",
-            "\u4e00\u95ea\u4e00\u95ea\u4eae\u6676\u6676",
-            "\u6ee1\u5929\u90fd\u662f\u5c0f\u661f\u661f",
+            "Twinkle, twinkle, little star",
+            "How I wonder what you are",
+            "Up above the world so high",
+            "Like a diamond in the sky",
+            "Twinkle, twinkle, little star",
+            "How I wonder what you are",
         ],
     },
-    "\u4e24\u53ea\u8001\u864e": {
-        "aliases": ("\u4e24\u53ea\u8001\u864e", "\u4e24\u652f\u8001\u864e", "\u4e24\u4e2a\u8001\u864e", "\u4e24\u53ea\u8001", "\u4e24\u53ea\u864e", "\u4e24\u8001\u864e", "\u4e8c\u53ea\u8001\u864e", "\u4fe9\u53ea\u8001\u864e", "\u6881\u5fd7\u8001\u864e", "\u826f\u77e5\u8001\u864e", "\u6768\u77e5\u8001", "\u6768\u77e5\u8001\u864e", "\u4e24\u53ea\u8111\u864e", "\u4e24\u53ea\u8001\u53e4", "\u4e24\u53ea\u8001\u4e94", "\u4e24\u53ea\u8001\u80e1", "\u4e24\u53ea\u52b3\u864e", "\u4e24\u53ea\u8001\u864e\u513f\u6b4c", "\u64ad\u653e\u4e24\u53ea\u8001\u864e", "\u6211\u8981\u542c\u4e24\u53ea\u8001\u864e", "\u8001\u864e", "\u8111\u864e", "\u52b3\u864e", "\u8001\u80e1", "\u8001\u53e4", "\u8001\u4e94", "\u8dd1\u5f97\u5feb", "\u771f\u5947\u602a"),
+    "Two Tigers": {
+        "aliases": ("Two Tigers", "\u4e24\u652f\u8001\u864e", "\u4e24\u4e2a\u8001\u864e", "\u4e24\u53ea\u8001", "\u4e24\u53ea\u864e", "\u4e24\u8001\u864e", "\u4e8c\u53ea\u8001\u864e", "\u4fe9\u53ea\u8001\u864e", "\u6881\u5fd7\u8001\u864e", "\u826f\u77e5\u8001\u864e", "\u6768\u77e5\u8001", "\u6768\u77e5\u8001\u864e", "\u4e24\u53ea\u8111\u864e", "\u4e24\u53ea\u8001\u53e4", "\u4e24\u53ea\u8001\u4e94", "\u4e24\u53ea\u8001\u80e1", "\u4e24\u53ea\u52b3\u864e", "Two Tigers\u513f\u6b4c", "\u64ad\u653eTwo Tigers", "\u6211\u8981\u542cTwo Tigers", "\u8001\u864e", "\u8111\u864e", "\u52b3\u864e", "\u8001\u80e1", "\u8001\u53e4", "\u8001\u4e94", "\u8dd1\u5f97\u5feb", "\u771f\u5947\u602a"),
         "source_file": "liangzhilaohu_vocal.mp3",
         "trim_start": 0.0,
         "trim_duration": 16.1,
         "lyrics": [
-            "\u4e24\u53ea\u8001\u864e\uff0c\u4e24\u53ea\u8001\u864e",
-            "\u8dd1\u5f97\u5feb\uff0c\u8dd1\u5f97\u5feb",
-            "\u4e00\u53ea\u6ca1\u6709\u773c\u775b",
-            "\u4e00\u53ea\u6ca1\u6709\u5c3e\u5df4",
-            "\u771f\u5947\u602a\uff0c\u771f\u5947\u602a",
+            "Two tigers, two tigers",
+            "Running fast, running fast",
+            "One has no eyes",
+            "One has no tail",
+            "How strange, how strange",
         ],
     },
 }
@@ -106,11 +111,11 @@ def choose_song(text: str) -> str | None:
         scores[name] = score
 
     if "\u5c0f\u661f" in normalized or "\u661f\u661f" in normalized:
-        scores["\u5c0f\u661f\u661f"] += 10
+        scores["Twinkle Twinkle Little Star"] += 10
     if "\u4e24\u53ea" in normalized and "\u8001\u864e" in normalized:
-        scores["\u4e24\u53ea\u8001\u864e"] += 20
+        scores["Two Tigers"] += 20
     elif "\u8001\u864e" in normalized:
-        scores["\u4e24\u53ea\u8001\u864e"] += 10
+        scores["Two Tigers"] += 10
 
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     if not ordered or ordered[0][1] < 10:
@@ -140,7 +145,7 @@ class NurseryRhymePlayer:
     def __init__(self):
         print_audio_devices("nursery")
         self.root = tk.Tk()
-        self.root.title("\u8bed\u97f3\u513f\u6b4c\u64ad\u653e")
+        self.root.title("Voice-controlled Audio Player")
         self.root.geometry("620x520")
         self.root.configure(bg="#101417")
 
@@ -152,6 +157,7 @@ class NurseryRhymePlayer:
         self.play_proc: subprocess.Popen | None = None
         self.asr_backend = "sherpa"
         self.asr_model = None
+        self.sensevoice_model = None
         self.sherpa_tts = None
         self.sherpa_tts_ready = False
         self.sherpa_tts_lock = threading.Lock()
@@ -162,11 +168,11 @@ class NurseryRhymePlayer:
         self.dynamic_trigger = TRIGGER_PEAK
         self.dynamic_silence = SILENCE_PEAK
 
-        self.status = tk.StringVar(value="\u51c6\u5907\u4e2d")
+        self.status = tk.StringVar(value="Preparing")
         self.last_text = tk.StringVar(value="-")
         self.current_song = tk.StringVar(value="-")
-        self.listen_button_text = tk.StringVar(value="\u5f00\u542f\u8bed\u97f3\u8f93\u5165")
-        self.pause_button_text = tk.StringVar(value="\u6682\u505c")
+        self.listen_button_text = tk.StringVar(value="Start Voice Input")
+        self.pause_button_text = tk.StringVar(value="Pause")
         self.lyrics_box: tk.Text | None = None
 
         self._build_ui()
@@ -196,7 +202,7 @@ class NurseryRhymePlayer:
 
         frame = tk.Frame(self.root, bg="#101417", padx=22, pady=20)
         frame.pack(fill="both", expand=True)
-        tk.Label(frame, text="\u8bed\u97f3\u513f\u6b4c\u64ad\u653e", fg="#f2f5f2", bg="#101417",
+        tk.Label(frame, text="Voice-controlled Audio Player", fg="#f2f5f2", bg="#101417",
                  font=("Microsoft YaHei", 24, "bold")).pack(anchor="w")
         tk.Label(frame, text=PROMPT, fg="#9aa7a1", bg="#101417",
                  font=("Microsoft YaHei", 12)).pack(anchor="w", pady=(5, 16))
@@ -205,11 +211,11 @@ class NurseryRhymePlayer:
         controls = tk.Frame(frame, bg="#101417")
         controls.pack(fill="x", pady=(0, 14))
         ttk.Button(controls, textvariable=self.pause_button_text, command=self.toggle_pause).pack(side="left", fill="x", expand=True, padx=(0, 6))
-        ttk.Button(controls, text="\u9000\u51fa", command=self.exit_song).pack(side="left", fill="x", expand=True, padx=(6, 0))
+        ttk.Button(controls, text="Exit", command=self.exit_song).pack(side="left", fill="x", expand=True, padx=(6, 0))
 
         info = tk.Frame(frame, bg="#171d22", padx=12, pady=10)
         info.pack(fill="x")
-        for label, var in [("\u72b6\u6001", self.status), ("\u6700\u8fd1\u8bc6\u522b", self.last_text), ("\u6b63\u5728\u64ad\u653e", self.current_song)]:
+        for label, var in [("Status", self.status), ("Last Recognition", self.last_text), ("Now Playing", self.current_song)]:
             row = tk.Frame(info, bg="#171d22")
             row.pack(fill="x", pady=3)
             tk.Label(row, text=label, width=8, anchor="w", fg="#9aa7a1", bg="#171d22",
@@ -217,7 +223,7 @@ class NurseryRhymePlayer:
             tk.Label(row, textvariable=var, anchor="w", fg="#3fd47d", bg="#171d22",
                      font=("Microsoft YaHei", 11)).pack(side="left", fill="x", expand=True)
 
-        tk.Label(frame, text="\u6b4c\u8bcd", fg="#f2f5f2", bg="#101417",
+        tk.Label(frame, text="Lyrics", fg="#f2f5f2", bg="#101417",
                  font=("Microsoft YaHei", 14, "bold")).pack(anchor="w", pady=(18, 8))
         self.lyrics_box = tk.Text(frame, height=11, bg="#171d22", fg="#f2f5f2",
                                   insertbackground="#f2f5f2", relief="flat", wrap="word",
@@ -236,13 +242,26 @@ class NurseryRhymePlayer:
     def _raise_volume(self):
         for control in ("Master", "PCM", "Speaker"):
             with suppress(Exception):
-                subprocess.run(["amixer", "-c", "0", "sset", control, "70%"],
+                subprocess.run(["amixer", "-c", "0", "sset", control, "100%"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
 
     def _load_model(self):
-        if self.model_loading or self.asr_model is not None or self.vosk_model is not None:
+        if self.model_loading or self.sensevoice_model is not None or self.asr_model is not None or self.vosk_model is not None:
             return
         self.model_loading = True
+        try:
+            from funasr import AutoModel
+
+            self.sensevoice_model = AutoModel(
+                model=SENSEVOICE_MODEL,
+                trust_remote_code=True,
+                disable_update=True,
+            )
+            self.asr_backend = "sensevoice"
+            self._ui_status("English speech model ready")
+            return
+        except Exception:
+            self.sensevoice_model = None
         try:
             base = Path(SHERPA_ASR_DIR)
             model = base / "model.int8.onnx"
@@ -265,7 +284,7 @@ class NurseryRhymePlayer:
                 provider="cpu",
             )
             self.asr_backend = "sherpa"
-            self._ui_status("\u8bed\u97f3\u6a21\u578b\u5df2\u52a0\u8f7d")
+            self._ui_status("Speech model ready")
         except Exception:
             self.asr_backend = "vosk"
         try:
@@ -273,15 +292,15 @@ class NurseryRhymePlayer:
                 return
             from vosk import Model
             self.vosk_model = Model(VOSK_MODEL_DIR)
-            self._ui_status("\u8bed\u97f3\u6a21\u578b\u5df2\u52a0\u8f7d")
+            self._ui_status("Speech model ready")
         except Exception as exc:
-            self._ui_status(f"\u8bed\u97f3\u6a21\u578b\u52a0\u8f7d\u5931\u8d25: {exc}")
+            self._ui_status(f"Speech model failed to load: {exc}")
         finally:
             self.model_loading = False
 
     def _start_model_load(self):
-        if self.asr_model is None and self.vosk_model is None and not self.model_loading:
-            self.status.set("\u6b63\u5728\u52a0\u8f7d\u8bed\u97f3\u6a21\u578b")
+        if self.sensevoice_model is None and self.asr_model is None and self.vosk_model is None and not self.model_loading:
+            self.status.set("Loading speech model")
             threading.Thread(target=self._load_model, daemon=True).start()
 
     def _init_sherpa_tts(self) -> None:
@@ -317,14 +336,14 @@ class NurseryRhymePlayer:
         except Exception as exc:
             self.sherpa_tts = None
             self.sherpa_tts_ready = False
-            self._ui_status(f"\u8bed\u97f3\u8f93\u51fa\u52a0\u8f7d\u5931\u8d25: {exc}")
+            self._ui_status(f"Voice output failed to load: {exc}")
 
     def ask_song(self):
         if self.playing:
             return
         self.paused = False
-        self.pause_button_text.set("\u6682\u505c")
-        self.status.set("\u8bf7\u8bf4\u6b4c\u540d")
+        self.pause_button_text.set("Pause")
+        self.status.set("Say a song name")
         self.current_song.set("-")
         self._set_lyrics(WAITING_TEXT)
         threading.Thread(target=self._speak_prompt, daemon=True).start()
@@ -332,17 +351,17 @@ class NurseryRhymePlayer:
     def toggle_listen(self):
         if self.listening:
             self.listening = False
-            self.listen_button_text.set("\u5f00\u542f\u8bed\u97f3\u8f93\u5165")
-            self.status.set("\u8bed\u97f3\u8f93\u5165\u5df2\u5173\u95ed")
+            self.listen_button_text.set("Start Voice Input")
+            self.status.set("Voice input stopped")
             return
-        if self.asr_model is None and self.vosk_model is None:
+        if self.sensevoice_model is None and self.asr_model is None and self.vosk_model is None:
             self._start_model_load()
-            self.status.set("\u8bed\u97f3\u6a21\u578b\u8fd8\u5728\u52a0\u8f7d\uff0c\u8bf7\u7a0d\u7b49")
-            if self.asr_model is None and self.vosk_model is None:
+            self.status.set("Speech model is still loading")
+            if self.sensevoice_model is None and self.asr_model is None and self.vosk_model is None:
                 return
         self.listening = True
-        self.listen_button_text.set("\u5173\u95ed\u8bed\u97f3\u8f93\u5165")
-        self.status.set("\u8bed\u97f3\u8f93\u5165\u4e2d")
+        self.listen_button_text.set("Stop Voice Input")
+        self.status.set("Listening")
         self.listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.listen_thread.start()
 
@@ -352,13 +371,13 @@ class NurseryRhymePlayer:
         if self.paused:
             os.kill(self.play_proc.pid, signal.SIGCONT)
             self.paused = False
-            self.pause_button_text.set("\u6682\u505c")
-            self.status.set("\u7ee7\u7eed\u64ad\u653e")
+            self.pause_button_text.set("Pause")
+            self.status.set("Resume")
         else:
             os.kill(self.play_proc.pid, signal.SIGSTOP)
             self.paused = True
-            self.pause_button_text.set("\u6062\u590d")
-            self.status.set("\u5df2\u6682\u505c")
+            self.pause_button_text.set("Resume")
+            self.status.set("Paused")
 
     def exit_song(self):
         self.play_token += 1
@@ -367,23 +386,22 @@ class NurseryRhymePlayer:
         self.playing = False
         self.paused = False
         self.speaking = False
-        self.listen_button_text.set("\u5f00\u542f\u8bed\u97f3\u8f93\u5165")
+        self.listen_button_text.set("Start Voice Input")
         self.last_text.set("-")
         self.ask_song()
 
     def _speak_prompt(self):
         self.speaking = True
-        wav_path = str(PROMPT_WAV) if PROMPT_WAV.exists() and PROMPT_WAV.stat().st_size > 1024 else self._make_tts(PROMPT)
+        wav_path = self._make_tts(PROMPT)
         self._log(f"prompt_start path={wav_path!r}")
         if wav_path:
             self._play_wav_blocking(wav_path)
-            if Path(wav_path) != PROMPT_WAV:
-                with suppress(FileNotFoundError):
-                    os.remove(wav_path)
+            with suppress(FileNotFoundError):
+                os.remove(wav_path)
         self.speaking = False
         self._log("prompt_end")
         if self.listening and not self.playing:
-            self.root.after(0, lambda: self.status.set("\u8bed\u97f3\u8f93\u5165\u4e2d"))
+            self.root.after(0, lambda: self.status.set("Listening"))
 
     def _make_tts(self, text: str) -> str | None:
         fd, path = tempfile.mkstemp(prefix="nursery_tts_", suffix=".wav")
@@ -414,7 +432,7 @@ class NurseryRhymePlayer:
         path = ASSET_DIR / song["source_file"]
         if path.exists() and path.stat().st_size > 64 * 1024:
             return path
-        self.status.set(f"\u7f3a\u5c11{name}\u5b8c\u6574\u4eba\u58f0\u97f3\u9891")
+        self.status.set(f"The full audio file for {name} is missing")
         return None
 
     def _build_play_file(self, name: str) -> str | None:
@@ -450,7 +468,7 @@ class NurseryRhymePlayer:
             return None
 
     def _make_missing_song_prompt(self, name: str) -> str | None:
-        return self._make_tts(f"\u8fd8\u6ca1\u627e\u5230{name}\u7684\u5b8c\u6574\u4eba\u58f0\u7248\u97f3\u9891\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002")
+        return self._make_tts(f"The full audio file for {name} is not available. Please try again later.")
 
     def _play_wav_blocking(self, path: str):
         self._log(f"play_start device={PLAY_DEVICE} path={path}")
@@ -476,9 +494,9 @@ class NurseryRhymePlayer:
         self.paused = False
         self.play_token += 1
         token = self.play_token
-        self.pause_button_text.set("\u6682\u505c")
+        self.pause_button_text.set("Pause")
         self.current_song.set(name)
-        self.status.set(f"\u6b63\u5728\u64ad\u653e{name}")
+        self.status.set(f"Now Playing: {name}")
         self._set_lyrics(lyrics)
         threading.Thread(target=self._play_song_worker, args=(token, name), daemon=True).start()
 
@@ -531,9 +549,9 @@ class NurseryRhymePlayer:
                 periodsize=FRAME_SIZE,
             )
         except Exception as exc:
-            self.status.set(f"\u9ea6\u514b\u98ce\u542f\u52a8\u5931\u8d25: {exc}")
+            self.status.set(f"Microphone failed to start: {exc}")
             self.listening = False
-            self.listen_button_text.set("\u5f00\u542f\u8bed\u97f3\u8f93\u5165")
+            self.listen_button_text.set("Start Voice Input")
             return
 
         self._calibrate_noise(pcm)
@@ -596,9 +614,36 @@ class NurseryRhymePlayer:
         return rms >= max(0.012, self.noise_peak * 0.85)
 
     def _recognize(self, audio: bytes) -> str:
+        if self.asr_backend == "sensevoice" and self.sensevoice_model is not None:
+            return self._recognize_sensevoice(audio)
         if self.asr_backend == "sherpa" and self.asr_model is not None:
             return self._recognize_sherpa(audio)
         return self._recognize_vosk(audio)
+
+    def _recognize_sensevoice(self, audio: bytes) -> str:
+        fd, wav_path = tempfile.mkstemp(prefix="nursery_sensevoice_", suffix=".wav")
+        os.close(fd)
+        try:
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(SAMPLE_RATE)
+                wf.writeframes(audio)
+            result = self.sensevoice_model.generate(
+                input=wav_path,
+                cache={},
+                language="en",
+                use_itn=True,
+            )
+            if not result:
+                return ""
+            text = str(result[0].get("text", ""))
+            return re.sub(r"<\|.*?\|>", "", text).strip()
+        except Exception:
+            return ""
+        finally:
+            with suppress(FileNotFoundError):
+                os.remove(wav_path)
 
     def _recognize_sherpa(self, audio: bytes) -> str:
         try:
@@ -679,7 +724,7 @@ class NurseryRhymePlayer:
         if song_name:
             self.play_song(song_name)
             return
-        self.status.set("\u6ca1\u542c\u6e05\uff0c\u8bf7\u53ea\u8bf4\u5c0f\u661f\u661f\u6216\u4e24\u53ea\u8001\u864e")
+        self.status.set("Sorry, please say Twinkle Twinkle Little Star or Two Tigers.")
 
     def close(self):
         self.listening = False

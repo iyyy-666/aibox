@@ -18,50 +18,19 @@ import uvicorn
 from config import WEB_HOST, WEB_PORT, PRESET_POSES, PWM_MIN, PWM_MAX
 from serial_driver import SerialDriver
 from robot import RobotArm
-from voice_engine import VoiceEngine, idle_timeout_due
+from voice_engine import VoiceEngine
 from audio_config import audio_output_device, voice_input_device
 
 # ---- 全局实例 ----
 ser = SerialDriver()
 robot = RobotArm(ser)
 voice = VoiceEngine()
-VOICE_AUTO_UPRIGHT_SEC = float(os.getenv("VOICE_AUTO_UPRIGHT_SEC", "20"))
-_voice_timeout_thread = None
-_voice_timeout_started = False
-
-
-def _voice_timeout_worker():
-    idle_started = time.monotonic()
-    while voice.running:
-        time.sleep(0.5)
-        if robot.is_moving:
-            idle_started = time.monotonic()
-            continue
-        if voice.last_command_at and voice.last_command_at > time.time() - 1.0:
-            idle_started = time.monotonic()
-            continue
-        idle_sec = time.monotonic() - idle_started
-        already_upright = getattr(robot, "current_pose", "") == "直立"
-        if not idle_timeout_due(idle_sec, moving=False, already_upright=already_upright, timeout=VOICE_AUTO_UPRIGHT_SEC):
-            continue
-        robot.execute_pose("直立")
-        idle_started = time.monotonic()
-        voice.last_command_at = time.time()
-
-
-def _start_voice_timeout_worker():
-    global _voice_timeout_thread, _voice_timeout_started
-    if _voice_timeout_thread and _voice_timeout_thread.is_alive():
-        return
-    _voice_timeout_started = True
-    _voice_timeout_thread = threading.Thread(target=_voice_timeout_worker, daemon=True)
-    _voice_timeout_thread.start()
 
 # ---- WebSocket 连接池 ----
 ws_clients: list[WebSocket] = []
 
 # ---- FastAPI ----
-app = FastAPI(title="KM1 机械臂控制台", version="2.0")
+app = FastAPI(title="KM1 Robot Arm Console", version="2.0")
 
 # ---- 系统 API ----
 
@@ -198,7 +167,7 @@ def execute_sequence(seq_name: str):
 def sorting_ready():
     ok = robot.prepare_sorting_pose()
     broadcast_status()
-    return {"success": ok, "pose": "分拣待命"}
+    return {"success": ok, "pose": "Sorting Ready"}
 
 
 @app.post("/api/robot/sorting/{side}")
@@ -233,7 +202,7 @@ def save_pose(data: dict):
     pwms = data.get("pwms", [])
     time_ms = data.get("time", 1500)
     if not name or len(pwms) != 6:
-        return {"success": False, "error": "名称或PWM值无效"}
+        return {"success": False, "error": "Invalid name or PWM values"}
     ok = robot.save_pose(name, pwms, time_ms)
     return {"success": ok, "name": name}
 
@@ -251,7 +220,7 @@ def delete_pose(pose_name: str):
             config.POSES_FILE.write_text(
                 json.dumps(poses, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"success": True}
-    return {"success": False, "error": "姿势不存在"}
+    return {"success": False, "error": "Pose does not exist"}
 
 
 # ---- 语音 API ----
@@ -265,6 +234,8 @@ def voice_start():
         "放平": lambda _: robot.execute_pose("放平"),
         "抓取": lambda _: robot.execute_sequence("抓取"),
         "搬运": lambda _: robot.execute_sequence("搬运"),
+        "复位": lambda _: robot.all_center(),
+        "停止": lambda _: robot.stop(),
         "张开": lambda _: robot.gripper_open(),
         "闭合": lambda _: robot.gripper_close(),
     })
@@ -277,8 +248,6 @@ def voice_start():
         if not voice.load():
             return {"success": False, "error": "voice model not loaded"}
     ok = voice.start()
-    if ok:
-        _start_voice_timeout_worker()
     return {"success": ok, "running": voice.status()["running"], "device": voice.status()["device"]}
 
 
@@ -291,47 +260,17 @@ def voice_stop():
 
 @app.get("/api/voice/level")
 def voice_level():
-    """Read a tiny slice from M260C for UI level display only."""
-    try:
-        import alsaaudio
-        import numpy as np
-        device = voice_input_device()
-        pcm = alsaaudio.PCM(
-            alsaaudio.PCM_CAPTURE,
-            alsaaudio.PCM_NORMAL,
-            device,
-            channels=1,
-            rate=16000,
-            format=alsaaudio.PCM_FORMAT_S16_LE,
-            periodsize=320,
-        )
-        chunks = []
-        for _ in range(5):
-            length, data = pcm.read()
-            if length > 0 and data:
-                chunks.append(data)
-        raw = b"".join(chunks)
-        if not raw:
-            return {"success": False, "peak": 0.0, "rms": 0.0, "error": "no audio"}
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-        raw_peak = float(np.max(np.abs(samples)) / 32768.0) if samples.size else 0.0
-        raw_rms = float(np.sqrt(np.mean(samples * samples)) / 32768.0) if samples.size else 0.0
-        gain = float(os.getenv("VOICE_LEVEL_GAIN", "3.0"))
-        boosted = np.clip(samples * gain, -32768.0, 32767.0)
-        peak = float(np.max(np.abs(boosted)) / 32768.0) if boosted.size else 0.0
-        rms = float(np.sqrt(np.mean(boosted * boosted)) / 32768.0) if boosted.size else 0.0
-        return {
-            "success": True,
-            "peak": peak,
-            "rms": rms,
-            "raw_peak": raw_peak,
-            "raw_rms": raw_rms,
-            "gain": gain,
-            "device": device,
-            "output_device": audio_output_device(),
-        }
-    except Exception as exc:
-        return {"success": False, "peak": 0.0, "rms": 0.0, "error": str(exc)}
+    """Return the shared meter from the running recognizer; never open ALSA twice."""
+    state = voice.status()
+    return {
+        "success": bool(state.get("loaded")),
+        "peak": max(0.0, min(1.0, float(state.get("peak", 0.0)))),
+        "rms": max(0.0, min(1.0, float(state.get("rms", 0.0)))),
+        "noise_floor": max(0.0, min(1.0, float(state.get("noise_floor", 0.0)))),
+        "trigger_peak": max(0.0, min(1.0, float(state.get("trigger_peak", 0.0)))),
+        "device": state.get("input_device", ""),
+        "output_device": audio_output_device(),
+    }
 
 @app.get("/api/voice/poll")
 def voice_poll():
