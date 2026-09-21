@@ -17,8 +17,31 @@ from ..adapters.robot import RobotAdapter
 
 NURSERY_ASSET_DIR = Path("/root/robot_arm/assets/nursery")
 NURSERY_SONGS = {
-    "小星星": {"song_id": "twinkle", "source_file": "xiaoxingxing_vocal.mp3"},
-    "两只老虎": {"song_id": "two_tigers", "source_file": "liangzhilaohu_vocal.mp3", "trim_start": 0.0, "trim_duration": 16.1},
+    "小星星": {
+        "song_id": "twinkle",
+        "source_file": "xiaoxingxing_vocal.mp3",
+        "lyrics": [
+            "Twinkle, twinkle, little star",
+            "How I wonder what you are",
+            "Up above the world so high",
+            "Like a diamond in the sky",
+            "Twinkle, twinkle, little star",
+            "How I wonder what you are",
+        ],
+    },
+    "两只老虎": {
+        "song_id": "two_tigers",
+        "source_file": "liangzhilaohu_vocal.mp3",
+        "trim_start": 0.0,
+        "trim_duration": 16.1,
+        "lyrics": [
+            "Two tigers, two tigers",
+            "Running fast, running fast",
+            "One has no eyes",
+            "One has no tail",
+            "How strange, how strange",
+        ],
+    },
 }
 ROBOT_COMMANDS = {
     "直立": ("pose", {"name": "直立"}),
@@ -204,8 +227,10 @@ class VoiceWorker:
         play_file = self._song_preparer(NURSERY_SONGS[song], source) if self._song_preparer else self.prepare_song(NURSERY_SONGS[song], source)
         self._play_file = str(play_file)
         self._playback.play(self._play_file, cleanup=True)
-        self._emit({"type": "playing", "song": song, "token": token, "message": f"正在播放{song}。"})
-        return {"ok": True, "song": song, "token": token}
+        lyrics = list(NURSERY_SONGS[song]["lyrics"])
+        result = {"ok": True, "song": song, "lyrics": lyrics, "token": token}
+        self._emit({"type": "playing", "message": f"正在播放{song}。", **result})
+        return result
 
     def stop_playback(self) -> None:
         self._play_token += 1

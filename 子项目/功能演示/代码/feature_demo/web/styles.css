@@ -194,6 +194,7 @@ main { min-width: 0; }
 .joint-row > span { color: var(--muted); font-size: 12px; }
 .worker-output { overflow-wrap: anywhere; }
 .worker-output p { margin: 0; }
+.worker-output [data-lyrics] { white-space: pre-line; }
 .worker-output dl { display: grid; gap: 8px; margin: 0; }
 .worker-output dl > div { padding: 8px; background: #f6f9fb; border-radius: 4px; }
 .worker-output dt { color: var(--muted); font-size: 11px; }

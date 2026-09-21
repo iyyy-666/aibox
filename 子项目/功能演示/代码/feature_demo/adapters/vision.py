@@ -252,7 +252,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         instance.controller = module.PalmTrackingController(config)
         instance.target_lock = module.PalmTargetLock()
         instance.gimbal = module.SerialGimbalClient(
-            port=os.getenv("PALM_TRACK_SERIAL_PORT", "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00"),
+            port=os.getenv("PALM_TRACK_SERIAL_PORT", "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"),
             baud=int(os.getenv("PALM_TRACK_SERIAL_BAUD", "115200")),
             yaw_id=int(os.getenv("PALM_TRACK_YAW_ID", "1")),
             pitch_id=int(os.getenv("PALM_TRACK_PITCH_ID", "2")),

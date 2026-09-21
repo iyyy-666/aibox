@@ -6,6 +6,8 @@ const appState = {
   socket: null,
   frameTimer: null,
   toastTimer: null,
+  commandRequestPending: false,
+  lifecycleControlsDisabled: false,
 };
 
 const iconByModule = {
@@ -282,7 +284,7 @@ function renderWorkerDetails(details) {
   setDetail("[data-normalized]", details.normalized);
   setDetail("[data-dialogue]", details.dialogue || (details.type === "assistant_reply" ? { turn: details.turn, text: details.text } : null));
   setDetail("[data-current-song]", details.song);
-  setDetail("[data-lyrics]", details.lyrics);
+  setDetail("[data-lyrics]", Array.isArray(details.lyrics) ? details.lyrics.join("\n") : details.lyrics);
   setDetail("[data-voice-result]", details.voice_result || (details.type === "speech" ? details.normalized : details.result));
   const result = details.result || details.text || details.message;
   if (result) {
@@ -363,7 +365,8 @@ async function sendCommand(command, control) {
     : command === "joint_step" ? { servo_id: Number(control.dataset.servoId), delta: Number(control.dataset.delta) }
     : command === "gripper" ? { action: control.dataset.gripper }
     : {};
-  control.disabled = true;
+  appState.commandRequestPending = true;
+  updateCommandControls();
   try {
     const result = await requestJson(`/api/modules/${appState.active.module_id}/commands/${command}`, { method: "POST", body: JSON.stringify(payload) });
     showToast(`${commandLabels[command] || "操作"}已发送。`);
@@ -372,7 +375,8 @@ async function sendCommand(command, control) {
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    control.disabled = false;
+    appState.commandRequestPending = false;
+    updateCommandControls();
   }
 }
 
@@ -415,6 +419,12 @@ function showStageError(message) {
 }
 
 function setControlsDisabled(disabled) {
+  appState.lifecycleControlsDisabled = disabled;
+  updateCommandControls();
+}
+
+function updateCommandControls() {
+  const disabled = appState.lifecycleControlsDisabled || appState.commandRequestPending;
   document.querySelectorAll("[data-command]").forEach((control) => { control.disabled = disabled; });
 }
 

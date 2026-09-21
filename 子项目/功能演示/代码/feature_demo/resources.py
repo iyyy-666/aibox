@@ -14,7 +14,7 @@ DEFAULT_DEVICE_PATHS: dict[str, tuple[str, ...]] = {
     "speaker": ("/dev/snd/pcmC0D0p",),
     "robot": ("/dev/esp32_arm",),
     "gimbal": (
-        "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00",
+        "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
     ),
 }
 
