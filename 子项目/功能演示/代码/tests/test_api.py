@@ -32,6 +32,14 @@ def test_health_check(client):
     assert client.get("/health").json() == {"ok": True}
 
 
+def test_root_serves_the_single_window_interface(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "功能演示" in response.text
+
+
 def test_home_listing_does_not_start_a_module(client, manager):
     response = client.get("/api/modules")
 
