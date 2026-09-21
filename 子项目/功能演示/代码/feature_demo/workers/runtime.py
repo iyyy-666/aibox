@@ -6,7 +6,9 @@ import sys
 from typing import Callable
 
 from ..adapters.gimbal import GimbalAdapter
+from ..adapters.robot import RobotAdapter
 from ..adapters.vision import LEGACY_VISION_SPECS, build_vision_adapter
+from .robot import ObjectSortingWorker, RobotWorker, SortingController
 from .vision import VisionWorker
 
 
@@ -61,13 +63,63 @@ def create_vision_worker(
     )
 
 
+def create_worker(
+    module_id: str,
+    *,
+    event_sink: Callable[[dict], None],
+    robot_adapter: RobotAdapter | None = None,
+    cv2_module=None,
+    adapter_builder: Callable[[str], object] | None = None,
+    gimbal=None,
+):
+    if module_id == "robot_button":
+        return RobotWorker(robot_adapter or RobotAdapter(), event_sink=event_sink)
+    if module_id != "object_sorting":
+        return create_vision_worker(
+            module_id,
+            cv2_module=cv2_module,
+            adapter_builder=adapter_builder,
+            event_sink=event_sink,
+            gimbal=gimbal,
+        )
+
+    builder = adapter_builder or build_vision_adapter
+    adapter = builder(module_id)
+    try:
+        stable_hits = max(1, int(getattr(adapter.module, "STABLE_HITS", 2)))
+    except (AttributeError, TypeError, ValueError):
+        stable_hits = 2
+    robot_worker = RobotWorker(robot_adapter or RobotAdapter(), event_sink=event_sink)
+    controller = SortingController(
+        robot_worker,
+        stable_hits=stable_hits,
+        event_sink=event_sink,
+    )
+    set_observer = getattr(adapter, "set_sorting_observer", None)
+    if callable(set_observer):
+        set_observer(controller.observe_color)
+    vision_worker = create_vision_worker(
+        module_id,
+        cv2_module=cv2_module,
+        adapter_builder=lambda _: adapter,
+        event_sink=event_sink,
+        gimbal=gimbal,
+    )
+    return ObjectSortingWorker(
+        vision_worker,
+        robot_worker,
+        controller,
+        event_sink=event_sink,
+    )
+
+
 def emit_json(event: dict) -> None:
     sys.stdout.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
 
 def run_worker(module_id: str) -> int:
-    worker = create_vision_worker(module_id, event_sink=emit_json)
+    worker = create_worker(module_id, event_sink=emit_json)
     try:
         worker.start()
         for line in sys.stdin:
