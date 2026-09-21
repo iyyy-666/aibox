@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
+from fastapi.staticfiles import StaticFiles
 
 from .manager import ModuleConflictError, ModuleManager
 from .registry import MODULES, get_module
@@ -104,5 +106,9 @@ def create_app(manager: ModuleManager) -> FastAPI:
                 await asyncio.sleep(0.5)
         except (WebSocketDisconnect, RuntimeError):
             return
+
+    web_dir = Path(__file__).with_name("web")
+    if web_dir.is_dir():
+        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 
     return app
