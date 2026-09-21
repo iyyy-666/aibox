@@ -81,6 +81,7 @@ class VoiceWorker:
         song_preparer: Callable[[dict, Path], str] | None = None,
         command_matcher: Callable[[str, tuple[str, ...]], str | None] | None = None,
         song_matcher: Callable[[str], str | None] | None = None,
+        join_timeout: float = 1.0,
     ) -> None:
         if module_id not in {"voice_input_test", "nursery_rhyme", "voice_robot_arm", "ai_assistant"}:
             raise ValueError(f"未知语音模块: {module_id}")
@@ -98,6 +99,8 @@ class VoiceWorker:
         self._engine = None
         self._pcm = None
         self._thread: threading.Thread | None = None
+        self._listener_started = threading.Event()
+        self._join_timeout = join_timeout
         self._listening = threading.Event()
         self._started = False
         self._play_token = 0
@@ -128,9 +131,14 @@ class VoiceWorker:
         self._pcm = self._pcm_factory()
         self._started = True
         self._listening.set()
+        self._listener_started.clear()
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
         self._emit({"type": "listening", "module": self.module_id, "message": "正在监听中文语音。"})
+        if not self._listener_started.wait(timeout=self._join_timeout):
+            self.stop_listening()
+            raise TimeoutError("voice listener startup timed out")
+        self._emit({"type": "ready", "module": self.module_id, "message": "voice module ready"})
         return {"ok": True, "listening": True}
 
     def stop_listening(self) -> dict:
@@ -151,7 +159,9 @@ class VoiceWorker:
                 stop()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+            thread.join(timeout=self._join_timeout)
+        if thread is not None and thread.is_alive():
+            raise TimeoutError("voice listener shutdown timed out")
         self._thread = None
         return {"ok": True, "listening": False}
 
@@ -229,6 +239,7 @@ class VoiceWorker:
         return str(output_path)
 
     def _listen_loop(self) -> None:
+        self._listener_started.set()
         engine = self._engine
         while self._listening.is_set():
             pcm = self._pcm
