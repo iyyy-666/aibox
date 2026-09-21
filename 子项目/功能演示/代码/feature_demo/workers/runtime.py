@@ -8,8 +8,10 @@ from typing import Callable
 from ..adapters.gimbal import GimbalAdapter
 from ..adapters.robot import RobotAdapter
 from ..adapters.vision import LEGACY_VISION_SPECS, build_vision_adapter
+from .assistant import AssistantWorker
 from .robot import ObjectSortingWorker, RobotWorker, SortingController
 from .vision import VisionWorker
+from .voice import VoiceWorker
 
 
 def _configured_camera(cv2_module):
@@ -72,6 +74,12 @@ def create_worker(
     adapter_builder: Callable[[str], object] | None = None,
     gimbal=None,
 ):
+    if module_id == "ai_assistant":
+        return AssistantWorker(event_sink=event_sink)
+    if module_id in {"voice_input_test", "nursery_rhyme"}:
+        return VoiceWorker(module_id, event_sink=event_sink)
+    if module_id == "voice_robot_arm":
+        return VoiceWorker(module_id, event_sink=event_sink, robot_adapter=robot_adapter or RobotAdapter())
     if module_id == "robot_button":
         return RobotWorker(robot_adapter or RobotAdapter(), event_sink=event_sink)
     if module_id != "object_sorting":
