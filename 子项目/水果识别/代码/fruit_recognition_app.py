@@ -24,8 +24,8 @@ CAPTURE_INTERVAL_SEC = float(os.getenv("FRUIT_CAPTURE_INTERVAL_SEC", "0.025"))
 DETECT_INTERVAL_SEC = float(os.getenv("FRUIT_DETECT_INTERVAL_SEC", "0.18"))
 YOLO_MODEL_PATH = os.getenv("FRUIT_YOLO_MODEL", "/root/robot_arm/models/fruit/yolov8n.pt")
 YOLO_CLS_MODEL_PATH = os.getenv("FRUIT_YOLO_CLS_MODEL", "/root/robot_arm/models/fruit/yolov8n-cls.pt")
-YOLO_IMG_SIZE = int(os.getenv("FRUIT_YOLO_IMG_SIZE", "512"))
-CONF_THRESHOLD = float(os.getenv("FRUIT_CONF", "0.28"))
+YOLO_IMG_SIZE = int(os.getenv("FRUIT_YOLO_IMG_SIZE", "640"))
+CONF_THRESHOLD = float(os.getenv("FRUIT_CONF", "0.20"))
 STABLE_HITS = int(os.getenv("FRUIT_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("FRUIT_SNAPSHOT_DIR", "/root/robot_arm/assets/fruit_snapshots"))
 
@@ -278,7 +278,7 @@ class FruitRecognitionApp:
             y1 = max(0, min(image.shape[0] - 1, y1)); y2 = max(0, min(image.shape[0] - 1, y2))
             if x2 <= x1 or y2 <= y1:
                 continue
-            if not box_is_target(image, (x1, y1, x2, y2), min_area=image.shape[0] * image.shape[1] * 0.018, max_area_ratio=0.62, min_side=54, min_aspect=0.35, max_aspect=2.8):
+            if not box_is_target(image, (x1, y1, x2, y2), min_area=image.shape[0] * image.shape[1] * 0.006, max_area_ratio=0.62, min_side=28, min_aspect=0.30, max_aspect=3.2):
                 continue
             detections.append(FruitDetection(name_en, FRUIT_CN[name_en], (x1, y1, x2, y2), conf, ((x1 + x2) // 2, (y1 + y2) // 2), "detect"))
         detections.sort(key=lambda d: d.confidence, reverse=True)
@@ -286,20 +286,40 @@ class FruitRecognitionApp:
 
     def _largest_picture_region(self, image: np.ndarray) -> tuple[int, int, int, int]:
         h, w = image.shape[:2]
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 45, 130)
-        kernel = np.ones((7, 7), np.uint8)
-        edges = cv2.dilate(edges, kernel, iterations=2)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        bright_paper = cv2.inRange(
+            hsv,
+            np.array((0, 0, 135), dtype=np.uint8),
+            np.array((180, 110, 255), dtype=np.uint8),
+        )
+        kernel_size = max(7, min(h, w) // 35)
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        bright_paper = cv2.morphologyEx(bright_paper, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(bright_paper, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         best = None
-        best_area = 0
+        best_score = 0.0
         for c in contours:
             x, y, bw, bh = cv2.boundingRect(c)
-            area = bw * bh
-            if area > best_area and area > w * h * 0.06 and bw > 80 and bh > 80:
+            box_area = bw * bh
+            contour_area = cv2.contourArea(c)
+            if box_area < w * h * 0.045 or box_area > w * h * 0.82 or bw < 80 or bh < 80:
+                continue
+            aspect = bw / max(1.0, float(bh))
+            if aspect < 0.45 or aspect > 2.8:
+                continue
+            fill_ratio = cv2.countNonZero(bright_paper[y : y + bh, x : x + bw]) / max(1.0, float(box_area))
+            rectangularity = contour_area / max(1.0, float(box_area))
+            cx, cy = x + bw / 2.0, y + bh / 2.0
+            if not (w * 0.08 <= cx <= w * 0.92 and h * 0.06 <= cy <= h * 0.94):
+                continue
+            if fill_ratio < 0.32 or rectangularity < 0.45:
+                continue
+            score = box_area * (0.55 * fill_ratio + 0.45 * rectangularity)
+            if score > best_score:
                 best = (x, y, x + bw, y + bh)
-                best_area = area
+                best_score = score
         if best is not None:
             return best
         margin_x = int(w * 0.12)
