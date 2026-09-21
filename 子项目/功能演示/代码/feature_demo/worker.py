@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -16,14 +17,17 @@ class WorkerProcess:
         *,
         environment: Mapping[str, str] | None = None,
         log_path: Path | None = None,
+        start_timeout: float = 15.0,
     ) -> None:
         self._command = tuple(command)
         self._environment = dict(environment or {})
         self._log_path = log_path
+        self._start_timeout = start_timeout
         self._process: subprocess.Popen[str] | None = None
         self._log_handle = None
         self._last_event: dict = {}
         self._reader: threading.Thread | None = None
+        self._startup_event = threading.Event()
 
     @property
     def pids(self) -> tuple[int, ...]:
@@ -37,6 +41,8 @@ class WorkerProcess:
             return
         env = os.environ.copy()
         env.update(self._environment)
+        self._last_event = {}
+        self._startup_event.clear()
         stderr = subprocess.DEVNULL
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +62,21 @@ class WorkerProcess:
         )
         self._reader = threading.Thread(target=self._read_events, daemon=True)
         self._reader.start()
+        deadline = time.monotonic() + self._start_timeout
+        while time.monotonic() < deadline:
+            remaining = max(0.0, deadline - time.monotonic())
+            if self._startup_event.wait(timeout=min(0.05, remaining)):
+                event_type = self._last_event.get("type")
+                if event_type == "ready":
+                    return
+                message = self._last_event.get("message", "功能进程启动失败。")
+                self._finish_failed_start()
+                raise RuntimeError(str(message))
+            if self._process is None or self._process.poll() is not None:
+                self._finish_failed_start()
+                raise RuntimeError("功能进程在就绪前已退出。")
+        self._finish_failed_start()
+        raise TimeoutError("功能进程启动超时。")
 
     def _read_events(self) -> None:
         process = self._process
@@ -68,6 +89,18 @@ class WorkerProcess:
                 continue
             if isinstance(event, dict):
                 self._last_event = event
+                if event.get("type") in {"ready", "error", "stopped"}:
+                    self._startup_event.set()
+
+    def _finish_failed_start(self) -> None:
+        process = self._process
+        if process is not None and process.poll() is None:
+            self._terminate_group(process)
+        if self._reader is not None and self._reader is not threading.current_thread():
+            self._reader.join(timeout=1.0)
+        self._process = None
+        self._reader = None
+        self._close_log()
 
     def command(self, name: str, payload: dict) -> dict:
         process = self._process
