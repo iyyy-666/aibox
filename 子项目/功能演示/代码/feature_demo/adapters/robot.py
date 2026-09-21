@@ -84,6 +84,9 @@ class RobotAdapter:
             elif name == "stop_motion":
                 ok = robot.stop()
                 label = "停止"
+            elif name == "center":
+                ok = robot.all_center()
+                label = "center"
             elif name == "sorting_ready":
                 ok = robot.prepare_sorting_pose()
                 label = "分拣准备"
