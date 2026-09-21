@@ -1,5 +1,7 @@
 # 子项目索引
 
+- [功能演示](子项目/功能演示/PROJECT_CONTEXT.md)
+
 打开顺序：
 1. 先读总上下文 `PROJECT_CONTEXT.md`
 2. 再读当前相关子项目的 `PROJECT_CONTEXT.md`

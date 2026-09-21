@@ -56,3 +56,42 @@ def test_home_has_no_start_request_on_load(app_javascript):
 
     assert "/start" not in initial_section
     assert "loadModules" in initial_section
+
+
+def test_nonvisual_modules_render_real_payload_controls(app_javascript):
+    for module_id in ("ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm"):
+        assert module_id in app_javascript
+    assert "song_id: \"twinkle\"" in app_javascript
+    assert "song_id: \"two_tigers\"" in app_javascript
+    assert "servo_id" in app_javascript
+    assert "data-assistant-text" in app_javascript
+    assert "gimbal_center" not in app_javascript
+
+
+def test_nonvisual_controls_are_grouped_labeled_and_responsive(app_javascript):
+    styles = (WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "<fieldset" in app_javascript
+    assert "<legend>" in app_javascript
+    assert "<label for=" in app_javascript
+    assert 'aria-live="polite"' in app_javascript
+    assert "nonvisual-controls" in app_javascript
+    assert ".nonvisual-controls" in styles
+    assert "align-items: flex-start" in styles
+    assert "overflow-y: auto" in styles
+    assert "max-height: calc(100dvh" in styles
+
+
+def test_nonvisual_worker_details_have_dedicated_outputs(app_javascript):
+    for field in ("details.raw", "details.normalized", "details.dialogue", "details.song", "details.lyrics", "details.voice_result"):
+        assert field in app_javascript
+    for target in ("[data-raw]", "[data-normalized]", "[data-dialogue]", "[data-current-song]", "[data-lyrics]", "[data-voice-result]"):
+        assert target in app_javascript
+
+
+def test_assistant_rejects_empty_questions_and_commands_disable_in_flight(app_javascript):
+    assert "请输入要发送的问题" in app_javascript
+    assert "const assistantText" in app_javascript
+    assert "control.disabled = true" in app_javascript
+    assert "control.disabled = false" in app_javascript
+    assert "finally" in app_javascript

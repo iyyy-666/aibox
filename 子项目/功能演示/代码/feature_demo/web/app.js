@@ -64,6 +64,7 @@ const commandLabels = {
 };
 
 const secondaryCommands = new Set(["stop_listening", "interrupt", "pause_sorting", "stop_sorting", "stop_tracking", "stop_motion", "stop_playback"]);
+const nurseryPayloads = { twinkle: { song_id: "twinkle" }, two_tigers: { song_id: "two_tigers" } };
 
 function iconMarkup(name) {
   return `<svg aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
@@ -210,6 +211,12 @@ function renderCommandWorkspace(module, accent, soft) {
   document.querySelector("[data-interaction-title]").textContent = module.name;
   document.querySelector("[data-interaction-copy]").textContent = module.description;
   const list = document.querySelector("[data-command-list]");
+  if (["ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm"].includes(module.module_id)) {
+    list.classList.add("nonvisual-controls");
+    list.innerHTML = nonVisualControls(module.module_id);
+    return;
+  }
+  list.classList.remove("nonvisual-controls");
   const commands = module.commands.filter((name) => !name.startsWith("gimbal_"));
   list.replaceChildren(...commands.map((name) => {
     const button = document.createElement("button");
@@ -219,6 +226,16 @@ function renderCommandWorkspace(module, accent, soft) {
     button.textContent = commandLabels[name] || name;
     return button;
   }));
+}
+
+function nonVisualControls(moduleId) {
+  const button = (command, label, extra = "", secondary = false) => `<button type="button" class="command-button${secondary ? " is-secondary" : ""}" data-command="${command}" ${extra}>${label}</button>`;
+  const listening = () => `<div class="command-row" aria-label="语音监听控制">${button("start_listening", "开始监听")}${button("stop_listening", "停止监听", "", true)}</div>`;
+  if (moduleId === "ai_assistant") return `<fieldset class="control-group"><legend>文字与语音对话</legend><label for="assistant-prompt">请输入问题</label><textarea id="assistant-prompt" data-assistant-text rows="3" maxlength="500" aria-describedby="assistant-hint" placeholder="例如：什么是图像识别？"></textarea><p id="assistant-hint" class="control-hint">支持文字输入，也可开启语音监听。</p><div class="command-row">${button("ask", "发送问题")}${button("interrupt", "停止回答", "", true)}</div>${listening()}<section class="worker-output" aria-labelledby="dialogue-title"><h3 id="dialogue-title">对话记录</h3><div data-dialogue role="log" aria-live="polite">等待提问。</div></section></fieldset>`;
+  if (moduleId === "voice_input_test") return `<fieldset class="control-group"><legend>语音输入测试</legend>${listening()}<section class="worker-output" aria-live="polite"><h3>识别结果</h3><dl><div><dt>原始文本</dt><dd data-raw>等待语音输入。</dd></div><div><dt>规范文本</dt><dd data-normalized>等待语音输入。</dd></div></dl></section></fieldset>`;
+  if (moduleId === "nursery_rhyme") return `<fieldset class="control-group"><legend>儿歌播放</legend><div class="command-row" aria-label="选择儿歌">${button("play", "播放小星星", 'data-song-id="twinkle"')}${button("play", "播放两只老虎", 'data-song-id="two_tigers"')}${button("stop_playback", "停止播放", "", true)}</div>${listening()}<section class="worker-output" aria-live="polite"><h3>当前播放</h3><p data-current-song>尚未选择儿歌。</p><div data-lyrics>歌词将在播放时显示。</div></section></fieldset>`;
+  if (moduleId === "robot_button") return `<fieldset class="control-group"><legend>机械臂动作</legend><div class="control-section"><h3>预设动作</h3><div class="command-row">${button("pose", "直立", 'data-pose="直立"')}${button("pose", "放平", 'data-pose="放平"')}${button("sequence", "抓取", 'data-sequence="抓取"')}${button("sequence", "搬运", 'data-sequence="搬运"')}</div></div><div class="control-section"><h3>关节微调</h3><div class="joint-controls">${[0,1,2,3,4,5].map((id) => `<div class="joint-row"><span>关节 ${id + 1}</span>${button("joint_step", "减小", `data-servo-id="${id}" data-delta="-30"`, true)}${button("joint_step", "增大", `data-servo-id="${id}" data-delta="30"`)}</div>`).join("")}</div></div><div class="control-section"><h3>夹爪控制</h3><div class="command-row">${button("gripper", "张开", 'data-gripper="open"')}${button("gripper", "半开", 'data-gripper="half"')}${button("gripper", "闭合", 'data-gripper="close"')}${button("stop_motion", "停止动作", "", true)}</div></div></fieldset>`;
+  return `<fieldset class="control-group"><legend>语音控制机械臂</legend>${listening()}<div class="command-row">${button("stop_motion", "紧急停止", "", true)}</div><section class="worker-output" aria-live="polite"><h3>语音执行结果</h3><div data-voice-result>等待语音指令。</div></section></fieldset>`;
 }
 
 function showModuleView() {
@@ -256,6 +273,17 @@ function updateLifecycle(snapshot) {
 }
 
 function renderWorkerDetails(details) {
+  const setDetail = (selector, value) => {
+    const target = document.querySelector(selector);
+    if (!target || value === undefined || value === null || value === "") return;
+    target.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  };
+  setDetail("[data-raw]", details.raw);
+  setDetail("[data-normalized]", details.normalized);
+  setDetail("[data-dialogue]", details.dialogue || (details.type === "assistant_reply" ? { turn: details.turn, text: details.text } : null));
+  setDetail("[data-current-song]", details.song);
+  setDetail("[data-lyrics]", details.lyrics);
+  setDetail("[data-voice-result]", details.voice_result || (details.type === "speech" ? details.normalized : details.result));
   const result = details.result || details.text || details.message;
   if (result) {
     const target = appState.active?.visual ? document.querySelector("[data-result-content]") : document.querySelector("[data-activity-log]");
@@ -317,17 +345,34 @@ function stopFrameUpdates() {
   document.querySelector("[data-frame-empty]").hidden = false;
 }
 
-async function sendCommand(command) {
+async function sendCommand(command, control) {
   if (!appState.active) return;
+  const assistantText = command === "ask" ? document.querySelector("[data-assistant-text]") : null;
+  if (assistantText && !assistantText.value.trim()) {
+    showToast("请输入要发送的问题。", true);
+    assistantText.focus();
+    return;
+  }
+  if (!control || control.disabled) return;
   const payload = command.startsWith("gimbal_")
     ? { amount: Number(document.querySelector("[data-gimbal-amount]").value) }
+    : command === "ask" ? { text: assistantText.value.trim() }
+    : command === "play" ? nurseryPayloads[control.dataset.songId]
+    : command === "pose" ? { name: control.dataset.pose }
+    : command === "sequence" ? { name: control.dataset.sequence }
+    : command === "joint_step" ? { servo_id: Number(control.dataset.servoId), delta: Number(control.dataset.delta) }
+    : command === "gripper" ? { action: control.dataset.gripper }
     : {};
+  control.disabled = true;
   try {
     const result = await requestJson(`/api/modules/${appState.active.module_id}/commands/${command}`, { method: "POST", body: JSON.stringify(payload) });
     showToast(`${commandLabels[command] || "操作"}已发送。`);
     renderWorkerDetails(result || {});
+    if (assistantText) assistantText.value = "";
   } catch (error) {
     showToast(error.message, true);
+  } finally {
+    control.disabled = false;
   }
 }
 
@@ -384,7 +429,7 @@ function showToast(message, isError = false) {
 
 document.addEventListener("click", (event) => {
   const command = event.target.closest("[data-command]")?.dataset.command;
-  if (command) sendCommand(command);
+  if (command) sendCommand(command, event.target.closest("[data-command]"));
 });
 document.querySelector('[data-action="exit-module"]').addEventListener("click", requestExit);
 document.querySelector('[data-action="continue-module"]').addEventListener("click", () => document.querySelector("[data-exit-dialog]").close());
