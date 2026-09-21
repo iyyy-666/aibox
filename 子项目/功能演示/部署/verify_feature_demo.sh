@@ -253,8 +253,8 @@ if [[ "$FULL_ACCEPTANCE" == true ]]; then
   require_full_acceptance_dependencies
   verify_all_module_lifecycles
   verify_high_risk_sequences
-  verify_window_close
   verify_twenty_switches
+  verify_window_close
   write_acceptance_marker
 fi
 if [[ "$RETIRE_LEGACY" == true ]]; then

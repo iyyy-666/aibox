@@ -113,6 +113,14 @@ def test_high_risk_and_window_close_hooks_require_verifiable_scenario_results():
         assert required in verifier
 
 
+def test_full_acceptance_runs_api_dependent_switches_before_window_close():
+    verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
+    full_block = verifier.split('if [[ "$FULL_ACCEPTANCE" == true ]]; then', 1)[1]
+
+    assert full_block.index("verify_twenty_switches") < full_block.index("verify_window_close")
+    assert full_block.index("verify_window_close") < full_block.index("write_acceptance_marker")
+
+
 def test_verifier_uses_the_same_camera_microphone_robot_and_gimbal_paths_as_runtime():
     verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
 
