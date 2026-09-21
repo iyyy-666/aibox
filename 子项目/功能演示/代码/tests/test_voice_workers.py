@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
+
+import pytest
 
 from feature_demo.adapters.audio import deployment_environment
 from feature_demo.adapters.robot import RobotAdapter
@@ -24,6 +27,12 @@ class FakePCM:
         self.closed = True
         self.calls.append("pcm_close")
         self.release.set()
+
+
+class BlockedPCM(FakePCM):
+    def close(self) -> None:
+        self.closed = True
+        self.calls.append("pcm_close")
 
 
 class FakeEngine:
@@ -139,6 +148,50 @@ def test_voice_worker_closes_pcm_before_stopped_event() -> None:
     assert pcm.closed is True
     assert events[-1]["type"] == "stopped"
     assert calls.index("pcm_close") < len(calls)
+
+
+def test_voice_worker_emits_ready_as_its_final_startup_signal() -> None:
+    events: list[dict] = []
+    worker = VoiceWorker(
+        "voice_input_test",
+        event_sink=events.append,
+        engine_factory=FakeEngine,
+        pcm_factory=lambda: FakePCM([]),
+    )
+
+    worker.start()
+
+    assert events[-1]["type"] == "ready"
+    worker.stop()
+
+
+def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect() -> None:
+    calls: list[str] = []
+    pcm = BlockedPCM(calls)
+    adapter = RobotAdapter(
+        serial_factory=lambda: FakeSerial(calls),
+        robot_factory=lambda serial: FakeRobot(serial, calls),
+    )
+    events: list[dict] = []
+    worker = VoiceWorker(
+        "voice_robot_arm",
+        event_sink=events.append,
+        engine_factory=FakeEngine,
+        pcm_factory=lambda: pcm,
+        robot_adapter=adapter,
+        join_timeout=0.05,
+    )
+    worker.start()
+
+    with pytest.raises(TimeoutError):
+        worker.stop()
+
+    assert worker._thread is not None and worker._thread.is_alive()
+    assert "disconnect" not in calls
+    assert all(event["type"] != "stopped" for event in events)
+    pcm.release.set()
+    worker._thread.join(timeout=1.0)
+    worker.stop()
 
 
 def test_audio_player_only_terminates_its_tracked_process() -> None:
@@ -292,3 +345,42 @@ def test_assistant_lazily_synthesizes_latest_reply_for_tracked_playback(tmp_path
     assert generated.wait(timeout=1.0)
     assert playback.paths == [str(wav)]
     worker.stop()
+
+
+def test_assistant_stop_invalidates_blocked_tts_before_playback(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    playback = FakePlayback()
+    wav = tmp_path / "late.wav"
+    wav.write_bytes(b"wav")
+
+    class ReplyModel:
+        def __call__(self, *_args, **_kwargs):
+            yield {"choices": [{"text": "延迟回答"}]}
+
+    def synthesize(_text: str) -> str:
+        started.set()
+        assert release.wait(timeout=1.0)
+        return str(wav)
+
+    worker = AssistantWorker(
+        event_sink=lambda _event: None,
+        llm_factory=ReplyModel,
+        tts_factory=synthesize,
+        playback=playback,
+        tts_join_timeout=0.05,
+    )
+    worker.ask("测试关闭")
+    assert started.wait(timeout=1.0)
+
+    with pytest.raises(TimeoutError):
+        worker.stop()
+
+    assert worker._tts_thread is not None and worker._tts_thread.is_alive()
+    assert playback.paths == []
+    assert worker.last_event["type"] != "stopped"
+    release.set()
+    worker._tts_thread.join(timeout=1.0)
+    worker.stop()
+    assert playback.paths == []
+    assert not wav.exists()

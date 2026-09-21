@@ -40,6 +40,7 @@ class AssistantWorker:
         voice_factory: Callable[[Callable[[str], None]], VoiceWorker] | None = None,
         playback: PlaybackController | None = None,
         tts_factory: Callable[[str], str] | None = None,
+        tts_join_timeout: float = 1.0,
     ) -> None:
         self._event_sink = event_sink
         self._llm_factory = llm_factory or self._default_llm_factory
@@ -55,6 +56,7 @@ class AssistantWorker:
         self._tts_thread: threading.Thread | None = None
         self._tts_engine = None
         self._tts_lock = threading.Lock()
+        self._tts_join_timeout = tts_join_timeout
         self._last_event: dict = {}
 
     @property
@@ -108,13 +110,16 @@ class AssistantWorker:
         raise ValueError(f"不支持的助手命令: {name}")
 
     def stop(self) -> None:
+        self.interrupt()
         if self._voice is not None:
             self._voice.stop()
         self._playback.stop()
         self._clear_tts_queue()
         if self._tts_thread is not None:
             self._tts_queue.put(None)
-            self._tts_thread.join(timeout=1.0)
+            self._tts_thread.join(timeout=self._tts_join_timeout)
+            if self._tts_thread.is_alive():
+                raise TimeoutError("assistant speech shutdown timed out")
             self._tts_thread = None
         self._emit({"type": "stopped", "message": "中文 AI 助手已停止并释放资源。"})
 
