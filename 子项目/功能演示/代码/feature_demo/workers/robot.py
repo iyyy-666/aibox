@@ -32,14 +32,21 @@ class RobotWorker:
         return result
 
     def stop(self) -> None:
+        try:
+            self.stop_motion()
+        finally:
+            self.disconnect()
+
+    def stop_motion(self) -> None:
+        if self._started:
+            self._adapter.stop_motion()
+
+    def disconnect(self) -> None:
         if not self._started:
             return
-        try:
-            self._adapter.stop_motion()
-        finally:
-            self._adapter.disconnect()
-            self._started = False
-            self._emit({"type": "stopped", "message": "机械臂已停止并断开连接。"})
+        self._adapter.disconnect()
+        self._started = False
+        self._emit({"type": "stopped", "message": "机械臂已停止并断开连接。"})
 
     def _emit(self, event: dict) -> None:
         self._last_event = dict(event)
@@ -114,17 +121,19 @@ class SortingController:
                 self._reset_candidate()
         return result
 
-    def observe_color(self, color: str) -> dict | None:
-        side = self.DESTINATIONS.get(color)
-        if side is None:
-            return None
+    def observe_color(self, color: str | None) -> dict | None:
+        normalized_color = color.lower() if isinstance(color, str) else ""
+        side = self.DESTINATIONS.get(normalized_color)
         with self._lock:
+            if side is None:
+                self._reset_candidate()
+                return None
             if not self._sorting or self._paused or self._busy:
                 return None
-            if color == self._candidate_color:
+            if normalized_color == self._candidate_color:
                 self._candidate_count += 1
             else:
-                self._candidate_color = color
+                self._candidate_color = normalized_color
                 self._candidate_count = 1
             if self._candidate_count < self._stable_hits:
                 return None
@@ -135,7 +144,7 @@ class SortingController:
             self._event_sink(
                 {
                     "type": "sorting_result",
-                    "color": color,
+                    "color": normalized_color,
                     "side": side,
                     **result,
                 }
@@ -206,12 +215,15 @@ class ObjectSortingWorker:
 
     def stop(self) -> None:
         try:
-            self._vision_worker.stop()
+            self._robot_worker.stop_motion()
         finally:
             try:
-                self._robot_worker.stop()
+                self._vision_worker.stop()
             finally:
-                self._emit({"type": "stopped", "message": "物体分拣已停止。"})
+                try:
+                    self._robot_worker.disconnect()
+                finally:
+                    self._emit({"type": "stopped", "message": "物体分拣已停止。"})
 
     def _emit(self, event: dict) -> None:
         self._last_event = dict(event)
