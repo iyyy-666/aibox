@@ -84,8 +84,8 @@ class LegacyVisionAdapter:
         if mode == "sorting":
             normal, _ = self.module.split_stereo(frame)
             detected = self.instance._detect_color(normal)
-            if detected is not None and self._sorting_observer is not None:
-                self._sorting_observer(detected[0])
+            if self._sorting_observer is not None:
+                self._sorting_observer(None if detected is None else detected[0])
             return self.instance._annotate(normal, detected), {"result": _plain_value(detected)}
         if mode == "tracking":
             return self._process_tracking(frame)

@@ -29,6 +29,8 @@ class RobotAdapter:
         self._serial = None
         self._robot = None
         self._lock = threading.RLock()
+        self._transfer_finished = threading.Condition(self._lock)
+        self._active_transfers = 0
 
     @property
     def connected(self) -> bool:
@@ -49,6 +51,8 @@ class RobotAdapter:
             self._robot = self._robot_factory(serial)
 
     def command(self, name: str, payload: dict) -> dict:
+        if name == "sorting_transfer":
+            return self._sorting_transfer(payload)
         with self._lock:
             if self._robot is None:
                 raise RuntimeError("机械臂当前未连接。")
@@ -83,12 +87,6 @@ class RobotAdapter:
             elif name == "sorting_ready":
                 ok = robot.prepare_sorting_pose()
                 label = "分拣准备"
-            elif name == "sorting_transfer":
-                side = str(payload.get("side", ""))
-                if side not in {"left", "right"}:
-                    raise ValueError("分拣方向必须是 left 或 right。")
-                ok = robot.execute_sort_transfer(side)
-                label = side
             else:
                 raise ValueError(f"不支持的机械臂命令：{name}")
             return {
@@ -98,13 +96,37 @@ class RobotAdapter:
                 "message": "机械臂命令已执行。" if ok else "机械臂未能执行该命令。",
             }
 
+    def _sorting_transfer(self, payload: dict) -> dict:
+        side = str(payload.get("side", ""))
+        if side not in {"left", "right"}:
+            raise ValueError("分拣方向必须是 left 或 right。")
+        with self._transfer_finished:
+            if self._robot is None:
+                raise RuntimeError("机械臂当前未连接。")
+            robot = self._robot
+            self._active_transfers += 1
+        try:
+            ok = robot.execute_sort_transfer(side)
+        finally:
+            with self._transfer_finished:
+                self._active_transfers -= 1
+                self._transfer_finished.notify_all()
+        return {
+            "ok": bool(ok),
+            "command": "sorting_transfer",
+            "result": side,
+            "message": "机械臂命令已执行。" if ok else "机械臂未能执行该命令。",
+        }
+
     def stop_motion(self) -> None:
         with self._lock:
             if self._robot is not None:
                 self._robot.stop()
 
     def disconnect(self) -> None:
-        with self._lock:
+        with self._transfer_finished:
+            while self._active_transfers:
+                self._transfer_finished.wait()
             if self._serial is not None:
                 self._serial.disconnect()
             self._robot = None

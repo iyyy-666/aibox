@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import threading
+
 import feature_demo.workers.robot as robot_workers
 import feature_demo.workers.runtime as runtime
 
 from feature_demo.adapters.robot import RobotAdapter
+from feature_demo.adapters.vision import LegacyVisionAdapter, LegacyVisionSpec
 from feature_demo.workers.robot import RobotWorker
 
 
@@ -62,6 +65,25 @@ class StopFailureRobot(FakeRobot):
         raise RuntimeError("emergency stop failed")
 
 
+class BlockingTransferRobot(FakeRobot):
+    def __init__(self, serial, calls):
+        super().__init__(serial, calls)
+        self.transfer_started = threading.Event()
+        self.release_transfer = threading.Event()
+        self.stop_called = threading.Event()
+
+    def execute_sort_transfer(self, side):
+        self.calls.append(("sorting", side))
+        self.transfer_started.set()
+        self.release_transfer.wait(timeout=2.0)
+        return True
+
+    def stop(self):
+        self.calls.append("stop_motion")
+        self.stop_called.set()
+        return True
+
+
 class FakeVisionWorker:
     def __init__(self):
         self.started = False
@@ -85,6 +107,16 @@ class StopFailureVisionWorker(FakeVisionWorker):
     def stop(self):
         super().stop()
         raise RuntimeError("camera shutdown failed")
+
+
+class OrderedVisionWorker(FakeVisionWorker):
+    def __init__(self, calls):
+        super().__init__()
+        self.calls = calls
+
+    def stop(self):
+        self.calls.append("vision_stop")
+        super().stop()
 
 
 class FakeSortingAdapter:
@@ -117,6 +149,18 @@ def make_worker(calls, robot_type=FakeRobot):
         ),
         event_sink=lambda event: None,
     )
+
+
+def make_blocking_transfer_worker(calls):
+    created = []
+    worker = RobotWorker(
+        RobotAdapter(
+            serial_factory=lambda: FakeSerial(calls),
+            robot_factory=lambda serial: created.append(BlockingTransferRobot(serial, calls)) or created[-1],
+        ),
+        event_sink=lambda event: None,
+    )
+    return worker, created
 
 
 def test_robot_serial_is_lazy():
@@ -203,6 +247,92 @@ def test_object_sorting_requires_prepare_then_maps_stable_red_and_blue_to_fixed_
     assert ("sorting", "left") in calls
     assert ("sorting", "right") in calls
     worker.stop()
+
+
+def test_object_sorting_maps_legacy_red_and_blue_labels_to_fixed_sides():
+    calls = []
+    robot_worker = make_worker(calls)
+    controller = robot_workers.SortingController(robot_worker, stable_hits=2, event_sink=lambda event: None)
+    robot_worker.start()
+
+    controller.prepare()
+    controller.start()
+    controller.observe_color("Red")
+    controller.observe_color("Red")
+    controller.start()
+    controller.observe_color("Blue")
+    controller.observe_color("Blue")
+
+    assert ("sorting", "left") in calls
+    assert ("sorting", "right") in calls
+    robot_worker.stop()
+
+
+def test_sorting_adapter_notifies_empty_detection_to_reset_stability():
+    calls = []
+    robot_worker = make_worker(calls)
+    controller = robot_workers.SortingController(robot_worker, stable_hits=2, event_sink=lambda event: None)
+    detections = iter([("Red", (0, 0, 1, 1), 1.0), None, ("Red", (0, 0, 1, 1), 1.0)])
+    module = type("LegacySortingModule", (), {"split_stereo": staticmethod(lambda frame: (frame, None))})
+    instance = type(
+        "LegacySortingInstance",
+        (),
+        {
+            "_detect_color": lambda self, frame: next(detections),
+            "_annotate": lambda self, frame, detected: frame,
+        },
+    )()
+    adapter = LegacyVisionAdapter("object_sorting", module, instance, LegacyVisionSpec("sorting_app.py", "SortingApp", "sorting"))
+    adapter.set_sorting_observer(controller.observe_color)
+    robot_worker.start()
+    controller.prepare()
+    controller.start()
+
+    adapter.process(object())
+    adapter.process(object())
+    adapter.process(object())
+
+    assert ("sorting", "left") not in calls
+    assert controller.snapshot()["candidate_count"] == 1
+    robot_worker.stop()
+
+
+def test_stop_motion_preempts_blocking_transfer_before_disconnect():
+    calls = []
+    worker, created = make_blocking_transfer_worker(calls)
+    worker.start()
+    robot = created[0]
+    transfer = threading.Thread(target=lambda: worker.command("sorting_transfer", {"side": "left"}))
+    transfer.start()
+    assert robot.transfer_started.wait(timeout=1.0)
+
+    stopper = threading.Thread(target=worker.stop)
+    stopper.start()
+    assert robot.stop_called.wait(timeout=0.5)
+    assert "disconnect" not in calls
+    robot.release_transfer.set()
+    transfer.join(timeout=1.0)
+    stopper.join(timeout=1.0)
+
+    assert not transfer.is_alive()
+    assert not stopper.is_alive()
+    assert calls.index("stop_motion") < calls.index("disconnect")
+
+
+def test_object_sorting_stop_requests_robot_stop_before_vision_shutdown():
+    calls = []
+    robot_worker = make_worker(calls)
+    worker = robot_workers.ObjectSortingWorker(
+        OrderedVisionWorker(calls),
+        robot_worker,
+        robot_workers.SortingController(robot_worker, event_sink=lambda event: None),
+        event_sink=lambda event: None,
+    )
+    worker.start()
+
+    worker.stop()
+
+    assert calls.index("stop_motion") < calls.index("vision_stop") < calls.index("disconnect")
 
 
 def test_runtime_uses_legacy_sorting_stable_hits_setting():
