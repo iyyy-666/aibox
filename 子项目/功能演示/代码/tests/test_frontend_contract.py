@@ -87,11 +87,19 @@ def test_nonvisual_worker_details_have_dedicated_outputs(app_javascript):
         assert field in app_javascript
     for target in ("[data-raw]", "[data-normalized]", "[data-dialogue]", "[data-current-song]", "[data-lyrics]", "[data-voice-result]"):
         assert target in app_javascript
+    assert 'details.lyrics.join("\\n")' in app_javascript
 
 
 def test_assistant_rejects_empty_questions_and_commands_disable_in_flight(app_javascript):
     assert "请输入要发送的问题" in app_javascript
     assert "const assistantText" in app_javascript
-    assert "control.disabled = true" in app_javascript
-    assert "control.disabled = false" in app_javascript
+    assert "appState.commandRequestPending" in app_javascript
+    assert "updateCommandControls" in app_javascript
     assert "finally" in app_javascript
+
+
+def test_command_request_locks_every_command_without_overriding_lifecycle_lock(app_javascript):
+    assert "appState.commandRequestPending = true" in app_javascript
+    assert "appState.commandRequestPending = false" in app_javascript
+    assert "lifecycleControlsDisabled || appState.commandRequestPending" in app_javascript
+    assert 'document.querySelectorAll("[data-command]")' in app_javascript

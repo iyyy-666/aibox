@@ -279,6 +279,34 @@ def test_two_tigers_song_id_is_trimmed_and_normalized_before_playback(tmp_path: 
     assert commands[0][commands[0].index("-ac") + 1] == "2"
 
 
+def test_nursery_play_event_and_result_include_legacy_english_lyrics(tmp_path: Path) -> None:
+    source = tmp_path / "xiaoxingxing_vocal.mp3"
+    source.write_bytes(b"source")
+    events: list[dict] = []
+    worker = VoiceWorker(
+        "nursery_rhyme",
+        event_sink=events.append,
+        engine_factory=FakeEngine,
+        pcm_factory=lambda: FakePCM([]),
+        playback=FakePlayback(),
+        asset_dir=tmp_path,
+        song_preparer=lambda _spec, source_path: str(source_path),
+    )
+
+    result = worker.play_song("twinkle")
+
+    expected = [
+        "Twinkle, twinkle, little star",
+        "How I wonder what you are",
+        "Up above the world so high",
+        "Like a diamond in the sky",
+        "Twinkle, twinkle, little star",
+        "How I wonder what you are",
+    ]
+    assert result["lyrics"] == expected
+    assert events[-1]["lyrics"] == expected
+
+
 def test_voice_robot_arm_uses_legacy_command_match_and_all_center() -> None:
     calls: list[str] = []
     pcm = FakePCM(calls)
