@@ -183,7 +183,7 @@ def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect()
     )
     worker.start()
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TimeoutError, match="语音监听停止超时"):
         worker.stop()
 
     assert worker._thread is not None and worker._thread.is_alive()
@@ -191,6 +191,26 @@ def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect()
     assert all(event["type"] != "stopped" for event in events)
     pcm.release.set()
     worker._thread.join(timeout=1.0)
+
+
+@pytest.mark.parametrize(
+    "module_id", ["voice_input_test", "nursery_rhyme", "ai_assistant"]
+)
+def test_non_robot_voice_workers_disable_command_grammar(module_id) -> None:
+    engine = FakeEngine()
+    engine.use_command_grammar = True
+    worker = VoiceWorker(
+        module_id,
+        event_sink=lambda _event: None,
+        engine_factory=lambda: engine,
+        pcm_factory=lambda: FakePCM([]),
+    )
+
+    worker.start()
+
+    assert engine.use_command_grammar is False
+    assert engine.commands == {}
+    worker.stop()
     worker.stop()
 
 
@@ -401,7 +421,7 @@ def test_assistant_stop_invalidates_blocked_tts_before_playback(tmp_path: Path) 
     worker.ask("测试关闭")
     assert started.wait(timeout=1.0)
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TimeoutError, match="AI 语音播报停止超时"):
         worker.stop()
 
     assert worker._tts_thread is not None and worker._tts_thread.is_alive()

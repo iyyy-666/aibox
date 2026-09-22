@@ -130,3 +130,29 @@ def test_worker_command_times_out_without_a_correlated_result():
     with pytest.raises(TimeoutError, match="gimbal_left"):
         worker.command("gimbal_left", {"amount": 1})
     worker.stop(0.05)
+
+
+def test_worker_stop_cleans_process_group_after_leader_exits(monkeypatch):
+    worker = WorkerProcess([sys.executable, "-c", "pass"])
+
+    class ExitedLeader:
+        pid = 41001
+
+        def poll(self):
+            return 0
+
+    worker._process = ExitedLeader()
+    worker._process_group_id = 41001
+    terminated = []
+    monkeypatch.setattr(worker, "_process_group_members", lambda: (41002,))
+    monkeypatch.setattr(
+        worker,
+        "_terminate_process_group",
+        lambda: terminated.append(worker._process_group_id),
+    )
+
+    assert worker.pids == (41002,)
+    worker.stop(0.1)
+
+    assert terminated == [41001]
+    assert worker.pids == ()

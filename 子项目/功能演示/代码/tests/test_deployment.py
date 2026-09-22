@@ -24,6 +24,30 @@ def run_hook_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]
         [bash, "-c", script],
         cwd=tmp_path,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+
+
+def run_verifier_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
+    if not Path(bash).is_file():
+        pytest.skip("Bash is required for deployment behavior tests")
+    verifier = (DEPLOY / "verify_feature_demo.sh").as_posix()
+    python = Path(sys.executable).as_posix()
+    script = (
+        f'python3() {{ "{python}" "$@"; }}\n'
+        f'source <(sed \'/^check_api$/,$d\' "{verifier}")\n'
+        f'ACTIVE_MODULE=""\n{body}'
+    )
+    return subprocess.run(
+        [bash, "-c", script],
+        cwd=tmp_path,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -313,6 +337,133 @@ set +e
 run_sequence "{module_id}"
 rc=$?
 grep -q '/api/modules/{module_id}/stop' "$TRACE" || exit 90
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_voice_configuration_is_installed_and_loaded_for_service_and_direct_launch():
+    installer = (DEPLOY / "install_feature_demo.sh").read_text(encoding="utf-8")
+    service = (DEPLOY / "feature-demo.service").read_text(encoding="utf-8")
+    launcher = (ROOT / "启动脚本" / "feature_demo.sh").read_text(encoding="utf-8")
+
+    assert 'install -Dm0644 "$SOURCE_DIR/部署/voice.conf" /etc/default/feature-demo' in installer
+    assert "EnvironmentFile=-/etc/default/feature-demo" in service
+    assert '. /etc/default/feature-demo' in launcher
+
+
+def test_regular_hardware_hook_inherits_configured_api_url(tmp_path):
+    trace = tmp_path / "hook-url.txt"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(
+        f'#!/bin/sh\nprintf "%s" "$FEATURE_DEMO_API_URL" > "{trace.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    result = run_verifier_bash(
+        tmp_path,
+        f'''FEATURE_DEMO_HARDWARE_HOOK="{hook.as_posix()}"
+API_URL=http://127.0.0.1:19090
+run_hardware_hook module demo''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert trace.read_text(encoding="utf-8") == "http://127.0.0.1:19090"
+
+
+def test_visual_gimbal_check_trusts_ack_without_persistent_device_owner(tmp_path):
+    trace = (tmp_path / "owners.txt").as_posix()
+    result = run_hook_bash(
+        tmp_path,
+        f'''TRACE="{trace}"
+wait_for_state() {{ return 0; }}
+wait_for_device_owner() {{ printf '%s\n' "$1" >> "$TRACE"; [[ "$1" != "$GIMBAL_DEVICE" ]]; }}
+verify_visual_frame() {{ return 0; }}
+post_command() {{ return 0; }}
+verify_running_module face_detection''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(trace).read_text(encoding="utf-8").splitlines() == ["/dev/video41"]
+
+
+def test_window_close_rejects_a_start_response_that_is_not_running(tmp_path):
+    trace = (tmp_path / "window-hook.txt").as_posix()
+    result_file = (tmp_path / "window-result.txt").as_posix()
+    result = run_verifier_bash(
+        tmp_path,
+        f'''TRACE="{trace}"
+curl() {{ printf '{{"state":"failed"}}'; }}
+run_hardware_hook_with_result() {{
+  printf 'called\n' > "$TRACE"
+  printf 'scenario=window-close\nactive_module=%s\nwindow_closed=true\nresources_released=true\n' "$WINDOW_CLOSE_MODULE" > "{result_file}"
+  printf '%s\n' "{result_file}"
+}}
+resources_are_released() {{ return 0; }}
+    set +e
+    verify_window_close
+    rc=$?
+    test "$rc" -ne 0 && test ! -s "$TRACE"''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_module_lifecycle_rejects_missing_primary_behavior_evidence(tmp_path):
+    result_file = (tmp_path / "module-result.txt").as_posix()
+    result = run_verifier_bash(
+        tmp_path,
+        f'''curl() {{ printf '{{"state":"running"}}'; }}
+run_hardware_hook() {{ return 0; }}
+run_hardware_hook_with_result() {{
+  printf 'scenario=module\nmodule=demo\n' > "{result_file}"
+  printf '%s\n' "{result_file}"
+}}
+resources_are_released() {{ return 0; }}
+set +e
+run_module_lifecycle demo
+rc=$?
+set -e
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_acceptance_marker_rejects_changed_deployed_application_hash(tmp_path):
+    app_root = tmp_path / "feature_demo"
+    app_root.mkdir()
+    app_file = app_root / "app.py"
+    app_file.write_text("before\n", encoding="utf-8")
+    hook = tmp_path / "hook.sh"
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+    signer = tmp_path / "signer.sh"
+    signer.write_text("#!/bin/sh\nprintf signature\n", encoding="utf-8")
+    signer.chmod(0o755)
+    marker = tmp_path / "acceptance.marker"
+    verifier = (DEPLOY / "verify_feature_demo.sh").as_posix()
+    result = run_verifier_bash(
+        tmp_path,
+        f'''FEATURE_DEMO_VERIFIER_PATH="{verifier}"
+FEATURE_DEMO_APP_ROOT="{app_root.as_posix()}"
+FEATURE_DEMO_HARDWARE_HOOK="{hook.as_posix()}"
+FEATURE_DEMO_ACCEPTANCE_SIGNER="{signer.as_posix()}"
+ACCEPTANCE_MARKER="{marker.as_posix()}"
+APP_PACKAGE_ROOT="{app_root.as_posix()}"
+VERIFIER_PATH="{verifier}"
+cat() {{ printf 'test-machine-id\n'; }}
+install() {{ mkdir -p "${{@: -1}}"; }}
+MODULE_IDS=()
+HIGH_RISK_SEQUENCES=()
+WINDOW_CLOSE_MODULE=demo
+ACCEPTANCE_RESULTS=("window-close:demo=passed" "switch:20=passed")
+write_acceptance_marker
+printf 'after\n' >> "{app_file.as_posix()}"
+set +e
+    (require_valid_acceptance_marker)
+rc=$?
 test "$rc" -ne 0''',
     )
 

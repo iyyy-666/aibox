@@ -5,6 +5,7 @@ After=graphical.target
 [Service]
 Type=simple
 User=ztl
+EnvironmentFile=-/etc/default/feature-demo
 Environment=VOICE_LANGUAGE=zh
 ExecStart=/usr/local/bin/feature_demo.sh
 Restart=on-failure

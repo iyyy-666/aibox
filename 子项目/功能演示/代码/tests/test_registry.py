@@ -1,4 +1,7 @@
 from feature_demo.registry import MODULES, get_module
+from feature_demo.app import _default_worker_factory
+from feature_demo.workers.assistant import AssistantWorker
+from feature_demo.workers.runtime import create_worker
 
 
 EXPECTED_MODULE_IDS = [
@@ -66,3 +69,14 @@ def test_get_module_rejects_unknown_module():
 
 def test_voice_input_registry_uses_the_runtime_worker_identifier():
     assert get_module("voice_input_test").worker == "voice_input_test"
+
+
+def test_ai_assistant_registry_worker_reaches_process_and_runtime_factory():
+    module = get_module("ai_assistant")
+
+    process = _default_worker_factory(module)
+    runtime_worker = create_worker(module.worker, event_sink=lambda _event: None)
+
+    assert module.worker == "ai_assistant"
+    assert process._command[-1] == "ai_assistant"
+    assert isinstance(runtime_worker, AssistantWorker)

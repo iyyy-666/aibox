@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .models import ModuleDefinition, ModuleState
+from .models import PREEMPTIVE_COMMANDS, ModuleDefinition, ModuleState
 from .registry import get_module
 from .resources import ReleaseReport, ResourceVerifier
 
@@ -40,51 +40,48 @@ class LifecycleResult:
 class ProcessLock:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._held = False
+        self._fd: int | None = None
 
     def acquire(self) -> bool:
-        if self._held:
+        if self._fd is not None:
             return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                if not self._remove_stale_lock():
-                    return False
-                continue
-            with os.fdopen(fd, "w", encoding="ascii") as handle:
-                handle.write(str(os.getpid()))
-            self._held = True
-            return True
-        return False
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            if os.name == "nt":
+                import msvcrt
 
-    def _remove_stale_lock(self) -> bool:
-        try:
-            pid = int(self.path.read_text(encoding="ascii").strip())
-        except (OSError, ValueError):
-            pid = -1
-        if pid > 0:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError):
-                pass
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:
-                return False
-        try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self._fd = fd
         return True
 
     def release(self) -> None:
-        if not self._held:
+        fd = self._fd
+        if fd is None:
             return
         try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
-        self._held = False
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+            self._fd = None
 
 
 class ModuleManager:
@@ -101,6 +98,7 @@ class ModuleManager:
         self._process_lock = ProcessLock(lock_path)
         self._stop_timeout = stop_timeout
         self._guard = threading.RLock()
+        self._command_guard = threading.Lock()
         self._active_module: str | None = None
         self._state = ModuleState.IDLE
         self._worker: ManagedWorker | None = None
@@ -109,11 +107,13 @@ class ModuleManager:
     @property
     def active_module(self) -> str | None:
         with self._guard:
+            self._reconcile_worker_exit_locked()
             return self._active_module
 
     def start_module(self, module_id: str) -> LifecycleResult:
         module = get_module(module_id)
         with self._guard:
+            self._reconcile_worker_exit_locked()
             if self._active_module == module_id and self._state == ModuleState.RUNNING:
                 return self.snapshot()
             if self._active_module is not None:
@@ -154,10 +154,18 @@ class ModuleManager:
         module = get_module(module_id)
         if name not in module.commands:
             raise ValueError(f"不支持的命令：{name}")
+        if name in PREEMPTIVE_COMMANDS:
+            return self._dispatch_command(module_id, name, payload or {})
+        with self._command_guard:
+            return self._dispatch_command(module_id, name, payload or {})
+
+    def _dispatch_command(self, module_id: str, name: str, payload: dict) -> dict:
         with self._guard:
+            self._reconcile_worker_exit_locked()
             if self._active_module != module_id or self._worker is None:
                 raise ModuleConflictError("该功能当前未运行。")
-            return self._worker.command(name, payload or {})
+            worker = self._worker
+        return worker.command(name, payload)
 
     def stop_module(self, module_id: str) -> LifecycleResult:
         with self._guard:
@@ -192,6 +200,7 @@ class ModuleManager:
 
     def snapshot(self) -> LifecycleResult:
         with self._guard:
+            self._reconcile_worker_exit_locked()
             details = self._worker.snapshot() if self._worker is not None else {}
             message = {
                 ModuleState.IDLE: "当前没有运行中的功能。",
@@ -207,6 +216,34 @@ class ModuleManager:
                 message,
                 details=details,
             )
+
+    def _reconcile_worker_exit_locked(self) -> None:
+        if (
+            self._state != ModuleState.RUNNING
+            or self._active_module is None
+            or self._worker is None
+        ):
+            return
+        details = self._worker.snapshot()
+        if details.get("alive", True):
+            return
+        module = get_module(self._active_module)
+        worker = self._worker
+        self._last_error = str(
+            details.get("message") or "功能进程意外退出，正在核验设备资源。"
+        )
+        try:
+            worker.stop(self._stop_timeout)
+        except Exception as exc:
+            self._last_error = f"{self._last_error} 清理失败：{exc}"
+        report = self._verifier.verify(module, worker.pids)
+        if not report.ok:
+            self._state = ModuleState.CLEANUP_FAILED
+            return
+        self._active_module = None
+        self._worker = None
+        self._state = ModuleState.FAILED
+        self._process_lock.release()
 
     def shutdown(self) -> LifecycleResult:
         active = self.active_module

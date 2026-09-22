@@ -66,6 +66,7 @@ const commandLabels = {
 };
 
 const secondaryCommands = new Set(["stop_listening", "interrupt", "pause_sorting", "stop_sorting", "stop_tracking", "stop_motion", "stop_playback"]);
+const preemptiveCommands = new Set(["stop_listening", "interrupt", "stop_sorting", "stop_tracking", "stop_motion", "stop_playback"]);
 const nurseryPayloads = { twinkle: { song_id: "twinkle" }, two_tigers: { song_id: "two_tigers" } };
 
 function iconMarkup(name) {
@@ -179,8 +180,23 @@ function renderModuleShell(module) {
   const commands = document.querySelector("[data-command-workspace]");
   visual.hidden = !module.visual;
   commands.hidden = module.visual;
-  if (!module.visual) renderCommandWorkspace(module, accent, soft);
+  if (module.visual) renderVisualActions(module);
+  else renderCommandWorkspace(module, accent, soft);
   document.querySelector("[data-stage-error]").hidden = true;
+}
+
+function renderVisualActions(module) {
+  const list = document.querySelector("[data-visual-actions]");
+  const commands = module.commands.filter((name) => !name.startsWith("gimbal_"));
+  list.replaceChildren(...commands.map((name) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `command-button${secondaryCommands.has(name) ? " is-secondary" : ""}`;
+    if (name === "save_snapshot") button.dataset.localAction = "save_snapshot";
+    else button.dataset.command = name;
+    button.textContent = commandLabels[name] || name;
+    return button;
+  }));
 }
 
 function renderInstructions(module) {
@@ -347,6 +363,18 @@ function stopFrameUpdates() {
   document.querySelector("[data-frame-empty]").hidden = false;
 }
 
+function saveSnapshot() {
+  const image = document.querySelector("[data-camera-frame]");
+  if (image.hidden || !image.src) {
+    showToast("当前没有可保存的画面。", true);
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = image.src;
+  link.download = `${appState.active.module_id}-${Date.now()}.jpg`;
+  link.click();
+}
+
 async function sendCommand(command, control) {
   if (!appState.active) return;
   const assistantText = command === "ask" ? document.querySelector("[data-assistant-text]") : null;
@@ -365,8 +393,11 @@ async function sendCommand(command, control) {
     : command === "joint_step" ? { servo_id: Number(control.dataset.servoId), delta: Number(control.dataset.delta) }
     : command === "gripper" ? { action: control.dataset.gripper }
     : {};
-  appState.commandRequestPending = true;
-  updateCommandControls();
+  const preemptive = preemptiveCommands.has(command);
+  if (!preemptive) {
+    appState.commandRequestPending = true;
+    updateCommandControls();
+  }
   try {
     const result = await requestJson(`/api/modules/${appState.active.module_id}/commands/${command}`, { method: "POST", body: JSON.stringify(payload) });
     showToast(`${commandLabels[command] || "操作"}已发送。`);
@@ -375,8 +406,10 @@ async function sendCommand(command, control) {
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    appState.commandRequestPending = false;
-    updateCommandControls();
+    if (!preemptive) {
+      appState.commandRequestPending = false;
+      updateCommandControls();
+    }
   }
 }
 
@@ -424,8 +457,14 @@ function setControlsDisabled(disabled) {
 }
 
 function updateCommandControls() {
-  const disabled = appState.lifecycleControlsDisabled || appState.commandRequestPending;
-  document.querySelectorAll("[data-command]").forEach((control) => { control.disabled = disabled; });
+  document.querySelectorAll("[data-command]").forEach((control) => {
+    control.disabled = appState.lifecycleControlsDisabled || (
+      appState.commandRequestPending && !preemptiveCommands.has(control.dataset.command)
+    );
+  });
+  document.querySelectorAll("[data-local-action]").forEach((control) => {
+    control.disabled = appState.lifecycleControlsDisabled;
+  });
 }
 
 function showToast(message, isError = false) {
@@ -438,6 +477,11 @@ function showToast(message, isError = false) {
 }
 
 document.addEventListener("click", (event) => {
+  const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
+  if (localAction === "save_snapshot") {
+    saveSnapshot();
+    return;
+  }
   const command = event.target.closest("[data-command]")?.dataset.command;
   if (command) sendCommand(command, event.target.closest("[data-command]"));
 });

@@ -4,6 +4,18 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+PREEMPTIVE_COMMANDS = frozenset(
+    {
+        "interrupt",
+        "stop_listening",
+        "stop_motion",
+        "stop_playback",
+        "stop_sorting",
+        "stop_tracking",
+    }
+)
+
+
 class ModuleState(str, Enum):
     IDLE = "idle"
     STARTING = "starting"

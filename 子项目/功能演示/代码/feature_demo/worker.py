@@ -34,6 +34,7 @@ class WorkerProcess:
         self._start_timeout = start_timeout
         self._command_timeout = command_timeout
         self._process: subprocess.Popen[str] | None = None
+        self._process_group_id: int | None = None
         self._log_handle = None
         self._last_event: dict = {}
         self._reader: threading.Thread | None = None
@@ -45,10 +46,9 @@ class WorkerProcess:
 
     @property
     def pids(self) -> tuple[int, ...]:
-        process = self._process
-        if process is None or process.poll() is not None:
+        if self._process_group_id is None:
             return ()
-        return (process.pid,)
+        return self._process_group_members()
 
     def start(self) -> None:
         if self._process is not None and self._process.poll() is None:
@@ -75,6 +75,7 @@ class WorkerProcess:
             start_new_session=True,
             env=env,
         )
+        self._process_group_id = self._process.pid
         self._reader = threading.Thread(target=self._read_events, daemon=True)
         self._reader.start()
         deadline = time.monotonic() + self._start_timeout
@@ -127,11 +128,12 @@ class WorkerProcess:
 
     def _finish_failed_start(self) -> None:
         process = self._process
-        if process is not None and process.poll() is None:
-            self._terminate_group(process)
+        if process is not None and self._process_group_members():
+            self._terminate_process_group()
         if self._reader is not None and self._reader is not threading.current_thread():
             self._reader.join(timeout=1.0)
         self._process = None
+        self._process_group_id = None
         self._reader = None
         self._close_log()
 
@@ -201,29 +203,72 @@ class WorkerProcess:
                     process.stdin.flush()
                 process.wait(timeout=timeout)
             except (RuntimeError, BrokenPipeError, subprocess.TimeoutExpired):
-                self._terminate_group(process)
+                self._terminate_process_group()
+        if self._process_group_members():
+            self._terminate_process_group()
         if self._reader is not None:
             self._reader.join(timeout=1.0)
         self._process = None
+        self._process_group_id = None
         self._close_log()
 
-    @staticmethod
-    def _terminate_group(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
+    def _process_group_members(self) -> tuple[int, ...]:
+        group_id = self._process_group_id
+        process = self._process
+        if group_id is None:
+            return ()
+        if os.name == "nt":
+            if process is not None and process.poll() is None:
+                return (process.pid,)
+            return ()
+        try:
+            result = subprocess.run(
+                ["ps", "-eo", "pid=,pgid="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            if process is not None and process.poll() is None:
+                return (process.pid,)
+            return ()
+        members = []
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) != 2:
+                continue
+            try:
+                pid, pgid = (int(value) for value in fields)
+            except ValueError:
+                continue
+            if pgid == group_id:
+                members.append(pid)
+        return tuple(sorted(members))
+
+    def _terminate_process_group(self) -> None:
+        process = self._process
+        group_id = self._process_group_id
+        if process is None or group_id is None:
             return
         try:
             if os.name == "nt":
-                process.terminate()
+                if process.poll() is None:
+                    process.terminate()
             else:
-                os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=2.0)
+                os.killpg(group_id, signal.SIGTERM)
+            if process.poll() is None:
+                process.wait(timeout=2.0)
         except (OSError, subprocess.TimeoutExpired):
+            pass
+        if self._process_group_members():
             try:
-                if os.name == "nt":
+                if os.name == "nt" and process.poll() is None:
                     process.kill()
-                else:
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=1.0)
+                elif os.name != "nt":
+                    os.killpg(group_id, signal.SIGKILL)
+                if process.poll() is None:
+                    process.wait(timeout=1.0)
             except (OSError, subprocess.TimeoutExpired):
                 pass
 

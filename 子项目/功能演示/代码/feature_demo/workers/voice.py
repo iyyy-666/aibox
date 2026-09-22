@@ -143,11 +143,16 @@ class VoiceWorker:
         if self.module_id == "voice_robot_arm" and self._robot is not None:
             self._robot.connect()
         self._engine = self._engine_factory()
+        set_commands = getattr(self._engine, "set_commands", None)
         if self.module_id == "voice_robot_arm":
             commands = {name: None for name in ROBOT_COMMANDS}
-            set_commands = getattr(self._engine, "set_commands", None)
+            self._engine.use_command_grammar = True
             if callable(set_commands):
                 set_commands(commands)
+        else:
+            self._engine.use_command_grammar = False
+            if callable(set_commands):
+                set_commands({})
         load = getattr(self._engine, "load", None)
         if callable(load) and not load():
             raise RuntimeError(getattr(self._engine, "last_error", "语音模型加载失败"))
@@ -160,8 +165,8 @@ class VoiceWorker:
         self._emit({"type": "listening", "module": self.module_id, "message": "正在监听中文语音。"})
         if not self._listener_started.wait(timeout=self._join_timeout):
             self.stop_listening()
-            raise TimeoutError("voice listener startup timed out")
-        self._emit({"type": "ready", "module": self.module_id, "message": "voice module ready"})
+            raise TimeoutError("语音监听启动超时。")
+        self._emit({"type": "ready", "module": self.module_id, "message": "语音功能已就绪。"})
         return {"ok": True, "listening": True}
 
     def stop_listening(self) -> dict:
@@ -184,7 +189,7 @@ class VoiceWorker:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=self._join_timeout)
         if thread is not None and thread.is_alive():
-            raise TimeoutError("voice listener shutdown timed out")
+            raise TimeoutError("语音监听停止超时。")
         self._thread = None
         return {"ok": True, "listening": False}
 

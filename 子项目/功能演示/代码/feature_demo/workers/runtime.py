@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
+import threading
 from typing import Callable
 
 from ..adapters.gimbal import GimbalAdapter
 from ..adapters.robot import RobotAdapter
 from ..adapters.vision import LEGACY_VISION_SPECS, build_vision_adapter
+from ..models import PREEMPTIVE_COMMANDS
 from .assistant import AssistantWorker
 from .robot import ObjectSortingWorker, RobotWorker, SortingController
 from .vision import VisionWorker
@@ -55,6 +58,11 @@ def create_vision_worker(
     adapter = builder(module_id)
     directional_gimbal = gimbal if gimbal is not None else GimbalAdapter()
     pause_tracking = getattr(adapter, "stop_tracking", None) if module_id == "palm_tracking" else None
+    manual_gimbal_step = (
+        getattr(adapter, "manual_gimbal_step", None)
+        if module_id == "palm_tracking"
+        else None
+    )
     return VisionWorker(
         adapter=adapter,
         camera_factory=lambda: _configured_camera(cv2_module),
@@ -62,6 +70,7 @@ def create_vision_worker(
         event_sink=event_sink,
         gimbal=directional_gimbal,
         pause_tracking=pause_tracking,
+        manual_gimbal_step=manual_gimbal_step,
     )
 
 
@@ -97,11 +106,17 @@ def create_worker(
         stable_hits = max(1, int(getattr(adapter.module, "STABLE_HITS", 2)))
     except (AttributeError, TypeError, ValueError):
         stable_hits = 2
-    robot_worker = RobotWorker(robot_adapter or RobotAdapter(), event_sink=event_sink)
+    def component_event_sink(event: dict) -> None:
+        if event.get("type") != "ready":
+            event_sink(event)
+
+    robot_worker = RobotWorker(
+        robot_adapter or RobotAdapter(), event_sink=component_event_sink
+    )
     controller = SortingController(
         robot_worker,
         stable_hits=stable_hits,
-        event_sink=event_sink,
+        event_sink=component_event_sink,
     )
     set_observer = getattr(adapter, "set_sorting_observer", None)
     if callable(set_observer):
@@ -128,12 +143,53 @@ def emit_json(event: dict) -> None:
 
 def run_worker(module_id: str) -> int:
     worker = create_worker(module_id, event_sink=emit_json)
+    ordinary_requests: queue.Queue[tuple[str, str, dict] | None] = queue.Queue()
+    emit_lock = threading.Lock()
+    control_threads: list[threading.Thread] = []
+
+    def emit(event: dict) -> None:
+        with emit_lock:
+            emit_json(event)
+
+    def execute(request_id: str, command: str, payload: dict) -> None:
+        try:
+            result = worker.command(command, payload)
+            emit(
+                {
+                    **result,
+                    "type": "command_result",
+                    "request_id": request_id,
+                }
+            )
+        except Exception as exc:
+            emit(
+                {
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": str(exc),
+                }
+            )
+
+    def run_ordinary_commands() -> None:
+        while True:
+            request = ordinary_requests.get()
+            if request is None:
+                return
+            execute(*request)
+
+    ordinary_thread: threading.Thread | None = None
     try:
         try:
             worker.start()
         except Exception as exc:
-            emit_json({"type": "error", "message": str(exc)})
+            emit({"type": "error", "message": str(exc)})
             return 1
+        ordinary_thread = threading.Thread(
+            target=run_ordinary_commands,
+            name="feature-demo-commands",
+            daemon=True,
+        )
+        ordinary_thread.start()
         for line in sys.stdin:
             request_id = ""
             try:
@@ -144,26 +200,34 @@ def run_worker(module_id: str) -> int:
                 if command == "stop":
                     worker.stop()
                     return 0
-                result = worker.command(command, payload)
-                emit_json(
-                    {
-                        **result,
-                        "type": "command_result",
-                        "request_id": request_id,
-                    }
-                )
+                command_request = (request_id, command, payload)
+                if command in PREEMPTIVE_COMMANDS:
+                    thread = threading.Thread(
+                        target=execute,
+                        args=command_request,
+                        name=f"feature-demo-control-{command}",
+                        daemon=True,
+                    )
+                    control_threads.append(thread)
+                    thread.start()
+                else:
+                    ordinary_requests.put(command_request)
             except Exception as exc:
-                emit_json(
+                emit(
                     {
                         "type": "error",
                         "request_id": request_id,
                         "message": str(exc),
                     }
                 )
+        ordinary_requests.put(None)
+        ordinary_thread.join()
+        for thread in control_threads:
+            thread.join()
     finally:
         if worker.last_event.get("type") != "stopped":
             try:
                 worker.stop()
             except Exception as exc:
-                emit_json({"type": "error", "message": str(exc)})
+                emit({"type": "error", "message": str(exc)})
     return 0

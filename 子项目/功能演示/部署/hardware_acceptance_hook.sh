@@ -88,7 +88,6 @@ verify_running_module() {
     wait_for_device_owner "$CAMERA_DEVICE" || return
     verify_visual_frame "$module_id" || return
     post_command "$module_id" gimbal_left '{"amount":1}' || return
-    wait_for_device_owner "$GIMBAL_DEVICE" || return
     post_command "$module_id" gimbal_right '{"amount":1}' || return
   fi
   case "$module_id" in
@@ -165,6 +164,10 @@ run_sequence() {
 close_window() {
   local module_id="$1" window_id attempt
   [[ -n "$RESULT_FILE" ]] || { echo "Window-close result file is required." >&2; exit 2; }
+  verify_running_module "$module_id" || {
+    echo "Module $module_id was not active and verified before window close." >&2
+    return 1
+  }
   command -v xdotool >/dev/null || { echo "xdotool is required for real window-close acceptance." >&2; exit 2; }
   export DISPLAY="${DISPLAY:-:0}"
   export XAUTHORITY="${XAUTHORITY:-/run/user/1000/gdm/Xauthority}"
@@ -183,8 +186,16 @@ close_window() {
   return 1
 }
 
+run_module_check() {
+  local module_id="$1"
+  [[ -n "$RESULT_FILE" ]] || { echo "Module result file is required." >&2; exit 2; }
+  verify_running_module "$module_id"
+  printf 'scenario=module\nmodule=%s\nevidence=%s:primary_behavior\n' \
+    "$module_id" "$module_id" > "$RESULT_FILE"
+}
+
 case "${1:-}" in
-  module) verify_running_module "$2" ;;
+  module) run_module_check "$2" ;;
   high-risk-sequence) run_sequence "$2" ;;
   window-close) close_window "$2" ;;
   *) echo "Usage: $0 {module MODULE|high-risk-sequence CSV|window-close MODULE}" >&2; exit 2 ;;

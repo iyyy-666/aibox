@@ -40,6 +40,8 @@ backup_file /usr/local/bin/verify_feature_demo.sh
 backup_file /usr/local/bin/feature_demo_hardware_acceptance.sh
 backup_file /usr/local/bin/feature_demo_acceptance_signer.sh
 backup_file /etc/systemd/system/feature-demo.service
+backup_file /etc/default/feature-demo
+backup_file /var/lib/feature-demo/full-acceptance.marker
 
 # Only the unified package is copied. Existing models, assets, and legacy resources stay in APP_ROOT.
 mkdir -p "$APP_ROOT/feature_demo"
@@ -50,7 +52,9 @@ install -Dm0755 "$SOURCE_DIR/部署/hardware_acceptance_hook.sh" /usr/local/bin/
 install -Dm0755 "$SOURCE_DIR/部署/acceptance_signer.sh" /usr/local/bin/feature_demo_acceptance_signer.sh
 install -Dm0644 "$SOURCE_DIR/桌面入口/功能演示.desktop" "$STAGED_DESKTOP_ENTRY"
 install -Dm0644 "$SOURCE_DIR/部署/feature-demo.service" /etc/systemd/system/feature-demo.service
+install -Dm0644 "$SOURCE_DIR/部署/voice.conf" /etc/default/feature-demo
 install -d -m0700 /var/lib/feature-demo
+rm -f /var/lib/feature-demo/full-acceptance.marker
 if [[ ! -s /var/lib/feature-demo/acceptance.key ]]; then
   umask 077
   openssl rand -out /var/lib/feature-demo/acceptance.key 32

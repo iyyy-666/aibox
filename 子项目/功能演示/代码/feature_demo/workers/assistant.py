@@ -119,7 +119,7 @@ class AssistantWorker:
             self._tts_queue.put(None)
             self._tts_thread.join(timeout=self._tts_join_timeout)
             if self._tts_thread.is_alive():
-                raise TimeoutError("assistant speech shutdown timed out")
+                raise TimeoutError("AI 语音播报停止超时。")
             self._tts_thread = None
         self._emit({"type": "stopped", "message": "中文 AI 助手已停止并释放资源。"})
 
