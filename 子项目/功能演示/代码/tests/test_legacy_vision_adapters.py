@@ -110,7 +110,13 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
         LegacyVisionSpec("unused.py", "Unused", "tracking"),
     )
 
-    automatic = threading.Thread(target=lambda: adapter.process(frame))
+    automatic_result = {}
+
+    def run_automatic():
+        _annotated, evidence = adapter.process(frame)
+        automatic_result.update(evidence)
+
+    automatic = threading.Thread(target=run_automatic)
     automatic.start()
     assert automatic_started.wait(timeout=1)
 
@@ -133,4 +139,9 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
 
     assert manual_started.is_set()
     assert result == {"ok": True}
+    assert automatic_result["tracking_action"] == {
+        "state": "moved",
+        "yaw_delta_pwm": 4,
+        "pitch_delta_pwm": 5,
+    }
     assert instance.tracking_enabled is False

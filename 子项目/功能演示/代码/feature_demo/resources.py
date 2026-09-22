@@ -71,13 +71,16 @@ class ResourceVerifier:
     def verify(
         self,
         module: ModuleDefinition,
-        worker_pids: Iterable[int],
+        worker_pids: Iterable[int] | None,
     ) -> ReleaseReport:
         busy: list[str] = []
         unverified: list[str] = []
-        for pid in worker_pids:
-            if self._pid_exists(pid):
-                busy.append(f"process:{pid}")
+        if worker_pids is None:
+            unverified.append("process-group")
+        else:
+            for pid in worker_pids:
+                if self._pid_exists(pid):
+                    busy.append(f"process:{pid}")
         for resource in module.resources:
             for path in self._device_paths.get(resource, ()):
                 state = self._device_in_use(path)

@@ -140,3 +140,25 @@ All fifteen final review findings were closed without changing the approved frui
 The consolidated local verification passed: the unified feature-demo suite reported `139 passed`; affected legacy suites reported shared resources `2`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit recognition `2`, and shape recognition `3`. `compileall`, Node syntax, all five shell syntax checks, and `git diff --check` exited `0`.
 
 No board package operation, reboot, full acceptance, or retirement was performed. Incremental deployment was limited to 18 changed production and configuration artifacts; every local/deployed SHA-256 pair matched. The pre-deployment copies are under `/root/feature-demo-backups/final-stabilization-20260922_030334`. The final read-only board audit retained `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, all 14 legacy desktop entries, and no acceptance marker. `/dev/video41` remains absent while `/dev/video42` and `/dev/video43` are present; `dpkg --audit` still reports incomplete `initramfs-tools` configuration and a pending `flash-kernel` trigger.
+
+## Residual Load-Bearing Fix Round
+
+The four scoped residual findings were reproduced before implementation. The first combined RED run reported `23 failed, 66 passed`: a synchronous sequence held the adapter mutex against emergency stop, the sorting vision component leaked a second `ready`, process-group enumeration failure was treated as empty, and the behavior-evidence matcher/verifier did not exist. Two additional focused RED tests proved that worker snapshots lacked correlatable event history and automatic tracking exposed no acknowledged-motion evidence. The real runtime -> RobotWorker -> RobotAdapter regression now verifies a concurrent `stop_motion` result returns while a blocked sequence exits.
+
+The robot adapter now calls the legacy cancellation path without waiting for the ordinary action mutex; the legacy serial driver remains the serialization boundary for the emergency serial write. Object sorting routes both component sinks through the ready filter and emits one composite `ready` only after robot and camera startup succeed. Worker snapshots retain a bounded sequence-numbered event history without JPEG bytes. The hardware hook uses a pre-action sequence boundary and waits for fresh, module-specific evidence for all 13 modules: assistant reply, speech result, playback start, robot action, sorting result, tracking motion, or non-empty recognition result. Physical robot, sorting, tracking, and audible playback outcomes additionally require an explicit interactive operator confirmation. The verifier rejects unknown modules, label-only evidence, wrong behavior/source, absent or invalid correlation, and missing required operator evidence.
+
+Process-group enumeration now returns unknown separately from empty. On `ps` failure after leader death, cleanup directly attempts TERM/KILL against the retained PGID, retains ownership state, raises an unverifiable-cleanup error, and causes resource verification to fail closed rather than clearing the manager lock.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| Focused robot/runtime/process/evidence suites | `59 passed` for Python concurrency/resource files and `59 passed` for deployment behavior |
+| `python -m pytest 子项目\功能演示\代码\tests -q` | `175 passed`, 2 dependency deprecation warnings |
+| Shared resources / voice robot / palm tracking / palm recognition / fruit / shape legacy suites | `2 / 5 / 21 / 12 / 2 / 3 passed` |
+| `python -m compileall -q 子项目\功能演示\代码` | exit `0` |
+| `node --check 子项目\功能演示\代码\feature_demo\web\app.js` | exit `0` |
+| `bash -n` on launcher, installer, verifier, hardware hook, and signer | exit `0` |
+| `git diff --check` | exit `0`; only line-ending notices |
+
+The pre-deployment board audit still showed `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, 14 legacy desktop entries, no acceptance marker, `/dev/video41` absent, and `/dev/video42` plus `/dev/video43` present. No package operation, reboot, full acceptance, desktop retirement, or service cutover is authorized while that camera blocker remains.

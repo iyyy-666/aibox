@@ -58,11 +58,89 @@ wait_for_resources_released() {
 }
 
 post_command() {
+  post_command_json "$@" >/dev/null
+}
+
+post_command_json() {
   local module_id="$1" command="$2" payload="{}" response
   [[ $# -lt 3 ]] || payload="$3"
   response=$(curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d "$payload" \
     "$API_URL/api/modules/$module_id/commands/$command")
-  printf '%s' "$response" | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ok") is True else 1)'
+  printf '%s' "$response" | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("ok") is True else 1)' || return
+  printf '%s\n' "$response"
+}
+
+current_event_sequence() {
+  local module_id="$1"
+  curl --fail --silent --show-error "$API_URL/api/modules/$module_id/status" \
+    | python3 -c 'import json,sys; print(int((json.load(sys.stdin).get("details") or {}).get("event_sequence", 0)))'
+}
+
+json_field() {
+  local field="$1"
+  python3 -c 'import json,sys; value=json.load(sys.stdin).get(sys.argv[1], ""); print(value)' "$field"
+}
+
+match_behavior_event() {
+  local behavior="$1" expected="$2" after_sequence="$3"
+  python3 -c '
+import json, sys
+
+behavior, expected, after = sys.argv[1], sys.argv[2], int(sys.argv[3])
+details = json.load(sys.stdin).get("details") or {}
+for event in details.get("recent_events") or []:
+    sequence = event.get("_sequence")
+    if not isinstance(sequence, int) or sequence <= after:
+        continue
+    ok = False
+    if behavior == "assistant_reply":
+        ok = event.get("type") == "assistant_reply" and event.get("ok") is True and str(event.get("turn")) == expected and bool(str(event.get("text", "")).strip())
+    elif behavior == "speech_result":
+        normalized = str(event.get("normalized", "")).strip()
+        ok = event.get("type") == "speech" and bool(normalized) and (not expected or expected in normalized)
+    elif behavior == "playback_started":
+        ok = event.get("type") == "playing" and event.get("ok") is True and str(event.get("token")) == expected
+    elif behavior == "robot_action":
+        ok = event.get("type") in {"result", "robot_action"} and event.get("ok") is True and (not expected or event.get("command") == expected)
+        if event.get("type") == "robot_action":
+            ok = ok and bool(str(event.get("recognized", "")).strip())
+    elif behavior == "sorting_result":
+        ok = event.get("type") == "sorting_result" and event.get("ok") is True and (event.get("color"), event.get("side")) in {("red", "left"), ("blue", "right")}
+    elif behavior == "tracking_motion":
+        action = event.get("tracking_action") or {}
+        ok = event.get("type") == "frame" and event.get("tracking") is True and action.get("state") == "moved"
+    elif behavior == "recognition_result":
+        result = event.get("result")
+        ok = event.get("type") == "frame" and bool(result) and result != "未检测到手掌"
+    if ok:
+        print(sequence)
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$behavior" "$expected" "$after_sequence"
+}
+
+wait_for_behavior_event() {
+  local module_id="$1" behavior="$2" expected="$3" after_sequence="$4" attempt status correlation
+  for attempt in $(seq 1 120); do
+    status=$(curl --fail --silent --show-error "$API_URL/api/modules/$module_id/status" 2>/dev/null) || { sleep 0.25; continue; }
+    correlation=$(printf '%s' "$status" | match_behavior_event "$behavior" "$expected" "$after_sequence" || true)
+    if [[ -n "$correlation" ]]; then
+      printf '%s\n' "$correlation"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "No correlated $behavior evidence was observed for $module_id." >&2
+  return 1
+}
+
+require_operator_confirmation() {
+  local module_id="$1" prompt="$2" answer
+  [[ -r /dev/tty ]] || { echo "Operator confirmation requires an interactive terminal for $module_id." >&2; return 1; }
+  printf '%s [yes/no]: ' "$prompt" >/dev/tty
+  IFS= read -r answer </dev/tty
+  [[ "$answer" == "yes" ]] || { echo "Operator did not confirm physical behavior for $module_id." >&2; return 1; }
+  EVIDENCE_OPERATOR="confirmed"
 }
 
 verify_visual_frame() {
@@ -82,7 +160,11 @@ verify_visual_frame() {
 }
 
 verify_running_module() {
-  local module_id="$1"
+  local module_id="$1" baseline response expected correlation
+  EVIDENCE_BEHAVIOR=""
+  EVIDENCE_SOURCE="event"
+  EVIDENCE_CORRELATION=""
+  EVIDENCE_OPERATOR=""
   wait_for_state "$module_id" running || return
   if [[ " $VISUAL_MODULES " == *" $module_id "* ]]; then
     wait_for_device_owner "$CAMERA_DEVICE" || return
@@ -92,32 +174,78 @@ verify_running_module() {
   fi
   case "$module_id" in
     ai_assistant)
-      post_command "$module_id" start_listening || return
-      wait_for_device_owner "$MIC_DEVICE" || return
+      baseline=$(current_event_sequence "$module_id") || return
+      response=$(post_command_json "$module_id" ask '{"text":"请用一句话回答：一加一等于几？"}') || return
+      expected=$(printf '%s' "$response" | json_field turn) || return
+      EVIDENCE_BEHAVIOR="assistant_reply"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "$expected" "$baseline") || return
       ;;
     voice_input_test)
       wait_for_device_owner "$MIC_DEVICE" || return
+      baseline=$(current_event_sequence "$module_id") || return
+      printf '请对麦克风说一句中文测试短语。\n' >/dev/tty 2>/dev/null || true
+      EVIDENCE_BEHAVIOR="speech_result"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
       ;;
     robot_button)
       wait_for_device_owner "$ROBOT_DEVICE" || return
+      baseline=$(current_event_sequence "$module_id") || return
+      post_command "$module_id" joint_step '{"servo_id":5,"delta":20,"time_ms":200}' || return
+      EVIDENCE_BEHAVIOR="robot_action"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "joint_step" "$baseline") || return
+      require_operator_confirmation "$module_id" "Confirm that the robot gripper moved" || return
       post_command "$module_id" stop_motion || return
       ;;
     voice_robot_arm)
       wait_for_device_owner "$MIC_DEVICE" || return
       wait_for_device_owner "$ROBOT_DEVICE" || return
+      baseline=$(current_event_sequence "$module_id") || return
+      printf '请说“复位”，并观察机械臂动作。\n' >/dev/tty 2>/dev/null || true
+      EVIDENCE_BEHAVIOR="robot_action"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
+      require_operator_confirmation "$module_id" "Confirm that the recognized voice command moved the robot" || return
       post_command "$module_id" stop_motion || return
       ;;
     object_sorting)
       wait_for_device_owner "$ROBOT_DEVICE" || return
+      post_command "$module_id" prepare || return
+      baseline=$(current_event_sequence "$module_id") || return
+      post_command "$module_id" start_sorting || return
+      printf '请放入红色或蓝色物块，等待机械臂完成分拣。\n' >/dev/tty 2>/dev/null || true
+      EVIDENCE_BEHAVIOR="sorting_result"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
+      require_operator_confirmation "$module_id" "Confirm that the object was physically sorted to the reported side" || return
       post_command "$module_id" stop_sorting || return
+      ;;
+    palm_tracking)
+      baseline=$(current_event_sequence "$module_id") || return
+      post_command "$module_id" start_tracking || return
+      EVIDENCE_BEHAVIOR="tracking_motion"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
+      require_operator_confirmation "$module_id" "Confirm that the gimbal physically followed the hand" || return
+      post_command "$module_id" stop_tracking || return
       ;;
     nursery_rhyme)
       wait_for_device_owner "$MIC_DEVICE" || return
-      post_command "$module_id" play '{"song_id":"twinkle"}' || return
+      baseline=$(current_event_sequence "$module_id") || return
+      response=$(post_command_json "$module_id" play '{"song_id":"twinkle"}') || return
+      expected=$(printf '%s' "$response" | json_field token) || return
+      EVIDENCE_BEHAVIOR="playback_started"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "$expected" "$baseline") || return
       wait_for_device_owner "$SPEAKER_DEVICE" || return
+      require_operator_confirmation "$module_id" "Confirm that the nursery rhyme is audible" || return
       post_command "$module_id" stop_playback || return
       ;;
+    plate_recognition|palm_recognition|fruit_recognition|color_recognition|face_detection|shape_recognition)
+      baseline=$(current_event_sequence "$module_id") || return
+      EVIDENCE_BEHAVIOR="recognition_result"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
+      ;;
   esac
+  [[ -n "$EVIDENCE_BEHAVIOR" && -n "$EVIDENCE_CORRELATION" ]] || {
+    echo "No primary behavior evidence was configured for $module_id." >&2
+    return 1
+  }
   return 0
 }
 
@@ -190,8 +318,9 @@ run_module_check() {
   local module_id="$1"
   [[ -n "$RESULT_FILE" ]] || { echo "Module result file is required." >&2; exit 2; }
   verify_running_module "$module_id"
-  printf 'scenario=module\nmodule=%s\nevidence=%s:primary_behavior\n' \
-    "$module_id" "$module_id" > "$RESULT_FILE"
+  printf 'scenario=module\nmodule=%s\nevidence_behavior=%s\nevidence_source=%s\nevidence_correlation=%s\n' \
+    "$module_id" "$EVIDENCE_BEHAVIOR" "$EVIDENCE_SOURCE" "$EVIDENCE_CORRELATION" > "$RESULT_FILE"
+  [[ -z "$EVIDENCE_OPERATOR" ]] || printf 'operator_evidence=%s\n' "$EVIDENCE_OPERATOR" >> "$RESULT_FILE"
 }
 
 case "${1:-}" in

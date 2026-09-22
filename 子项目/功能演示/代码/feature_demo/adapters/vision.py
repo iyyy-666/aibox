@@ -152,6 +152,7 @@ class LegacyVisionAdapter:
 
     def _process_tracking(self, frame):
         with self._tracking_lock:
+            tracking_action = None
             generation = self._tracking_generation
             left, _ = self.module.split_stereo(frame)
             self.instance.image_size = (left.shape[1], left.shape[0])
@@ -181,12 +182,20 @@ class LegacyVisionAdapter:
                     if not ok:
                         self._pause_tracking_locked()
                         raise RuntimeError(f"云台通信失败：{detail}")
+                    tracking_action = {
+                        "state": "moved",
+                        "yaw_delta_pwm": decision.yaw_delta_pwm,
+                        "pitch_delta_pwm": decision.pitch_delta_pwm,
+                    }
                 self._last_control_at = now
             annotated = self.instance._annotate(left, self.instance.current_box)
-            return annotated, {
+            result = {
                 "result": "已检测到手掌" if self.instance.current_box else "未检测到手掌",
                 "tracking": self.instance.tracking_enabled,
             }
+            if tracking_action is not None:
+                result["tracking_action"] = tracking_action
+            return annotated, result
 
     def manual_gimbal_step(self, step: Callable[[], dict]) -> dict:
         with self._tracking_lock:

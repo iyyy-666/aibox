@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -43,9 +44,11 @@ class WorkerProcess:
         self._state_lock = threading.Lock()
         self._stdin_lock = threading.Lock()
         self._pending_commands: dict[str, _PendingCommand] = {}
+        self._event_sequence = 0
+        self._recent_events: deque[dict] = deque(maxlen=32)
 
     @property
-    def pids(self) -> tuple[int, ...]:
+    def pids(self) -> tuple[int, ...] | None:
         if self._process_group_id is None:
             return ()
         return self._process_group_members()
@@ -58,6 +61,8 @@ class WorkerProcess:
         self._last_event = {}
         self._startup_result = None
         self._startup_event.clear()
+        self._event_sequence = 0
+        self._recent_events.clear()
         stderr = subprocess.DEVNULL
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +115,14 @@ class WorkerProcess:
                 request_id = event.get("request_id")
                 with self._state_lock:
                     self._last_event = event
+                    self._event_sequence += 1
+                    compact_event = {
+                        key: value
+                        for key, value in event.items()
+                        if key != "frame_jpeg_base64"
+                    }
+                    compact_event["_sequence"] = self._event_sequence
+                    self._recent_events.append(compact_event)
                     if (
                         self._startup_result is None
                         and event_type in {"ready", "error"}
@@ -127,14 +140,16 @@ class WorkerProcess:
                         pending.event.set()
 
     def _finish_failed_start(self) -> None:
-        process = self._process
-        if process is not None and self._process_group_members():
+        members = self._process_group_members()
+        if members is None or members:
             self._terminate_process_group()
         if self._reader is not None and self._reader is not threading.current_thread():
             self._reader.join(timeout=1.0)
-        self._process = None
-        self._process_group_id = None
-        self._reader = None
+        members = self._process_group_members()
+        if members == ():
+            self._process = None
+            self._process_group_id = None
+            self._reader = None
         self._close_log()
 
     def command(self, name: str, payload: dict) -> dict:
@@ -181,10 +196,14 @@ class WorkerProcess:
         process = self._process
         with self._state_lock:
             last_event = dict(self._last_event)
+            recent_events = [dict(event) for event in self._recent_events]
+            event_sequence = self._event_sequence
         return {
             **last_event,
             "pid": process.pid if process is not None else None,
             "alive": bool(process is not None and process.poll() is None),
+            "event_sequence": event_sequence,
+            "recent_events": recent_events,
         }
 
     def stop(self, timeout: float) -> None:
@@ -204,15 +223,22 @@ class WorkerProcess:
                 process.wait(timeout=timeout)
             except (RuntimeError, BrokenPipeError, subprocess.TimeoutExpired):
                 self._terminate_process_group()
-        if self._process_group_members():
+        members = self._process_group_members()
+        if members is None or members:
             self._terminate_process_group()
+        members = self._process_group_members()
         if self._reader is not None:
             self._reader.join(timeout=1.0)
+        if members is None:
+            raise RuntimeError("无法核验工作进程组是否已释放。")
+        if members:
+            raise RuntimeError(f"工作进程组仍有存活进程：{members}")
         self._process = None
         self._process_group_id = None
+        self._reader = None
         self._close_log()
 
-    def _process_group_members(self) -> tuple[int, ...]:
+    def _process_group_members(self) -> tuple[int, ...] | None:
         group_id = self._process_group_id
         process = self._process
         if group_id is None:
@@ -230,9 +256,9 @@ class WorkerProcess:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
-            if process is not None and process.poll() is None:
-                return (process.pid,)
-            return ()
+            return None
+        if result.returncode != 0:
+            return None
         members = []
         for line in result.stdout.splitlines():
             fields = line.split()
@@ -249,25 +275,26 @@ class WorkerProcess:
     def _terminate_process_group(self) -> None:
         process = self._process
         group_id = self._process_group_id
-        if process is None or group_id is None:
+        if group_id is None:
             return
         try:
             if os.name == "nt":
-                if process.poll() is None:
+                if process is not None and process.poll() is None:
                     process.terminate()
             else:
                 os.killpg(group_id, signal.SIGTERM)
-            if process.poll() is None:
+            if process is not None and process.poll() is None:
                 process.wait(timeout=2.0)
         except (OSError, subprocess.TimeoutExpired):
             pass
-        if self._process_group_members():
+        members = self._process_group_members()
+        if members is None or members:
             try:
-                if os.name == "nt" and process.poll() is None:
+                if os.name == "nt" and process is not None and process.poll() is None:
                     process.kill()
                 elif os.name != "nt":
-                    os.killpg(group_id, signal.SIGKILL)
-                if process.poll() is None:
+                    os.killpg(group_id, getattr(signal, "SIGKILL", 9))
+                if process is not None and process.poll() is None:
                     process.wait(timeout=1.0)
             except (OSError, subprocess.TimeoutExpired):
                 pass
