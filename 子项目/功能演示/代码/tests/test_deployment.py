@@ -496,6 +496,33 @@ test "$rc" -ne 0''',
 
 
 @pytest.mark.parametrize(
+    ("plate", "expected_success"),
+    [("", False), ("ABC123", True)],
+)
+def test_plate_evidence_requires_nonempty_recognized_plate_text(
+    tmp_path, plate, expected_success
+):
+    import json
+
+    event = {
+        "_sequence": 11,
+        "type": "frame",
+        "result": [{"plate": plate, "color": "blue"}],
+    }
+    payload = json.dumps({"details": {"recent_events": [event]}})
+    expectation = "eq 0" if expected_success else "ne 0"
+    result = run_hook_bash(
+        tmp_path,
+        f'''set +e
+printf '%s' '{payload}' | match_behavior_event recognition_result plate_text 10
+rc=$?
+test "$rc" -{expectation}''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
     ("module_id", "behavior", "source", "operator_required"),
     [
         ("ai_assistant", "assistant_reply", "event", False),

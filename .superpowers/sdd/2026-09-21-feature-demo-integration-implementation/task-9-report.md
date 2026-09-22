@@ -162,3 +162,13 @@ Process-group enumeration now returns unknown separately from empty. On `ps` fai
 | `git diff --check` | exit `0`; only line-ending notices |
 
 The pre-deployment board audit still showed `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, 14 legacy desktop entries, no acceptance marker, `/dev/video41` absent, and `/dev/video42` plus `/dev/video43` present. No package operation, reboot, full acceptance, desktop retirement, or service cutover is authorized while that camera blocker remains.
+
+### Residual Review Fix Round 2
+
+The scoped re-review found two remaining important gaps. RED used the real shared `RobotArm`: stopping while `set_all_servos` was paused between servo writes returned success and allowed later servo commands after `$DST!` (`1 failed`). The plate evidence RED proved a color-only candidate with an empty `plate` field incorrectly passed while nonempty plate text also passed (`1 failed, 1 passed`).
+
+`RobotArm` now assigns a cancellation generation to motion writes. Each serial motion write validates that generation while holding a robot-level write lock; emergency stop increments the generation and sends `$DST!` under the same lock. Consequently a write already in progress precedes the emergency stop, while every remaining write from the cancelled multi-servo call is rejected. Action definitions, PWM limits, timing values, and serial command formats are unchanged. Plate acceptance now requests the `plate_text` evidence subtype and accepts only a fresh frame containing at least one nonblank recognized `plate` field; color-only candidates are rejected.
+
+Focused GREEN was `1 passed` for the real robot cancellation regression and `2 passed` for plate evidence. The fresh unified suite passed `177` tests with two dependency deprecation warnings. Affected legacy suites passed shared resources `3`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit `2`, and shape `3`. Compileall for both unified and shared code, Node syntax, all five Bash syntax checks, and `git diff --check` exited `0`.
+
+This round is local-only pending scoped review. It has not been deployed. The earlier `4c91b8e` nine-file deployment occurred before this second review request, from backup `/root/feature-demo-backups/residual-fix-20260922_141644`; all nine deployed hashes matched local at that commit.
