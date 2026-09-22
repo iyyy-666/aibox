@@ -62,3 +62,7 @@ def test_get_module_rejects_unknown_module():
         assert exc.args == ("camera_view",)
     else:
         raise AssertionError("get_module must reject unknown module IDs")
+
+
+def test_voice_input_registry_uses_the_runtime_worker_identifier():
+    assert get_module("voice_input_test").worker == "voice_input_test"

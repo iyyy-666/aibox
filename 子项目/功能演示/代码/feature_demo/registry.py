@@ -75,7 +75,7 @@ MODULES = (
         name="语音输入测试",
         description="查看麦克风采集、原始识别文本与规范化结果。",
         category="语音交互",
-        worker="voice_input",
+        worker="voice_input_test",
         resources=("microphone", "asr"),
         commands=("start_listening", "stop_listening"),
     ),

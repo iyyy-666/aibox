@@ -129,7 +129,11 @@ def emit_json(event: dict) -> None:
 def run_worker(module_id: str) -> int:
     worker = create_worker(module_id, event_sink=emit_json)
     try:
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            emit_json({"type": "error", "message": str(exc)})
+            return 1
         for line in sys.stdin:
             try:
                 request = json.loads(line)
