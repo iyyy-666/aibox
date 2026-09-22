@@ -35,3 +35,4 @@ class ModuleDefinition:
     resources: tuple[str, ...]
     commands: tuple[str, ...]
     visual: bool = False
+    startup_timeout: float = 15.0

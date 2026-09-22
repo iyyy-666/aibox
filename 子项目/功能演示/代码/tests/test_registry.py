@@ -80,3 +80,16 @@ def test_ai_assistant_registry_worker_reaches_process_and_runtime_factory():
     assert module.worker == "ai_assistant"
     assert process._command[-1] == "ai_assistant"
     assert isinstance(runtime_worker, AssistantWorker)
+
+
+def test_production_factory_allows_eager_asr_workers_a_bounded_longer_startup():
+    for module_id in ("voice_input_test", "nursery_rhyme"):
+        process = _default_worker_factory(get_module(module_id))
+
+        assert process._start_timeout == 60.0
+
+
+def test_production_factory_keeps_lightweight_worker_startup_timeout_short():
+    process = _default_worker_factory(get_module("color_recognition"))
+
+    assert process._start_timeout == 15.0
