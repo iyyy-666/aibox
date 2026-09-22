@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from feature_demo.workers import runtime
 from feature_demo.workers.runtime import create_vision_worker
 
 
@@ -61,3 +62,22 @@ def test_runtime_keeps_camera_lazy_and_uses_existing_capture_settings():
     assert adapter_calls == ["color_recognition"]
     assert cv2.created[0][:2] == ("/dev/video41", 200)
     assert camera.settings == [(1, 77), (2, 1280), (3, 480), (4, 30), (5, 1)]
+
+
+def test_worker_entry_emits_the_original_startup_failure(monkeypatch):
+    events = []
+
+    class FailingWorker:
+        last_event = {}
+
+        def start(self):
+            raise RuntimeError("无法打开摄像头 /dev/video41。")
+
+        def stop(self):
+            self.last_event = {"type": "stopped"}
+
+    monkeypatch.setattr(runtime, "create_worker", lambda *args, **kwargs: FailingWorker())
+    monkeypatch.setattr(runtime, "emit_json", events.append)
+
+    assert runtime.run_worker("color_recognition") == 1
+    assert events == [{"type": "error", "message": "无法打开摄像头 /dev/video41。"}]

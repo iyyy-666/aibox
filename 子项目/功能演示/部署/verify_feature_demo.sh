@@ -3,8 +3,8 @@ set -euo pipefail
 
 API_URL="${FEATURE_DEMO_URL:-http://127.0.0.1:8000}"
 MODULE_IDS=(ai_assistant object_sorting plate_recognition palm_recognition palm_tracking voice_input_test fruit_recognition color_recognition face_detection robot_button nursery_rhyme shape_recognition voice_robot_arm)
-DEVICE_PATHS=(/dev/video41 /dev/snd/pcmC5D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
-HIGH_RISK_SEQUENCES=("palm_tracking color_recognition" "face_detection object_sorting" "ai_assistant nursery_rhyme")
+DEVICE_PATHS=(/dev/video41 /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
+HIGH_RISK_SEQUENCES=("voice_robot_arm fruit_recognition" "face_detection object_sorting" "ai_assistant nursery_rhyme")
 ACCEPTANCE_MARKER="${FEATURE_DEMO_ACCEPTANCE_MARKER:-/var/lib/feature-demo/full-acceptance.marker}"
 DESKTOP_DIR="/home/ztl/Desktop"
 STAGED_DESKTOP_ENTRY="/usr/local/share/feature-demo/功能演示.desktop"

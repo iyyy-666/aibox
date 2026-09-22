@@ -9,7 +9,7 @@ from feature_demo.resources import DEFAULT_DEVICE_PATHS, ResourceVerifier
 def test_default_device_paths_match_the_deployed_hardware_names():
     assert DEFAULT_DEVICE_PATHS == {
         "camera": ("/dev/video41",),
-        "microphone": ("/dev/snd/pcmC5D0c",),
+        "microphone": ("/dev/snd/pcmC1D0c",),
         "speaker": ("/dev/snd/pcmC0D0p",),
         "robot": ("/dev/esp32_arm",),
         "gimbal": ("/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",),

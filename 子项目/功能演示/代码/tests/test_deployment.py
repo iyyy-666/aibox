@@ -47,10 +47,26 @@ def test_installer_stages_new_desktop_entry_without_replacing_legacy_entries():
 def test_installer_archives_the_entire_robot_arm_before_copying_unified_package():
     script = (DEPLOY / "install_feature_demo.sh").read_text(encoding="utf-8")
 
-    archive = 'tar -czf "$ROLLBACK_DIR/robot_arm.tar.gz" "$APP_ROOT"'
+    archive = 'archive_directory "$APP_ROOT" "robot_arm"'
     copy = 'cp -a "$SOURCE_DIR/代码/feature_demo/." "$APP_ROOT/feature_demo/"'
     assert archive in script
     assert script.index(archive) < script.index(copy)
+
+
+def test_installer_verifies_complete_rollback_archives_before_any_deployment_write():
+    script = (DEPLOY / "install_feature_demo.sh").read_text(encoding="utf-8")
+
+    copy = 'cp -a "$SOURCE_DIR/代码/feature_demo/." "$APP_ROOT/feature_demo/"'
+    for archive in (
+        'archive_directory "$APP_ROOT" "robot_arm"',
+        'archive_directory "$DESKTOP_DIR" "desktop"',
+        'archive_directory "/usr/local/bin" "launchers"',
+        'archive_directory "/etc/systemd/system" "systemd"',
+    ):
+        assert archive in script
+        assert script.index(archive) < script.index(copy)
+    assert 'local source="$1"\n  local name="$2"\n  local archive="$ROLLBACK_DIR/$name.tar.gz"' in script
+    assert 'tar -tzf "$archive" >/dev/null' in script
 
 
 def test_service_and_verifier_are_deployable():
@@ -125,6 +141,36 @@ def test_verifier_uses_the_same_camera_microphone_robot_and_gimbal_paths_as_runt
     verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
 
     assert "/dev/video41" in verifier
-    assert "/dev/snd/pcmC5D0c" in verifier
+    assert "/dev/snd/pcmC1D0c" in verifier
     assert "/dev/esp32_arm" in verifier
     assert "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0" in verifier
+
+
+def test_verifier_uses_the_three_specified_high_risk_sequences():
+    verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
+
+    assert '"voice_robot_arm fruit_recognition"' in verifier
+    assert '"face_detection object_sorting"' in verifier
+    assert '"ai_assistant nursery_rhyme"' in verifier
+
+
+def test_installer_deploys_real_hardware_hook_and_board_local_signer():
+    installer = (DEPLOY / "install_feature_demo.sh").read_text(encoding="utf-8")
+    hook = (DEPLOY / "hardware_acceptance_hook.sh").read_text(encoding="utf-8")
+    signer = (DEPLOY / "acceptance_signer.sh").read_text(encoding="utf-8")
+
+    assert "hardware_acceptance_hook.sh" in installer
+    assert "acceptance_signer.sh" in installer
+    assert "openssl rand" in installer
+    assert "chmod 0600" in installer
+    assert "xdotool search --name '\u529f能演示'" in hook
+    assert "/api/modules/$module_id/status" in hook
+    assert "/api/modules/$module_id/frame" in hook
+    assert "fuser -s" in hook
+    assert "resources_released_after_stop=" in hook
+    release_wait = hook.split("wait_for_resources_released()", 1)[1].split("}", 1)[0]
+    assert "seq 1 80" in release_wait
+    assert 'nursery_rhyme)' in hook
+    assert 'play \'{"song_id":"twinkle"}\'' in hook
+    assert "hmac.new" in signer
+    assert "FEATURE_DEMO_ACCEPTANCE_KEY" in signer

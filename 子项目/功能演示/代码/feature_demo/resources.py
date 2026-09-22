@@ -10,7 +10,7 @@ from .models import ModuleDefinition
 
 DEFAULT_DEVICE_PATHS: dict[str, tuple[str, ...]] = {
     "camera": ("/dev/video41",),
-    "microphone": ("/dev/snd/pcmC5D0c",),
+    "microphone": ("/dev/snd/pcmC1D0c",),
     "speaker": ("/dev/snd/pcmC0D0p",),
     "robot": ("/dev/esp32_arm",),
     "gimbal": (
