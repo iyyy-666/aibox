@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 from feature_demo.workers import runtime
 from feature_demo.workers.runtime import create_vision_worker
 
@@ -75,9 +77,46 @@ def test_worker_entry_emits_the_original_startup_failure(monkeypatch):
 
         def stop(self):
             self.last_event = {"type": "stopped"}
+            runtime.emit_json({"type": "stopped", "message": "cleanup done"})
 
     monkeypatch.setattr(runtime, "create_worker", lambda *args, **kwargs: FailingWorker())
     monkeypatch.setattr(runtime, "emit_json", events.append)
 
     assert runtime.run_worker("color_recognition") == 1
-    assert events == [{"type": "error", "message": "无法打开摄像头 /dev/video41。"}]
+    assert events[0] == {"type": "error", "message": "无法打开摄像头 /dev/video41。"}
+    assert events[1]["type"] == "stopped"
+
+
+def test_worker_entry_correlates_command_result_and_error(monkeypatch):
+    events = []
+
+    class CommandWorker:
+        last_event = {"type": "ready"}
+
+        def start(self):
+            return None
+
+        def command(self, name, payload):
+            if name == "fail":
+                raise RuntimeError("physical command failed")
+            return {"ok": True, "name": name, "payload": payload}
+
+        def stop(self):
+            self.last_event = {"type": "stopped"}
+
+    requests = (
+        '{"request_id":"req-ok","command":"move","payload":{"amount":1}}\n'
+        '{"request_id":"req-fail","command":"fail","payload":{}}\n'
+    )
+    monkeypatch.setattr(runtime, "create_worker", lambda *args, **kwargs: CommandWorker())
+    monkeypatch.setattr(runtime, "emit_json", events.append)
+    monkeypatch.setattr(runtime.sys, "stdin", io.StringIO(requests))
+
+    assert runtime.run_worker("robot_button") == 0
+    assert events[0]["request_id"] == "req-ok"
+    assert events[0]["type"] == "command_result"
+    assert events[1] == {
+        "type": "error",
+        "request_id": "req-fail",
+        "message": "physical command failed",
+    }

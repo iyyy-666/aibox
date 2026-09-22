@@ -1,8 +1,32 @@
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "部署"
+
+
+def run_hook_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
+    if not Path(bash).is_file():
+        pytest.skip("Bash is required for deployment behavior tests")
+    hook = (DEPLOY / "hardware_acceptance_hook.sh").as_posix()
+    python = Path(sys.executable).as_posix()
+    script = (
+        f'python3() {{ "{python}" "$@"; }}\n'
+        f'source <(sed \'/^case "${{1:-}}" in/,$d\' "{hook}")\n{body}'
+    )
+    return subprocess.run(
+        [bash, "-c", script],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def test_desktop_has_single_chinese_entry():
@@ -174,3 +198,83 @@ def test_installer_deploys_real_hardware_hook_and_board_local_signer():
     assert 'play \'{"song_id":"twinkle"}\'' in hook
     assert "hmac.new" in signer
     assert "FEATURE_DEMO_ACCEPTANCE_KEY" in signer
+
+
+def test_hardware_hook_preserves_explicit_json_payload(tmp_path):
+    trace = (tmp_path / "curl-args.txt").as_posix()
+    result = run_hook_bash(
+        tmp_path,
+        f'''curl() {{ printf '%s\\n' "$@" > "{trace}"; printf '{{"ok":true}}'; }}
+post_command demo move '{{"amount":1}}' ''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(trace).read_text(encoding="utf-8").splitlines().count('{"amount":1}') == 1
+
+
+def test_hardware_hook_rejects_unsuccessful_command_response(tmp_path):
+    result = run_hook_bash(
+        tmp_path,
+        '''curl() { printf '{"ok":false,"message":"hardware rejected"}'; }
+post_command demo move '{"amount":1}' ''',
+    )
+
+    assert result.returncode != 0
+
+
+def test_hardware_hook_reports_success_when_no_resources_are_owned(tmp_path):
+    result = run_hook_bash(
+        tmp_path,
+        '''pgrep() { return 1; }
+fuser() { return 1; }
+CAMERA_DEVICE=/dev/null
+MIC_DEVICE=/dev/null
+ROBOT_DEVICE=/dev/null
+GIMBAL_DEVICE=/dev/null
+resources_released''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_high_risk_sequence_stops_started_module_when_check_fails(tmp_path):
+    trace = (tmp_path / "sequence.txt").as_posix()
+    result_file = (tmp_path / "result.txt").as_posix()
+    result = run_hook_bash(
+        tmp_path,
+        f'''TRACE="{trace}"
+RESULT_FILE="{result_file}"
+curl() {{ printf '%s\\n' "$*" >> "$TRACE"; return 0; }}
+verify_running_module() {{ return 1; }}
+wait_for_resources_released() {{ printf 'released\\n' >> "$TRACE"; return 0; }}
+set +e
+(set -e; run_sequence broken)
+rc=$?
+grep -q '/api/modules/broken/stop' "$TRACE" || exit 90
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_nursery_rhyme_verification_waits_for_speaker_owner(tmp_path):
+    trace = (tmp_path / "nursery.txt").as_posix()
+    result = run_hook_bash(
+        tmp_path,
+        f'''TRACE="{trace}"
+MIC_DEVICE=/dev/test-mic
+SPEAKER_DEVICE=/dev/test-speaker
+wait_for_state() {{ return 0; }}
+wait_for_device_owner() {{ printf 'owner=%s\n' "$1" >> "$TRACE"; }}
+post_command() {{ printf 'command=%s\n' "$2" >> "$TRACE"; }}
+sleep() {{ :; }}
+verify_running_module nursery_rhyme''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(trace).read_text(encoding="utf-8").splitlines() == [
+        "owner=/dev/test-mic",
+        "command=play",
+        "owner=/dev/test-speaker",
+        "command=stop_playback",
+    ]
