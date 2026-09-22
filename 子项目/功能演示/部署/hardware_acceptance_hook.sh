@@ -7,6 +7,7 @@ CAMERA_DEVICE="/dev/video41"
 MIC_DEVICE="/dev/snd/pcmC1D0c"
 ROBOT_DEVICE="/dev/esp32_arm"
 GIMBAL_DEVICE="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+SPEAKER_DEVICE="/dev/snd/pcmC0D0p"
 VISUAL_MODULES="object_sorting plate_recognition palm_recognition palm_tracking fruit_recognition color_recognition face_detection shape_recognition"
 
 json_state() {
@@ -39,10 +40,11 @@ wait_for_device_owner() {
 resources_released() {
   local device
   pgrep -f 'feature_demo.workers' >/dev/null && return 1
-  for device in "$CAMERA_DEVICE" "$MIC_DEVICE" "$ROBOT_DEVICE" "$GIMBAL_DEVICE"; do
+  for device in "$CAMERA_DEVICE" "$MIC_DEVICE" "$ROBOT_DEVICE" "$GIMBAL_DEVICE" "$SPEAKER_DEVICE"; do
     [[ -e "$device" ]] || continue
     fuser -s "$device" 2>/dev/null && return 1
   done
+  return 0
 }
 
 wait_for_resources_released() {
@@ -56,9 +58,11 @@ wait_for_resources_released() {
 }
 
 post_command() {
-  local module_id="$1" command="$2" payload="${3:-{}}"
-  curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d "$payload" \
-    "$API_URL/api/modules/$module_id/commands/$command" >/dev/null
+  local module_id="$1" command="$2" payload="{}" response
+  [[ $# -lt 3 ]] || payload="$3"
+  response=$(curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d "$payload" \
+    "$API_URL/api/modules/$module_id/commands/$command")
+  printf '%s' "$response" | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ok") is True else 1)'
 }
 
 verify_visual_frame() {
@@ -111,22 +115,48 @@ verify_running_module() {
     nursery_rhyme)
       wait_for_device_owner "$MIC_DEVICE"
       post_command "$module_id" play '{"song_id":"twinkle"}'
-      sleep 1
+      wait_for_device_owner "$SPEAKER_DEVICE"
       post_command "$module_id" stop_playback
       ;;
   esac
 }
+
+stop_module_and_release() {
+  local module_id="$1" stop_rc=0 release_rc=0
+  curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' \
+    "$API_URL/api/modules/$module_id/stop" >/dev/null || stop_rc=$?
+  wait_for_resources_released || release_rc=$?
+  (( stop_rc == 0 && release_rc == 0 ))
+}
+
+run_sequence_step() (
+  local module_id="$1" started=false
+  cleanup_started_module() {
+    local original_rc=$? cleanup_rc=0
+    trap - EXIT
+    if [[ "$started" == true ]]; then
+      stop_module_and_release "$module_id" || cleanup_rc=$?
+    fi
+    (( original_rc != 0 )) && exit "$original_rc"
+    exit "$cleanup_rc"
+  }
+  trap cleanup_started_module EXIT
+
+  curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' \
+    "$API_URL/api/modules/$module_id/start" >/dev/null || exit $?
+  started=true
+  verify_running_module "$module_id" || exit $?
+  stop_module_and_release "$module_id" || exit $?
+  started=false
+  printf 'stopped=%s\nresources_released_after_stop=%s\n' "$module_id" "$module_id" >> "$RESULT_FILE"
+)
 
 run_sequence() {
   local sequence_csv="$1" module_id
   [[ -n "$RESULT_FILE" ]] || { echo "Sequence result file is required." >&2; exit 2; }
   printf 'scenario=high-risk-sequence\nsequence=%s\n' "$sequence_csv" > "$RESULT_FILE"
   for module_id in ${sequence_csv//,/ }; do
-    curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/start" >/dev/null
-    verify_running_module "$module_id"
-    curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/stop" >/dev/null
-    wait_for_resources_released
-    printf 'stopped=%s\nresources_released_after_stop=%s\n' "$module_id" "$module_id" >> "$RESULT_FILE"
+    run_sequence_step "$module_id"
   done
   printf 'resources_released=true\n' >> "$RESULT_FILE"
 }

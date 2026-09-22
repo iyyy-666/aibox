@@ -70,3 +70,32 @@ Every archive passed `tar -tzf`. The successful hardened installer also created 
 4. Final safety state: `robot-arm.service` is `enabled/active` (PID `637870` at final check) and again owns `/dev/esp32_arm`; `feature-demo.service` remains disabled/inactive; all 14 original desktop entries remain present.
 
 Because the device acceptance checklist is incomplete, legacy retirement is gated off and no claim of final product acceptance is made.
+
+## Fix Round 1
+
+### RED/GREEN Evidence
+
+The initial focused RED command covered `test_worker_process.py`, `test_worker_entry.py`, and the three deployment regressions for JSON payloads, resource release, and sequence cleanup. It failed as expected with `7 failed, 4 passed`: the startup error was overwritten by `stopped`, `WorkerProcess` had no command timeout/correlation, runtime replies lacked request IDs, the shell payload gained an extra `}`, idle resources returned failure, and a failed verification skipped module stop.
+
+Additional tests were added before implementation for mismatched and correlated error replies, command timeout, API `ok:false`, and nursery-rhyme speaker ownership. The expanded RED run failed with `11 failed, 4 passed` for those missing behaviors. After implementation, the focused three-file suite passed with `29 passed`.
+
+The full feature-demo suite passed with `110 passed` and two dependency deprecation warnings. Affected legacy suites also passed: shared resources `2`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit recognition `2`, and shape recognition `3` tests. `compileall`, JavaScript syntax, all five shell syntax checks, and `git diff --check` exited `0`; Git emitted only line-ending notices.
+
+### Fixes and Deployment
+
+- `WorkerProcess` now assigns a unique request ID, waits up to a bounded command timeout for the matching worker reply, ignores unrelated replies, returns the physical result, and raises for correlated errors or `ok:false`. Stop requests are written directly and do not wait for a command result.
+- Startup state is one-shot: the first `ready` or startup `error` is retained separately from the live snapshot, so a subsequent cleanup `stopped` event cannot hide the original failure.
+- Worker runtime command results and errors echo the incoming request ID.
+- The hardware hook preserves explicit JSON payloads, requires API command responses with `ok` exactly `true`, returns success explicitly when resources are released, includes the playback device in release checks, and waits for speaker ownership after nursery-rhyme playback starts.
+- Each started high-risk-sequence module runs under an EXIT cleanup guard. Verification, command, frame, stop, or release failure triggers a stop request and a bounded release check before the failure propagates.
+
+Only the three changed production files were incrementally deployed: `/root/robot_arm/feature_demo/worker.py`, `/root/robot_arm/feature_demo/workers/runtime.py`, and `/usr/local/bin/feature_demo_hardware_acceptance.sh`. Board and local SHA-256 values matched for all three. No apt/dpkg mutation, reboot, full acceptance, or legacy retirement was performed.
+
+### Final Device Safety State
+
+- `robot-arm.service`: `enabled` / `active`
+- `feature-demo.service`: `disabled` / `inactive`
+- Legacy desktop entries: `14`, unchanged
+- `/var/lib/feature-demo/full-acceptance.marker`: absent
+
+The external camera blocker remains: `/dev/video41` is absent and the camera is enumerated as `/dev/video42` and `/dev/video43`. The existing package-management blocker also remains: `initramfs-tools` is incompletely configured and the `flash-kernel` trigger is pending. No corrective package action was attempted.

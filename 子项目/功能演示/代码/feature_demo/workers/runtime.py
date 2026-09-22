@@ -135,17 +135,31 @@ def run_worker(module_id: str) -> int:
             emit_json({"type": "error", "message": str(exc)})
             return 1
         for line in sys.stdin:
+            request_id = ""
             try:
                 request = json.loads(line)
+                request_id = str(request.get("request_id", ""))
                 command = str(request.get("command", ""))
                 payload = request.get("payload") or {}
                 if command == "stop":
                     worker.stop()
                     return 0
                 result = worker.command(command, payload)
-                emit_json({"type": "command_result", **result})
+                emit_json(
+                    {
+                        **result,
+                        "type": "command_result",
+                        "request_id": request_id,
+                    }
+                )
             except Exception as exc:
-                emit_json({"type": "error", "message": str(exc)})
+                emit_json(
+                    {
+                        "type": "error",
+                        "request_id": request_id,
+                        "message": str(exc),
+                    }
+                )
     finally:
         if worker.last_event.get("type") != "stopped":
             try:
