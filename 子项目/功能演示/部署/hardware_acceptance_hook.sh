@@ -111,7 +111,13 @@ for event in details.get("recent_events") or []:
         ok = event.get("type") == "frame" and event.get("tracking") is True and action.get("state") == "moved"
     elif behavior == "recognition_result":
         result = event.get("result")
-        ok = event.get("type") == "frame" and bool(result) and result != "未检测到手掌"
+        if expected == "plate_text":
+            ok = event.get("type") == "frame" and isinstance(result, list) and any(
+                isinstance(item, dict) and bool(str(item.get("plate", "")).strip())
+                for item in result
+            )
+        else:
+            ok = event.get("type") == "frame" and bool(result) and result != "未检测到手掌"
     if ok:
         print(sequence)
         raise SystemExit(0)
@@ -236,7 +242,12 @@ verify_running_module() {
       require_operator_confirmation "$module_id" "Confirm that the nursery rhyme is audible" || return
       post_command "$module_id" stop_playback || return
       ;;
-    plate_recognition|palm_recognition|fruit_recognition|color_recognition|face_detection|shape_recognition)
+    plate_recognition)
+      baseline=$(current_event_sequence "$module_id") || return
+      EVIDENCE_BEHAVIOR="recognition_result"
+      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "plate_text" "$baseline") || return
+      ;;
+    palm_recognition|fruit_recognition|color_recognition|face_detection|shape_recognition)
       baseline=$(current_event_sequence "$module_id") || return
       EVIDENCE_BEHAVIOR="recognition_result"
       EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return

@@ -40,6 +40,8 @@ class RobotArm:
         self._servo_pwms = [1500] * NUM_SERVOS  # 当前每个舵机PWM值
         self._gripper_state = ""
         self._action_lock = threading.Lock()
+        self._motion_write_lock = threading.Lock()
+        self._motion_generation = 0
         self._critical_action = False
         self._sorting_stages_file = Path(__file__).parent / "sorting_stages.json"
         self._last_pwms_file = Path(__file__).parent / "last_servo_pwms.json"
@@ -73,6 +75,16 @@ class RobotArm:
 
     # ---- 基础舵机控制 ----
 
+    def _current_motion_generation(self) -> int:
+        with self._motion_write_lock:
+            return self._motion_generation
+
+    def _send_motion_command(self, command: str, generation: int) -> bool | None:
+        with self._motion_write_lock:
+            if generation != self._motion_generation:
+                return None
+            return self.ser.send_command(command)
+
     def set_servo(self, servo_id: int, pwm: int, time_ms: int = 500, allow_critical: bool = False) -> bool:
         """
         控制单个舵机
@@ -82,12 +94,14 @@ class RobotArm:
         """
         if self._critical_action and not allow_critical:
             return False
+        generation = self._current_motion_generation()
         pwm = max(PWM_MIN, min(PWM_MAX, pwm))
         self._servo_pwms[servo_id] = pwm
         self._rot_offsets[servo_id] = pwm - PWM_CENTER
         self._remember_pwms()
         cmd = f"#{servo_id:03d}P{pwm:04d}T{time_ms:04d}!"
-        return self.ser.send_command(cmd)
+        sent = self._send_motion_command(cmd, generation)
+        return False if sent is None else sent
 
     def set_all_servos(self, pwms: list[int], time_ms: int = 1000, skip_neg1: bool = True, allow_critical: bool = False) -> bool:
         """
@@ -96,6 +110,7 @@ class RobotArm:
         """
         if self._critical_action and not allow_critical:
             return False
+        generation = self._current_motion_generation()
         ok = True
         for i, pwm in enumerate(pwms[:NUM_SERVOS]):
             if skip_neg1 and pwm < 0:
@@ -104,7 +119,12 @@ class RobotArm:
             self._servo_pwms[i] = pwm
             self._rot_offsets[i] = pwm - PWM_CENTER
             self._remember_pwms()
-            if not self.ser.send_command(f"#{i:03d}P{pwm:04d}T{time_ms:04d}!"):
+            sent = self._send_motion_command(
+                f"#{i:03d}P{pwm:04d}T{time_ms:04d}!", generation
+            )
+            if sent is None:
+                return False
+            if not sent:
                 ok = False
             time.sleep(0.02)
         self._mov_end = time.time() + time_ms / 1000.0 + 1.0  # 运动时间+1s
@@ -115,6 +135,7 @@ class RobotArm:
         使用群组指令同步控制所有舵机（一条指令包含6个舵机）
         格式: {G0000#000PxxxxTxxxx!#001PxxxxTxxxx!...#005PxxxxTxxxx!}
         """
+        generation = self._current_motion_generation()
         parts = ["{G0000"]
         for i, pwm in enumerate(pwms[:NUM_SERVOS]):
             pwm = max(PWM_MIN, min(PWM_MAX, pwm))
@@ -124,7 +145,8 @@ class RobotArm:
         parts.append("}")
         cmd = "".join(parts)
         self._remember_pwms()
-        return self.ser.send_command(cmd)
+        sent = self._send_motion_command(cmd, generation)
+        return False if sent is None else sent
 
     # ---- 预设姿势 ----
 
@@ -333,9 +355,11 @@ class RobotArm:
 
     def stop(self) -> bool:
         """急停"""
-        self._moving = False
-        self._mov_end = 0
-        return self.ser.send_command("$DST!")
+        with self._motion_write_lock:
+            self._motion_generation += 1
+            self._moving = False
+            self._mov_end = 0
+            return self.ser.send_command("$DST!")
 
     def gripper_open(self, time_ms: int = 500) -> bool:
         """夹爪张开"""
