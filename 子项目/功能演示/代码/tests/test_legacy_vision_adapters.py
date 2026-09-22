@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from feature_demo.adapters.vision import LEGACY_VISION_SPECS, build_vision_adapter
+import threading
+from types import SimpleNamespace
+
+from feature_demo.adapters.vision import (
+    LEGACY_VISION_SPECS,
+    LegacyVisionAdapter,
+    LegacyVisionSpec,
+    build_vision_adapter,
+)
 
 
 def test_all_eight_visual_modules_have_legacy_algorithm_mappings():
@@ -44,3 +52,85 @@ def test_adapter_build_does_not_call_legacy_tk_constructor(monkeypatch):
     assert constructor_calls == []
     assert annotated == "frame"
     assert result["result"] == []
+
+
+def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
+    automatic_started = threading.Event()
+    release_automatic = threading.Event()
+    manual_started = threading.Event()
+
+    class TargetLock:
+        def update(self, boxes):
+            return boxes[0]
+
+        def clear(self):
+            return None
+
+    class Controller:
+        def update(self, current_box, image_size, now):
+            return SimpleNamespace(
+                state="tracking",
+                yaw_delta_pwm=4,
+                pitch_delta_pwm=5,
+            )
+
+        def stop(self):
+            return None
+
+    class Gimbal:
+        def move(self, yaw, pitch, interval):
+            automatic_started.set()
+            release_automatic.wait(timeout=2)
+            return True, "ok"
+
+        def disconnect(self):
+            return None
+
+    frame = SimpleNamespace(shape=(480, 640, 3))
+    module = SimpleNamespace(
+        split_stereo=lambda value: (value, value),
+        CONTROL_INTERVAL_MS=100,
+    )
+    instance = SimpleNamespace(
+        hand_detector=SimpleNamespace(
+            detect=lambda image: [SimpleNamespace(box=(1, 2, 3, 4))]
+        ),
+        target_lock=TargetLock(),
+        controller=Controller(),
+        gimbal=Gimbal(),
+        tracking_enabled=True,
+        current_box=None,
+        image_size=(640, 480),
+        _annotate=lambda image, box: image,
+    )
+    adapter = LegacyVisionAdapter(
+        "palm_tracking",
+        module,
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "tracking"),
+    )
+
+    automatic = threading.Thread(target=lambda: adapter.process(frame))
+    automatic.start()
+    assert automatic_started.wait(timeout=1)
+
+    result = {}
+
+    def run_manual():
+        result.update(
+            adapter.manual_gimbal_step(
+                lambda: manual_started.set() or {"ok": True}
+            )
+        )
+
+    manual = threading.Thread(target=run_manual)
+    manual.start()
+
+    assert manual_started.wait(timeout=0.1) is False
+    release_automatic.set()
+    automatic.join(timeout=1)
+    manual.join(timeout=1)
+
+    assert manual_started.is_set()
+    assert result == {"ok": True}
+    assert instance.tracking_enabled is False

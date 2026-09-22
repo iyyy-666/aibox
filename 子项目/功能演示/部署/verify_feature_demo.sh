@@ -6,6 +6,8 @@ MODULE_IDS=(ai_assistant object_sorting plate_recognition palm_recognition palm_
 DEVICE_PATHS=(/dev/video41 /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
 HIGH_RISK_SEQUENCES=("voice_robot_arm fruit_recognition" "face_detection object_sorting" "ai_assistant nursery_rhyme")
 ACCEPTANCE_MARKER="${FEATURE_DEMO_ACCEPTANCE_MARKER:-/var/lib/feature-demo/full-acceptance.marker}"
+VERIFIER_PATH="${FEATURE_DEMO_VERIFIER_PATH:-$0}"
+APP_PACKAGE_ROOT="${FEATURE_DEMO_APP_ROOT:-/root/robot_arm/feature_demo}"
 DESKTOP_DIR="/home/ztl/Desktop"
 STAGED_DESKTOP_ENTRY="/usr/local/share/feature-demo/功能演示.desktop"
 WINDOW_CLOSE_MODULE="${FEATURE_DEMO_WINDOW_CLOSE_MODULE:-voice_input_test}"
@@ -91,7 +93,17 @@ resources_are_released() {
 }
 
 run_hardware_hook() {
-  "$FEATURE_DEMO_HARDWARE_HOOK" "$@"
+  FEATURE_DEMO_API_URL="$API_URL" "$FEATURE_DEMO_HARDWARE_HOOK" "$@"
+}
+
+start_module_running() {
+  local module_id="$1" response state
+  response=$(curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/start") || return
+  state=$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state", ""))') || return
+  [[ "$state" == "running" ]] || {
+    echo "Module $module_id did not start in running state (state: ${state:-unavailable})." >&2
+    return 1
+  }
 }
 
 record_acceptance_result() {
@@ -116,15 +128,23 @@ run_hardware_hook_with_result() {
 }
 
 run_module_lifecycle() {
-  local module_id="$1"
+  local module_id="$1" result_file
   echo "Lifecycle: $module_id"
-  curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/start" >/dev/null
+  start_module_running "$module_id"
   ACTIVE_MODULE="$module_id"
-  run_hardware_hook module "$module_id"
+  result_file=$(run_hardware_hook_with_result module "$module_id") || return
+  if ! validate_hook_result "$result_file" \
+    "scenario=module" "module=$module_id" "evidence=$module_id:primary_behavior"; then
+    rm -f "$result_file"
+    cleanup_active_module
+    return 1
+  fi
+  rm -f "$result_file"
   curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/stop" >/dev/null
   ACTIVE_MODULE=""
   resources_are_released
   record_acceptance_result "module:$module_id=passed"
+  record_acceptance_result "evidence=$module_id:primary_behavior"
 }
 
 verify_all_module_lifecycles() {
@@ -158,7 +178,7 @@ verify_high_risk_sequences() {
 verify_window_close() {
   local result_file
   echo "Window-close scenario: $WINDOW_CLOSE_MODULE"
-  curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$WINDOW_CLOSE_MODULE/start" >/dev/null
+  start_module_running "$WINDOW_CLOSE_MODULE" || return
   ACTIVE_MODULE="$WINDOW_CLOSE_MODULE"
   result_file=$(run_hardware_hook_with_result window-close "$WINDOW_CLOSE_MODULE")
   validate_hook_result "$result_file" "scenario=window-close" "active_module=$WINDOW_CLOSE_MODULE" "window_closed=true" "resources_released=true"
@@ -166,6 +186,17 @@ verify_window_close() {
   ACTIVE_MODULE=""
   resources_are_released
   record_acceptance_result "window-close:$WINDOW_CLOSE_MODULE=passed"
+}
+
+compute_application_hash() {
+  local root="$1"
+  [[ -d "$root" ]] || { echo "Application package is missing: $root" >&2; return 1; }
+  (
+    cd "$root"
+    find . -type f ! -path '*/__pycache__/*' ! -name '*.pyc' -print0 \
+      | LC_ALL=C sort -z \
+      | xargs -0 sha256sum
+  ) | sha256sum | awk '{print $1}'
 }
 
 verify_twenty_switches() {
@@ -179,13 +210,15 @@ verify_twenty_switches() {
 }
 
 write_acceptance_marker() {
-  local timestamp script_hash machine_id board_hostname results_hash payload signature marker_dir
+  local timestamp verifier_hash application_hash hook_hash machine_id board_hostname results_hash payload signature marker_dir
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  script_hash=$(sha256sum "$0" | awk '{print $1}')
+  verifier_hash=$(sha256sum "$VERIFIER_PATH" | awk '{print $1}')
+  application_hash=$(compute_application_hash "$APP_PACKAGE_ROOT")
+  hook_hash=$(sha256sum "$FEATURE_DEMO_HARDWARE_HOOK" | awk '{print $1}')
   machine_id=$(cat /etc/machine-id)
   board_hostname=$(hostname)
   results_hash=$(printf '%s\n' "${ACCEPTANCE_RESULTS[@]}" | sha256sum | awk '{print $1}')
-  payload="full-acceptance|$timestamp|$machine_id|$board_hostname|$script_hash|$results_hash"
+  payload="full-acceptance|$timestamp|$machine_id|$board_hostname|$verifier_hash|$application_hash|$hook_hash|$results_hash"
   signature=$("$FEATURE_DEMO_ACCEPTANCE_SIGNER" "$payload")
   [[ -n "$signature" ]] || { echo "Acceptance signer returned an empty signature." >&2; exit 1; }
   marker_dir=$(dirname "$ACCEPTANCE_MARKER")
@@ -198,17 +231,25 @@ write_acceptance_marker() {
 }
 
 require_valid_acceptance_marker() {
-  local payload signature expected_signature script_hash machine_id board_hostname results_hash actual_results_hash
+  local payload signature expected_signature verifier_hash application_hash hook_hash machine_id board_hostname results_hash actual_results_hash
   [[ -f "$ACCEPTANCE_MARKER" ]] || { echo "Refusing to retire legacy service: no full-acceptance marker." >&2; exit 1; }
   [[ -n "${FEATURE_DEMO_ACCEPTANCE_SIGNER:-}" && -x "$FEATURE_DEMO_ACCEPTANCE_SIGNER" ]] || { echo "Refusing to retire legacy service: FEATURE_DEMO_ACCEPTANCE_SIGNER is required to verify the marker." >&2; exit 1; }
   payload=$(sed -n '1p' "$ACCEPTANCE_MARKER")
   signature=$(sed -n '2p' "$ACCEPTANCE_MARKER")
   MARKER_RESULTS=$(sed -n '3,$p' "$ACCEPTANCE_MARKER")
-  script_hash=$(sha256sum "$0" | awk '{print $1}')
+  verifier_hash=$(sha256sum "$VERIFIER_PATH" | awk '{print $1}')
+  application_hash=$(compute_application_hash "$APP_PACKAGE_ROOT")
+  hook_hash=$(sha256sum "$FEATURE_DEMO_HARDWARE_HOOK" | awk '{print $1}')
   machine_id=$(cat /etc/machine-id)
   board_hostname=$(hostname)
-  IFS='|' read -r _ timestamp marker_machine_id marker_hostname marker_script_hash results_hash <<< "$payload"
-  [[ "$payload" == full-acceptance\|* && "$marker_machine_id" == "$machine_id" && "$marker_hostname" == "$board_hostname" && "$marker_script_hash" == "$script_hash" ]] || { echo "Refusing to retire legacy service: marker is stale, malformed, or belongs to another board." >&2; exit 1; }
+  IFS='|' read -r _ timestamp marker_machine_id marker_hostname marker_verifier_hash marker_application_hash marker_hook_hash results_hash <<< "$payload"
+  [[ "$payload" == full-acceptance\|* \
+    && "$marker_machine_id" == "$machine_id" \
+    && "$marker_hostname" == "$board_hostname" \
+    && "$marker_verifier_hash" == "$verifier_hash" \
+    && "$marker_application_hash" == "$application_hash" \
+    && "$marker_hook_hash" == "$hook_hash" ]] \
+    || { echo "Refusing to retire legacy service: marker is stale, malformed, or belongs to another board." >&2; exit 1; }
   actual_results_hash=$(printf '%s\n' "$MARKER_RESULTS" | sha256sum | awk '{print $1}')
   [[ "$results_hash" == "$actual_results_hash" ]] || { echo "Refusing to retire legacy service: marker acceptance results are invalid." >&2; exit 1; }
   expected_signature=$("$FEATURE_DEMO_ACCEPTANCE_SIGNER" "$payload")
@@ -216,6 +257,8 @@ require_valid_acceptance_marker() {
   local module_id sequence required_result
   for module_id in "${MODULE_IDS[@]}"; do
     required_result="module:$module_id=passed"
+    printf '%s\n' "$MARKER_RESULTS" | grep -Fqx "$required_result" || { echo "Refusing to retire legacy service: missing $required_result." >&2; exit 1; }
+    required_result="evidence=$module_id:primary_behavior"
     printf '%s\n' "$MARKER_RESULTS" | grep -Fqx "$required_result" || { echo "Refusing to retire legacy service: missing $required_result." >&2; exit 1; }
   done
   for sequence in "${HIGH_RISK_SEQUENCES[@]}"; do

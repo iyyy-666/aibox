@@ -37,7 +37,7 @@ MODULES = (
         name="AI 对话助手",
         description="通过文字或语音与本地人工智能模型进行中文对话。",
         category="人工智能",
-        worker="assistant",
+        worker="ai_assistant",
         resources=("microphone", "speaker", "asr", "llm", "tts"),
         commands=("ask", "start_listening", "stop_listening", "interrupt"),
     ),

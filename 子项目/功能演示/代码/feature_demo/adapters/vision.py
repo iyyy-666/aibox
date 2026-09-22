@@ -4,11 +4,12 @@ import importlib.util
 import math
 import os
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,8 @@ class LegacyVisionAdapter:
         self.spec = spec
         self._last_control_at = 0.0
         self._sorting_observer = None
+        self._tracking_lock = threading.RLock()
+        self._tracking_generation = 0
 
     def set_sorting_observer(self, observer) -> None:
         self._sorting_observer = observer
@@ -148,39 +151,63 @@ class LegacyVisionAdapter:
         return annotated, {"result": [_plain_value(item) for item in detections]}
 
     def _process_tracking(self, frame):
-        left, _ = self.module.split_stereo(frame)
-        self.instance.image_size = (left.shape[1], left.shape[0])
-        observations = self.instance.hand_detector.detect(left)
-        boxes = [item.box for item in observations]
-        if self.instance.tracking_enabled:
-            self.instance.current_box = self.instance.target_lock.update(boxes)
-        else:
-            self.instance.current_box = boxes[0] if boxes else None
-        now = time.monotonic()
-        if self.instance.tracking_enabled and self.instance.current_box is not None and now - self._last_control_at >= self.module.CONTROL_INTERVAL_MS / 1000.0:
-            decision = self.instance.controller.update(self.instance.current_box, self.instance.image_size, now)
-            if decision.state == "tracking":
-                ok, detail = self.instance.gimbal.move(decision.yaw_delta_pwm, decision.pitch_delta_pwm, self.module.CONTROL_INTERVAL_MS)
-                if not ok:
-                    self.stop_tracking()
-                    raise RuntimeError(f"云台通信失败：{detail}")
-            self._last_control_at = now
-        annotated = self.instance._annotate(left, self.instance.current_box)
-        return annotated, {"result": "已检测到手掌" if self.instance.current_box else "未检测到手掌", "tracking": self.instance.tracking_enabled}
+        with self._tracking_lock:
+            generation = self._tracking_generation
+            left, _ = self.module.split_stereo(frame)
+            self.instance.image_size = (left.shape[1], left.shape[0])
+            observations = self.instance.hand_detector.detect(left)
+            boxes = [item.box for item in observations]
+            if self.instance.tracking_enabled:
+                self.instance.current_box = self.instance.target_lock.update(boxes)
+            else:
+                self.instance.current_box = boxes[0] if boxes else None
+            now = time.monotonic()
+            if (
+                generation == self._tracking_generation
+                and self.instance.tracking_enabled
+                and self.instance.current_box is not None
+                and now - self._last_control_at
+                >= self.module.CONTROL_INTERVAL_MS / 1000.0
+            ):
+                decision = self.instance.controller.update(
+                    self.instance.current_box, self.instance.image_size, now
+                )
+                if decision.state == "tracking":
+                    ok, detail = self.instance.gimbal.move(
+                        decision.yaw_delta_pwm,
+                        decision.pitch_delta_pwm,
+                        self.module.CONTROL_INTERVAL_MS,
+                    )
+                    if not ok:
+                        self._pause_tracking_locked()
+                        raise RuntimeError(f"云台通信失败：{detail}")
+                self._last_control_at = now
+            annotated = self.instance._annotate(left, self.instance.current_box)
+            return annotated, {
+                "result": "已检测到手掌" if self.instance.current_box else "未检测到手掌",
+                "tracking": self.instance.tracking_enabled,
+            }
+
+    def manual_gimbal_step(self, step: Callable[[], dict]) -> dict:
+        with self._tracking_lock:
+            self._pause_tracking_locked()
+            return step()
 
     def command(self, name: str, payload: dict) -> dict:
         if self.spec.mode == "tracking":
             if name == "start_tracking":
-                box = self.instance.current_box
-                if box is None:
-                    return {"ok": False, "message": "请先将手掌放入画面。"}
-                locked = self.instance.target_lock.arm([box], self.instance.image_size)
-                if locked is None:
-                    return {"ok": False, "message": "手掌目标未能锁定。"}
-                self.instance.current_box = locked
-                self.instance.controller.start(locked, time.monotonic())
-                self.instance.tracking_enabled = True
-                return {"ok": True, "message": "已开始手掌跟踪。"}
+                with self._tracking_lock:
+                    box = self.instance.current_box
+                    if box is None:
+                        return {"ok": False, "message": "请先将手掌放入画面。"}
+                    locked = self.instance.target_lock.arm([box], self.instance.image_size)
+                    if locked is None:
+                        return {"ok": False, "message": "手掌目标未能锁定。"}
+                    self.instance.current_box = locked
+                    self.instance.controller.start(locked, time.monotonic())
+                    self._tracking_generation += 1
+                    self.instance.tracking_enabled = True
+                    return {"ok": True, "message": "已开始手掌跟踪。"}
             if name == "stop_tracking":
                 self.stop_tracking()
                 return {"ok": True, "message": "已停止手掌跟踪。"}
@@ -191,10 +218,15 @@ class LegacyVisionAdapter:
     def stop_tracking(self) -> None:
         if self.spec.mode != "tracking":
             return
+        with self._tracking_lock:
+            self._pause_tracking_locked()
+            self.instance.gimbal.disconnect()
+
+    def _pause_tracking_locked(self) -> None:
+        self._tracking_generation += 1
         self.instance.tracking_enabled = False
         self.instance.target_lock.clear()
         self.instance.controller.stop()
-        self.instance.gimbal.disconnect()
 
     def close(self) -> None:
         if self.spec.mode == "tracking":

@@ -35,6 +35,7 @@ class VisionWorker:
         event_sink: Callable[[dict], None],
         gimbal: DirectionalGimbal | None = None,
         pause_tracking: Callable[[], None] | None = None,
+        manual_gimbal_step: Callable[[Callable[[], dict]], dict] | None = None,
     ) -> None:
         self._adapter = adapter
         self._camera_factory = camera_factory
@@ -42,6 +43,7 @@ class VisionWorker:
         self._event_sink = event_sink
         self._gimbal = gimbal
         self._pause_tracking = pause_tracking
+        self._manual_gimbal_step = manual_gimbal_step
         self._camera: Camera | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -98,9 +100,14 @@ class VisionWorker:
         if name.startswith("gimbal_"):
             if self._gimbal is None:
                 raise RuntimeError("云台服务未配置。")
+            step = lambda: self._gimbal.step(
+                name.removeprefix("gimbal_"), payload.get("amount", 30)
+            )
+            if self._manual_gimbal_step is not None:
+                return self._manual_gimbal_step(step)
             if self._pause_tracking is not None:
                 self._pause_tracking()
-            return self._gimbal.step(name.removeprefix("gimbal_"), payload.get("amount", 30))
+            return step()
         command = getattr(self._adapter, "command", None)
         if not callable(command):
             raise ValueError(f"不支持的视觉命令：{name}")

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from feature_demo import resources
 from feature_demo.registry import get_module
 from feature_demo.resources import DEFAULT_DEVICE_PATHS, ResourceVerifier
 
@@ -68,3 +71,32 @@ def test_resource_verifier_returns_clean_report():
 
     assert report.ok
     assert report.busy_resources == ()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [FileNotFoundError("fuser"), resources.subprocess.TimeoutExpired("fuser", 2)],
+)
+def test_device_probe_failure_is_unknown_instead_of_free(monkeypatch, failure):
+    monkeypatch.setattr(resources.os.path, "exists", lambda _path: True)
+
+    def fail_probe(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(resources.subprocess, "run", fail_probe)
+
+    assert resources._device_in_use("/dev/video41") is None
+
+
+def test_resource_verifier_rejects_unverified_device_state():
+    verifier = ResourceVerifier(
+        pid_exists=lambda pid: False,
+        device_in_use=lambda path: None,
+        device_paths={"camera": ("/dev/video41",)},
+    )
+
+    report = verifier.verify(get_module("color_recognition"), ())
+
+    assert report.ok is False
+    assert report.busy_resources == ()
+    assert report.unverified_resources == ("camera:/dev/video41",)

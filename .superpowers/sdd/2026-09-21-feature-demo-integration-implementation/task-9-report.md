@@ -109,3 +109,34 @@ A parameterized behavioral test was added first for `fruit_recognition` frame fa
 Every critical state, frame, command, and device-owner check in `verify_running_module` now returns immediately on failure, and successful completion returns explicitly. `run_sequence` also returns when a module step fails, independent of caller `set -e` state. The focused regression passed `3`, the complete deployment file passed `22`, and the full unified suite passed `113` with the same two dependency deprecation warnings. `bash -n` and `git diff --check` exited `0`.
 
 Only `/usr/local/bin/feature_demo_hardware_acceptance.sh` was incrementally deployed; its local and board SHA-256 values matched. No full acceptance, reboot, package operation, or legacy retirement was run. Final board state remained `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, 14 legacy desktop entries, and no full-acceptance marker. The camera and dpkg blockers documented above remain unchanged.
+
+## Final Stabilization Round
+
+All fifteen final review findings were closed without changing the approved fruit or shape recognition behavior:
+
+1. Registry worker IDs now round-trip through the runtime factory.
+2. Non-robot voice workers explicitly disable command grammar; robot voice retains its commands.
+3. Object sorting emits one composite readiness event only after both components start.
+4. Ordinary commands are serialized while stop and interrupt commands remain preemptive.
+5. Unexpected worker death is reconciled with stop and release verification before another start.
+6. The singleton lock uses an OS-owned nonblocking descriptor lock and keeps the lock file.
+7. Worker cleanup retains the process-group ID and terminates surviving descendants after leader exit.
+8. Device probing is tri-state; missing probe evidence is unverified and blocks cleanup.
+9. Palm tracking and manual gimbal writes share a lock and tracking generation.
+10. Every visual module renders its non-gimbal primary actions.
+11. Snapshot saving downloads the displayed JPEG locally without issuing a worker command.
+12. Pending ordinary requests leave preemptive controls enabled.
+13. Voice configuration is installed into `/etc/default/feature-demo` and loaded by service and direct launches.
+14. Hardware hooks receive the configured API URL, trust correlated gimbal ACKs, and require primary-behavior evidence plus verified window-close state.
+15. Acceptance markers bind verifier, deterministic application package, hook, board identity, and results hashes; deployment invalidates old markers.
+
+### RED/GREEN Evidence
+
+- Tasks 1-2 focused RED cases covered registry/runtime identity, explicit voice grammar, composite readiness, concurrent control, dead-worker reconciliation, and frontend preemptive state. Their focused suites passed after the minimal implementation.
+- Task 3 focused RED was `6 failed, 23 passed`: persistent file-lock behavior, saved process-group cleanup, both `fuser` failure modes, unverified release, and tracking/manual interleaving. GREEN was `29 passed`.
+- Task 4 focused RED was `2 failed, 12 passed`: the visual action region and local snapshot implementation were absent. GREEN was `14 passed`, and `node --check` exited `0`.
+- Task 5 focused RED was `6 failed, 25 passed`: voice configuration deployment/loading, regular-hook API inheritance, ACK-only gimbal verification, failed window start, missing primary evidence, and stale application hashes. GREEN was `31 passed`.
+
+The consolidated local verification passed: the unified feature-demo suite reported `139 passed`; affected legacy suites reported shared resources `2`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit recognition `2`, and shape recognition `3`. `compileall`, Node syntax, all five shell syntax checks, and `git diff --check` exited `0`.
+
+No board package operation, reboot, full acceptance, or retirement was performed. Incremental deployment was limited to 18 changed production and configuration artifacts; every local/deployed SHA-256 pair matched. The pre-deployment copies are under `/root/feature-demo-backups/final-stabilization-20260922_030334`. The final read-only board audit retained `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, all 14 legacy desktop entries, and no acceptance marker. `/dev/video41` remains absent while `/dev/video42` and `/dev/video43` are present; `dpkg --audit` still reports incomplete `initramfs-tools` configuration and a pending `flash-kernel` trigger.

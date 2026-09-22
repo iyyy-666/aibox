@@ -98,8 +98,41 @@ def test_assistant_rejects_empty_questions_and_commands_disable_in_flight(app_ja
     assert "finally" in app_javascript
 
 
-def test_command_request_locks_every_command_without_overriding_lifecycle_lock(app_javascript):
+def test_command_request_locks_ordinary_commands_without_overriding_lifecycle_lock(app_javascript):
     assert "appState.commandRequestPending = true" in app_javascript
     assert "appState.commandRequestPending = false" in app_javascript
-    assert "lifecycleControlsDisabled || appState.commandRequestPending" in app_javascript
+    assert "appState.lifecycleControlsDisabled || (" in app_javascript
     assert 'document.querySelectorAll("[data-command]")' in app_javascript
+
+
+def test_preemptive_controls_remain_available_during_long_commands(app_javascript):
+    assert "preemptiveCommands" in app_javascript
+    assert "preemptiveCommands.has(control.dataset.command)" in app_javascript
+
+
+def test_visual_workspace_renders_module_specific_non_gimbal_actions(
+    web_document, app_javascript
+):
+    assert web_document.select_one("[data-visual-actions]")
+    assert "renderVisualActions(module)" in app_javascript
+    assert '!name.startsWith("gimbal_")' in app_javascript
+    assert 'button.dataset.localAction = "save_snapshot"' in app_javascript
+
+
+def test_snapshot_action_downloads_the_displayed_frame_without_api_command(
+    app_javascript,
+):
+    start = app_javascript.index("function saveSnapshot")
+    end = app_javascript.index("\nasync function ", start + 1)
+    implementation = app_javascript[start:end]
+
+    assert 'document.querySelector("[data-camera-frame]")' in implementation
+    assert "link.download" in implementation
+    assert '`${appState.active.module_id}-${Date.now()}.jpg`' in implementation
+    assert "link.click()" in implementation
+    assert "/commands/" not in implementation
+
+
+def test_visual_preemptive_actions_share_per_command_disabled_state(app_javascript):
+    assert 'document.querySelectorAll("[data-command]")' in app_javascript
+    assert "appState.commandRequestPending && !preemptiveCommands.has" in app_javascript

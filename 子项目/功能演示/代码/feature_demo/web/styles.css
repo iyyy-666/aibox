@@ -131,7 +131,7 @@ main { min-width: 0; }
 .guide-panel { padding: 24px 22px 36px 28px; background: #f8fafc; border-right: 1px solid var(--line); }
 .module-description { margin: 0 0 25px; color: #40566b; font-size: 14px; line-height: 1.7; }
 .guide-panel section + section { margin-top: 25px; }
-.guide-panel h2, .result-panel h2, .gimbal-panel h2, .activity-panel h2 { margin: 0 0 10px; font-size: 13px; }
+.guide-panel h2, .result-panel h2, .gimbal-panel h2, .visual-action-panel h2, .activity-panel h2 { margin: 0 0 10px; font-size: 13px; }
 .guide-panel ol { margin: 0; padding-left: 22px; color: var(--muted); font-size: 12px; }
 .guide-panel li { padding: 3px 0 6px 4px; }
 .guide-panel li::marker { color: var(--blue); font-weight: 700; }
@@ -154,7 +154,11 @@ main { min-width: 0; }
 .live-label { position: absolute; top: 10px; left: 10px; padding: 4px 7px; color: #fff; background: rgba(18,37,52,.82); border-radius: 4px; font-size: 10px; }
 .live-label::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; background: #42c990; border-radius: 50%; }
 .vision-side { display: grid; gap: 12px; }
-.result-panel, .gimbal-panel, .activity-panel { background: #fff; border: 1px solid var(--line); border-radius: 7px; }
+.result-panel, .gimbal-panel, .visual-action-panel, .activity-panel { background: #fff; border: 1px solid var(--line); border-radius: 7px; }
+.visual-action-panel { padding: 14px; }
+.visual-actions { display: grid; gap: 7px; }
+.visual-actions:empty::after { content: "当前功能无额外操作"; color: var(--muted); font-size: 11px; }
+.visual-actions .command-button { width: 100%; }
 .result-panel { min-height: 150px; padding: 14px; }
 .result-empty { display: grid; place-items: center; min-height: 94px; color: var(--muted); background: #f5f8fa; border-radius: 5px; font-size: 11px; text-align: center; }
 .gimbal-panel { padding: 14px; }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import threading
 
 from feature_demo.workers import runtime
 from feature_demo.workers.runtime import create_vision_worker
@@ -119,4 +120,108 @@ def test_worker_entry_correlates_command_result_and_error(monkeypatch):
         "type": "error",
         "request_id": "req-fail",
         "message": "physical command failed",
+    }
+
+
+def test_object_sorting_does_not_emit_component_ready_before_camera_failure(
+    monkeypatch,
+):
+    events = []
+
+    class RobotComponent:
+        def __init__(self, _adapter, *, event_sink):
+            self._event_sink = event_sink
+
+        def start(self):
+            self._event_sink({"type": "ready", "message": "robot ready"})
+
+        def stop(self):
+            return None
+
+        def stop_motion(self):
+            return None
+
+        def disconnect(self):
+            return None
+
+        def command(self, _name, _payload):
+            return {"ok": True}
+
+    class FailingVisionComponent:
+        def start(self):
+            raise RuntimeError("camera unavailable")
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(runtime, "RobotWorker", RobotComponent)
+    monkeypatch.setattr(
+        runtime,
+        "create_vision_worker",
+        lambda *_args, **_kwargs: FailingVisionComponent(),
+    )
+    worker = runtime.create_worker(
+        "object_sorting",
+        event_sink=events.append,
+        robot_adapter=object(),
+        adapter_builder=lambda _module_id: object(),
+    )
+
+    try:
+        worker.start()
+    except RuntimeError as exc:
+        assert str(exc) == "camera unavailable"
+    else:
+        raise AssertionError("camera startup failure must propagate")
+    assert [event for event in events if event.get("type") == "ready"] == []
+
+
+def test_worker_runtime_processes_control_while_ordinary_command_is_blocked(
+    monkeypatch,
+):
+    events = []
+    ordinary_started = threading.Event()
+    release_ordinary = threading.Event()
+    control_seen = threading.Event()
+
+    class BlockingCommandWorker:
+        last_event = {"type": "ready"}
+
+        def start(self):
+            return None
+
+        def command(self, name, payload):
+            if name == "sequence":
+                ordinary_started.set()
+                release_ordinary.wait(timeout=2)
+            if name == "stop_motion":
+                control_seen.set()
+                release_ordinary.set()
+            return {"ok": True, "name": name, "payload": payload}
+
+        def stop(self):
+            release_ordinary.set()
+            self.last_event = {"type": "stopped"}
+
+    requests = (
+        '{"request_id":"ordinary","command":"sequence","payload":{}}\n'
+        '{"request_id":"control","command":"stop_motion","payload":{}}\n'
+    )
+    monkeypatch.setattr(
+        runtime, "create_worker", lambda *_args, **_kwargs: BlockingCommandWorker()
+    )
+    monkeypatch.setattr(runtime, "emit_json", events.append)
+    monkeypatch.setattr(runtime.sys, "stdin", io.StringIO(requests))
+    run = threading.Thread(target=lambda: runtime.run_worker("robot_button"))
+    run.start()
+    assert ordinary_started.wait(timeout=1)
+
+    try:
+        assert control_seen.wait(timeout=0.2)
+    finally:
+        release_ordinary.set()
+        run.join(timeout=1)
+    assert {event.get("request_id") for event in events} >= {
+        "ordinary",
+        "control",
     }
