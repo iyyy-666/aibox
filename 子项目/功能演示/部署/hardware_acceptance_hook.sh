@@ -83,42 +83,43 @@ verify_visual_frame() {
 
 verify_running_module() {
   local module_id="$1"
-  wait_for_state "$module_id" running
+  wait_for_state "$module_id" running || return
   if [[ " $VISUAL_MODULES " == *" $module_id "* ]]; then
-    wait_for_device_owner "$CAMERA_DEVICE"
-    verify_visual_frame "$module_id"
-    post_command "$module_id" gimbal_left '{"amount":1}'
-    wait_for_device_owner "$GIMBAL_DEVICE"
-    post_command "$module_id" gimbal_right '{"amount":1}'
+    wait_for_device_owner "$CAMERA_DEVICE" || return
+    verify_visual_frame "$module_id" || return
+    post_command "$module_id" gimbal_left '{"amount":1}' || return
+    wait_for_device_owner "$GIMBAL_DEVICE" || return
+    post_command "$module_id" gimbal_right '{"amount":1}' || return
   fi
   case "$module_id" in
     ai_assistant)
-      post_command "$module_id" start_listening
-      wait_for_device_owner "$MIC_DEVICE"
+      post_command "$module_id" start_listening || return
+      wait_for_device_owner "$MIC_DEVICE" || return
       ;;
     voice_input_test)
-      wait_for_device_owner "$MIC_DEVICE"
+      wait_for_device_owner "$MIC_DEVICE" || return
       ;;
     robot_button)
-      wait_for_device_owner "$ROBOT_DEVICE"
-      post_command "$module_id" stop_motion
+      wait_for_device_owner "$ROBOT_DEVICE" || return
+      post_command "$module_id" stop_motion || return
       ;;
     voice_robot_arm)
-      wait_for_device_owner "$MIC_DEVICE"
-      wait_for_device_owner "$ROBOT_DEVICE"
-      post_command "$module_id" stop_motion
+      wait_for_device_owner "$MIC_DEVICE" || return
+      wait_for_device_owner "$ROBOT_DEVICE" || return
+      post_command "$module_id" stop_motion || return
       ;;
     object_sorting)
-      wait_for_device_owner "$ROBOT_DEVICE"
-      post_command "$module_id" stop_sorting
+      wait_for_device_owner "$ROBOT_DEVICE" || return
+      post_command "$module_id" stop_sorting || return
       ;;
     nursery_rhyme)
-      wait_for_device_owner "$MIC_DEVICE"
-      post_command "$module_id" play '{"song_id":"twinkle"}'
-      wait_for_device_owner "$SPEAKER_DEVICE"
-      post_command "$module_id" stop_playback
+      wait_for_device_owner "$MIC_DEVICE" || return
+      post_command "$module_id" play '{"song_id":"twinkle"}' || return
+      wait_for_device_owner "$SPEAKER_DEVICE" || return
+      post_command "$module_id" stop_playback || return
       ;;
   esac
+  return 0
 }
 
 stop_module_and_release() {
@@ -156,7 +157,7 @@ run_sequence() {
   [[ -n "$RESULT_FILE" ]] || { echo "Sequence result file is required." >&2; exit 2; }
   printf 'scenario=high-risk-sequence\nsequence=%s\n' "$sequence_csv" > "$RESULT_FILE"
   for module_id in ${sequence_csv//,/ }; do
-    run_sequence_step "$module_id"
+    run_sequence_step "$module_id" || return
   done
   printf 'resources_released=true\n' >> "$RESULT_FILE"
 }

@@ -99,3 +99,13 @@ Only the three changed production files were incrementally deployed: `/root/robo
 - `/var/lib/feature-demo/full-acceptance.marker`: absent
 
 The external camera blocker remains: `/dev/video41` is absent and the camera is enumerated as `/dev/video42` and `/dev/video43`. The existing package-management blocker also remains: `initramfs-tools` is incompletely configured and the `flash-kernel` trigger is pending. No corrective package action was attempted.
+
+## Fix Round 2
+
+The review identified a Bash context bug: because `verify_running_module` and `run_sequence_step` were used on the left side of `||`, callers could disable inherited `errexit`. Later successful commands then masked failed frame, gimbal, or speaker checks.
+
+A parameterized behavioral test was added first for `fruit_recognition` frame failure, `face_detection` gimbal-command failure, and `nursery_rhyme` speaker-owner failure. All three RED cases failed because the sequence returned success, while their traces confirmed a stop request still occurred. The first minimal propagation change exposed the outer `run_sequence` masking boundary; adding explicit propagation there completed the fix.
+
+Every critical state, frame, command, and device-owner check in `verify_running_module` now returns immediately on failure, and successful completion returns explicitly. `run_sequence` also returns when a module step fails, independent of caller `set -e` state. The focused regression passed `3`, the complete deployment file passed `22`, and the full unified suite passed `113` with the same two dependency deprecation warnings. `bash -n` and `git diff --check` exited `0`.
+
+Only `/usr/local/bin/feature_demo_hardware_acceptance.sh` was incrementally deployed; its local and board SHA-256 values matched. No full acceptance, reboot, package operation, or legacy retirement was run. Final board state remained `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, 14 legacy desktop entries, and no full-acceptance marker. The camera and dpkg blockers documented above remain unchanged.
