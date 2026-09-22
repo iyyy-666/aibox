@@ -329,6 +329,7 @@ def test_nursery_play_event_and_result_include_legacy_english_lyrics(tmp_path: P
 
 def test_voice_robot_arm_uses_legacy_command_match_and_all_center() -> None:
     calls: list[str] = []
+    events: list[dict] = []
     pcm = FakePCM(calls)
     adapter = RobotAdapter(
         serial_factory=lambda: FakeSerial(calls),
@@ -336,7 +337,7 @@ def test_voice_robot_arm_uses_legacy_command_match_and_all_center() -> None:
     )
     worker = VoiceWorker(
         "voice_robot_arm",
-        event_sink=lambda _event: None,
+        event_sink=events.append,
         engine_factory=FakeEngine,
         pcm_factory=lambda: pcm,
         robot_adapter=adapter,
@@ -346,6 +347,10 @@ def test_voice_robot_arm_uses_legacy_command_match_and_all_center() -> None:
     worker._handle_text("回到中间", "回到中间")
 
     assert "center" in calls
+    assert events[-1]["type"] == "robot_action"
+    assert events[-1]["recognized"] == "复位"
+    assert events[-1]["command"] == "center"
+    assert events[-1]["ok"] is True
     worker.stop()
 
 

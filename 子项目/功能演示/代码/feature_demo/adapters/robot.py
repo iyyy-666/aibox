@@ -29,6 +29,7 @@ class RobotAdapter:
         self._serial = None
         self._robot = None
         self._lock = threading.RLock()
+        self._stop_lock = threading.Lock()
         self._transfer_finished = threading.Condition(self._lock)
         self._active_transfers = 0
 
@@ -53,6 +54,14 @@ class RobotAdapter:
     def command(self, name: str, payload: dict) -> dict:
         if name == "sorting_transfer":
             return self._sorting_transfer(payload)
+        if name == "stop_motion":
+            ok = self._stop_motion_now()
+            return {
+                "ok": bool(ok),
+                "command": name,
+                "result": "停止",
+                "message": "机械臂命令已执行。" if ok else "机械臂未能执行该命令。",
+            }
         with self._lock:
             if self._robot is None:
                 raise RuntimeError("机械臂当前未连接。")
@@ -81,9 +90,6 @@ class RobotAdapter:
                     raise ValueError("夹爪命令必须是 open、close 或 half。")
                 ok = method()
                 label = action
-            elif name == "stop_motion":
-                ok = robot.stop()
-                label = "停止"
             elif name == "center":
                 ok = robot.all_center()
                 label = "center"
@@ -122,9 +128,14 @@ class RobotAdapter:
         }
 
     def stop_motion(self) -> None:
-        with self._lock:
-            if self._robot is not None:
-                self._robot.stop()
+        self._stop_motion_now()
+
+    def _stop_motion_now(self) -> bool:
+        # The legacy robot stop flag must be set while a synchronous sequence is
+        # still running. Its SerialDriver serializes the emergency serial write.
+        with self._stop_lock:
+            robot = self._robot
+            return True if robot is None else bool(robot.stop())
 
     def disconnect(self) -> None:
         with self._transfer_finished:

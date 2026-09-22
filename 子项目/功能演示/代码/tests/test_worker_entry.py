@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import threading
 
+from feature_demo.adapters.robot import RobotAdapter
+from feature_demo.workers.robot import RobotWorker
 from feature_demo.workers import runtime
 from feature_demo.workers.runtime import create_vision_worker
 
@@ -176,6 +178,62 @@ def test_object_sorting_does_not_emit_component_ready_before_camera_failure(
     assert [event for event in events if event.get("type") == "ready"] == []
 
 
+def test_object_sorting_emits_one_ready_after_both_components_start(monkeypatch):
+    events = []
+    starts = []
+
+    class RobotComponent:
+        def __init__(self, _adapter, *, event_sink):
+            self._event_sink = event_sink
+
+        def start(self):
+            starts.append("robot")
+            self._event_sink({"type": "ready", "message": "robot ready"})
+
+        def stop(self):
+            return None
+
+        def stop_motion(self):
+            return None
+
+        def disconnect(self):
+            return None
+
+        def command(self, _name, _payload):
+            return {"ok": True}
+
+    class VisionComponent:
+        def __init__(self, event_sink):
+            self._event_sink = event_sink
+
+        def start(self):
+            starts.append("vision")
+            self._event_sink({"type": "ready", "message": "vision ready"})
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(runtime, "RobotWorker", RobotComponent)
+    monkeypatch.setattr(
+        runtime,
+        "create_vision_worker",
+        lambda *_args, **kwargs: VisionComponent(kwargs["event_sink"]),
+    )
+    worker = runtime.create_worker(
+        "object_sorting",
+        event_sink=events.append,
+        robot_adapter=object(),
+        adapter_builder=lambda _module_id: object(),
+    )
+
+    worker.start()
+
+    assert starts == ["robot", "vision"]
+    assert [event["message"] for event in events if event.get("type") == "ready"] == [
+        "物体分拣已准备就绪。"
+    ]
+
+
 def test_worker_runtime_processes_control_while_ordinary_command_is_blocked(
     monkeypatch,
 ):
@@ -225,3 +283,61 @@ def test_worker_runtime_processes_control_while_ordinary_command_is_blocked(
         "ordinary",
         "control",
     }
+
+
+def test_runtime_stop_motion_preempts_real_robot_adapter_sequence(monkeypatch):
+    events = []
+    sequence_started = threading.Event()
+    stop_called = threading.Event()
+    release_sequence = threading.Event()
+
+    class Serial:
+        connected = False
+
+        def connect(self):
+            self.connected = True
+            return True
+
+        def disconnect(self):
+            self.connected = False
+
+    class Robot:
+        def __init__(self, _serial):
+            pass
+
+        def execute_sequence(self, _name):
+            sequence_started.set()
+            release_sequence.wait(timeout=2)
+            return not stop_called.is_set()
+
+        def stop(self):
+            stop_called.set()
+            release_sequence.set()
+            return True
+
+    worker = RobotWorker(
+        RobotAdapter(serial_factory=Serial, robot_factory=Robot),
+        event_sink=lambda event: None,
+    )
+    requests = (
+        '{"request_id":"sequence","command":"sequence","payload":{"name":"move"}}\n'
+        '{"request_id":"stop","command":"stop_motion","payload":{}}\n'
+    )
+    monkeypatch.setattr(runtime, "create_worker", lambda *_args, **_kwargs: worker)
+    monkeypatch.setattr(runtime, "emit_json", events.append)
+    monkeypatch.setattr(runtime.sys, "stdin", io.StringIO(requests))
+
+    run = threading.Thread(target=lambda: runtime.run_worker("robot_button"))
+    run.start()
+    try:
+        assert sequence_started.wait(timeout=1)
+        assert stop_called.wait(timeout=0.2)
+    finally:
+        release_sequence.set()
+        run.join(timeout=1)
+
+    assert not run.is_alive()
+    results = {event.get("request_id"): event for event in events}
+    assert results["stop"]["type"] == "command_result"
+    assert results["stop"]["ok"] is True
+    assert results["sequence"]["ok"] is False

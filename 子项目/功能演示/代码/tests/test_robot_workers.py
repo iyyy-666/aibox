@@ -84,6 +84,26 @@ class BlockingTransferRobot(FakeRobot):
         return True
 
 
+class BlockingSequenceRobot(FakeRobot):
+    def __init__(self, serial, calls):
+        super().__init__(serial, calls)
+        self.sequence_started = threading.Event()
+        self.stop_called = threading.Event()
+        self.release_sequence = threading.Event()
+
+    def execute_sequence(self, name):
+        self.calls.append(("sequence", name))
+        self.sequence_started.set()
+        self.release_sequence.wait(timeout=2.0)
+        return not self.stop_called.is_set()
+
+    def stop(self):
+        self.calls.append("stop_motion")
+        self.stop_called.set()
+        self.release_sequence.set()
+        return True
+
+
 class FakeVisionWorker:
     def __init__(self):
         self.started = False
@@ -317,6 +337,41 @@ def test_stop_motion_preempts_blocking_transfer_before_disconnect():
     assert not transfer.is_alive()
     assert not stopper.is_alive()
     assert calls.index("stop_motion") < calls.index("disconnect")
+
+
+def test_stop_motion_preempts_blocking_sequence_through_robot_worker():
+    calls = []
+    created = []
+    worker = RobotWorker(
+        RobotAdapter(
+            serial_factory=lambda: FakeSerial(calls),
+            robot_factory=lambda serial: created.append(
+                BlockingSequenceRobot(serial, calls)
+            )
+            or created[-1],
+        ),
+        event_sink=lambda event: None,
+    )
+    worker.start()
+    robot = created[0]
+    sequence = threading.Thread(
+        target=lambda: worker.command("sequence", {"name": "搬运"})
+    )
+    sequence.start()
+    assert robot.sequence_started.wait(timeout=1.0)
+
+    stopper = threading.Thread(target=worker.stop_motion)
+    stopper.start()
+    try:
+        assert robot.stop_called.wait(timeout=0.2)
+    finally:
+        robot.release_sequence.set()
+        sequence.join(timeout=1.0)
+        stopper.join(timeout=1.0)
+        worker.disconnect()
+
+    assert not sequence.is_alive()
+    assert not stopper.is_alive()
 
 
 def test_object_sorting_stop_requests_robot_stop_before_vision_shutdown():

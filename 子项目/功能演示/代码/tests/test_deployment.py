@@ -291,6 +291,10 @@ SPEAKER_DEVICE=/dev/test-speaker
 wait_for_state() {{ return 0; }}
 wait_for_device_owner() {{ printf 'owner=%s\n' "$1" >> "$TRACE"; }}
 post_command() {{ printf 'command=%s\n' "$2" >> "$TRACE"; }}
+post_command_json() {{ printf 'command=%s\n' "$2" >> "$TRACE"; printf '{{"ok":true,"token":9}}'; }}
+current_event_sequence() {{ printf '10\n'; }}
+wait_for_behavior_event() {{ printf 'evidence=%s\n' "$2" >> "$TRACE"; printf '11\n'; }}
+require_operator_confirmation() {{ printf 'operator=%s\n' "$1" >> "$TRACE"; EVIDENCE_OPERATOR=confirmed; }}
 sleep() {{ :; }}
 verify_running_module nursery_rhyme''',
     )
@@ -299,7 +303,9 @@ verify_running_module nursery_rhyme''',
     assert Path(trace).read_text(encoding="utf-8").splitlines() == [
         "owner=/dev/test-mic",
         "command=play",
+        "evidence=playback_started",
         "owner=/dev/test-speaker",
+        "operator=nursery_rhyme",
         "command=stop_playback",
     ]
 
@@ -381,6 +387,8 @@ wait_for_state() {{ return 0; }}
 wait_for_device_owner() {{ printf '%s\n' "$1" >> "$TRACE"; [[ "$1" != "$GIMBAL_DEVICE" ]]; }}
 verify_visual_frame() {{ return 0; }}
 post_command() {{ return 0; }}
+current_event_sequence() {{ printf '10\n'; }}
+wait_for_behavior_event() {{ printf '11\n'; }}
 verify_running_module face_detection''',
     )
 
@@ -425,6 +433,127 @@ set +e
 run_module_lifecycle demo
 rc=$?
 set -e
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("behavior", "expected", "event"),
+    [
+        ("assistant_reply", "7", {"_sequence": 11, "type": "assistant_reply", "ok": True, "turn": 7, "text": "验收回答"}),
+        ("speech_result", "test", {"_sequence": 12, "type": "speech", "normalized": "test phrase"}),
+        ("playback_started", "9", {"_sequence": 13, "type": "playing", "ok": True, "token": 9, "song": "小星星"}),
+        ("robot_action", "joint_step", {"_sequence": 14, "type": "result", "ok": True, "command": "joint_step"}),
+        ("sorting_result", "", {"_sequence": 15, "type": "sorting_result", "ok": True, "color": "red", "side": "left"}),
+        ("tracking_motion", "", {"_sequence": 16, "type": "frame", "tracking": True, "tracking_action": {"state": "moved"}}),
+        ("recognition_result", "", {"_sequence": 17, "type": "frame", "result": [{"label": "apple"}]}),
+    ],
+)
+def test_hardware_hook_accepts_fresh_matching_behavior_event(
+    tmp_path, behavior, expected, event
+):
+    import json
+
+    payload = json.dumps({"details": {"recent_events": [event]}}, ensure_ascii=False)
+    result = run_hook_bash(
+        tmp_path,
+        f'''printf '%s' '{payload}' | match_behavior_event '{behavior}' '{expected}' 10''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(event["_sequence"])
+
+
+@pytest.mark.parametrize(
+    ("behavior", "expected", "event"),
+    [
+        ("assistant_reply", "7", {"_sequence": 10, "type": "assistant_reply", "ok": True, "turn": 7, "text": "stale"}),
+        ("speech_result", "测试", {"_sequence": 11, "type": "speech", "normalized": "别的内容"}),
+        ("playback_started", "9", {"_sequence": 11, "type": "playing", "ok": True, "token": 8}),
+        ("robot_action", "joint_step", {"_sequence": 11, "type": "result", "ok": False, "command": "joint_step"}),
+        ("sorting_result", "", {"_sequence": 11, "type": "sorting_result", "ok": True, "color": "red", "side": "right"}),
+        ("tracking_motion", "", {"_sequence": 11, "type": "frame", "tracking": True}),
+        ("recognition_result", "", {"_sequence": 11, "type": "frame", "result": []}),
+    ],
+)
+def test_hardware_hook_rejects_stale_or_nonmatching_behavior_event(
+    tmp_path, behavior, expected, event
+):
+    import json
+
+    payload = json.dumps({"details": {"recent_events": [event]}}, ensure_ascii=False)
+    result = run_hook_bash(
+        tmp_path,
+        f'''set +e
+printf '%s' '{payload}' | match_behavior_event '{behavior}' '{expected}' 10
+rc=$?
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("module_id", "behavior", "source", "operator_required"),
+    [
+        ("ai_assistant", "assistant_reply", "event", False),
+        ("object_sorting", "sorting_result", "event", True),
+        ("plate_recognition", "recognition_result", "event", False),
+        ("palm_recognition", "recognition_result", "event", False),
+        ("palm_tracking", "tracking_motion", "event", True),
+        ("voice_input_test", "speech_result", "event", False),
+        ("fruit_recognition", "recognition_result", "event", False),
+        ("color_recognition", "recognition_result", "event", False),
+        ("face_detection", "recognition_result", "event", False),
+        ("robot_button", "robot_action", "event", True),
+        ("nursery_rhyme", "playback_started", "event", True),
+        ("shape_recognition", "recognition_result", "event", False),
+        ("voice_robot_arm", "robot_action", "event", True),
+    ],
+)
+def test_verifier_accepts_module_specific_correlated_evidence(
+    tmp_path, module_id, behavior, source, operator_required
+):
+    result_file = tmp_path / "module-result.txt"
+    operator_line = "operator_evidence=confirmed\n" if operator_required else ""
+    result_file.write_text(
+        f"scenario=module\nmodule={module_id}\n"
+        f"evidence_behavior={behavior}\nevidence_source={source}\n"
+        f"evidence_correlation=17\n{operator_line}",
+        encoding="utf-8",
+    )
+    result = run_verifier_bash(
+        tmp_path,
+        f'''validate_module_evidence "{result_file.as_posix()}" "{module_id}"''',
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "invalid_body",
+    [
+        "evidence=demo:primary_behavior\n",
+        "evidence_behavior=recognition_result\nevidence_source=event\nevidence_correlation=\n",
+        "evidence_behavior=assistant_reply\nevidence_source=label\nevidence_correlation=17\n",
+        "evidence_behavior=robot_action\nevidence_source=event\nevidence_correlation=17\n",
+    ],
+)
+def test_verifier_rejects_label_only_or_invalid_module_evidence(
+    tmp_path, invalid_body
+):
+    result_file = tmp_path / "invalid-result.txt"
+    result_file.write_text(
+        "scenario=module\nmodule=ai_assistant\n" + invalid_body,
+        encoding="utf-8",
+    )
+    result = run_verifier_bash(
+        tmp_path,
+        f'''set +e
+validate_module_evidence "{result_file.as_posix()}" ai_assistant
+rc=$?
 test "$rc" -ne 0''',
     )
 

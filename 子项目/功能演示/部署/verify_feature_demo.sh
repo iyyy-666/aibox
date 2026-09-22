@@ -119,6 +119,38 @@ validate_hook_result() {
   done
 }
 
+module_evidence_spec() {
+  case "$1" in
+    ai_assistant) printf 'assistant_reply event no\n' ;;
+    object_sorting) printf 'sorting_result event yes\n' ;;
+    plate_recognition|palm_recognition|fruit_recognition|color_recognition|face_detection|shape_recognition) printf 'recognition_result event no\n' ;;
+    palm_tracking) printf 'tracking_motion event yes\n' ;;
+    voice_input_test) printf 'speech_result event no\n' ;;
+    robot_button|voice_robot_arm) printf 'robot_action event yes\n' ;;
+    nursery_rhyme) printf 'playback_started event yes\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_module_evidence() {
+  local result_file="$1" module_id="$2" expected_behavior expected_source operator_required correlation
+  read -r expected_behavior expected_source operator_required < <(module_evidence_spec "$module_id") || {
+    echo "No acceptance evidence specification for $module_id." >&2
+    return 1
+  }
+  validate_hook_result "$result_file" \
+    "scenario=module" "module=$module_id" \
+    "evidence_behavior=$expected_behavior" "evidence_source=$expected_source" || return
+  correlation=$(sed -n 's/^evidence_correlation=//p' "$result_file")
+  [[ "$correlation" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Hardware hook result has invalid event correlation for $module_id." >&2
+    return 1
+  }
+  if [[ "$operator_required" == yes ]]; then
+    validate_hook_result "$result_file" "operator_evidence=confirmed" || return
+  fi
+}
+
 run_hardware_hook_with_result() {
   local scenario="$1" result_file
   shift
@@ -128,13 +160,12 @@ run_hardware_hook_with_result() {
 }
 
 run_module_lifecycle() {
-  local module_id="$1" result_file
+  local module_id="$1" result_file behavior source operator_required
   echo "Lifecycle: $module_id"
   start_module_running "$module_id"
   ACTIVE_MODULE="$module_id"
   result_file=$(run_hardware_hook_with_result module "$module_id") || return
-  if ! validate_hook_result "$result_file" \
-    "scenario=module" "module=$module_id" "evidence=$module_id:primary_behavior"; then
+  if ! validate_module_evidence "$result_file" "$module_id"; then
     rm -f "$result_file"
     cleanup_active_module
     return 1
@@ -143,8 +174,10 @@ run_module_lifecycle() {
   curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$API_URL/api/modules/$module_id/stop" >/dev/null
   ACTIVE_MODULE=""
   resources_are_released
+  read -r behavior source operator_required < <(module_evidence_spec "$module_id")
   record_acceptance_result "module:$module_id=passed"
-  record_acceptance_result "evidence=$module_id:primary_behavior"
+  record_acceptance_result "evidence=$module_id:$behavior:$source:correlated"
+  [[ "$operator_required" != yes ]] || record_acceptance_result "operator-evidence:$module_id=confirmed"
 }
 
 verify_all_module_lifecycles() {
@@ -254,12 +287,17 @@ require_valid_acceptance_marker() {
   [[ "$results_hash" == "$actual_results_hash" ]] || { echo "Refusing to retire legacy service: marker acceptance results are invalid." >&2; exit 1; }
   expected_signature=$("$FEATURE_DEMO_ACCEPTANCE_SIGNER" "$payload")
   [[ -n "$signature" && "$signature" == "$expected_signature" ]] || { echo "Refusing to retire legacy service: marker signature is invalid." >&2; exit 1; }
-  local module_id sequence required_result
+  local module_id sequence required_result behavior source operator_required
   for module_id in "${MODULE_IDS[@]}"; do
     required_result="module:$module_id=passed"
     printf '%s\n' "$MARKER_RESULTS" | grep -Fqx "$required_result" || { echo "Refusing to retire legacy service: missing $required_result." >&2; exit 1; }
-    required_result="evidence=$module_id:primary_behavior"
+    read -r behavior source operator_required < <(module_evidence_spec "$module_id")
+    required_result="evidence=$module_id:$behavior:$source:correlated"
     printf '%s\n' "$MARKER_RESULTS" | grep -Fqx "$required_result" || { echo "Refusing to retire legacy service: missing $required_result." >&2; exit 1; }
+    if [[ "$operator_required" == yes ]]; then
+      required_result="operator-evidence:$module_id=confirmed"
+      printf '%s\n' "$MARKER_RESULTS" | grep -Fqx "$required_result" || { echo "Refusing to retire legacy service: missing $required_result." >&2; exit 1; }
+    fi
   done
   for sequence in "${HIGH_RISK_SEQUENCES[@]}"; do
     required_result="sequence:${sequence// /,}=passed"

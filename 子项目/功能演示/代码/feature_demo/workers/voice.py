@@ -316,11 +316,20 @@ class VoiceWorker:
             return
         command, payload = ROBOT_COMMANDS[text]
         if command == "center":
-            self._robot.command("center", {})
+            result = self._robot.command("center", {})
         elif command == "stop_motion":
             self._stop_robot_now()
+            result = {"ok": True, "command": command}
         else:
-            self._robot.command(command, payload)
+            result = self._robot.command(command, payload)
+        self._emit(
+            {
+                "type": "robot_action",
+                "recognized": text,
+                "command": command,
+                **result,
+            }
+        )
 
     def _stop_robot_now(self) -> None:
         if self._robot is not None:

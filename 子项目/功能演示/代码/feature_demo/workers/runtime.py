@@ -125,7 +125,7 @@ def create_worker(
         module_id,
         cv2_module=cv2_module,
         adapter_builder=lambda _: adapter,
-        event_sink=event_sink,
+        event_sink=component_event_sink,
         gimbal=gimbal,
     )
     return ObjectSortingWorker(
