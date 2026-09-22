@@ -33,6 +33,7 @@ def _default_worker_factory(
             "PYTHONUNBUFFERED": "1",
             CAMERA_DEVICE_ENV: selected_camera,
         },
+        start_timeout=module.startup_timeout,
     )
 
 

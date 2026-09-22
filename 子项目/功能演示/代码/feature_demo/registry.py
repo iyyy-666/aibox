@@ -78,6 +78,7 @@ MODULES = (
         worker="voice_input_test",
         resources=("microphone", "asr"),
         commands=("start_listening", "stop_listening"),
+        startup_timeout=60.0,
     ),
     _visual(
         "fruit_recognition",
@@ -117,6 +118,7 @@ MODULES = (
         worker="nursery_rhyme",
         resources=("microphone", "speaker", "asr", "tts"),
         commands=("start_listening", "stop_listening", "play", "stop_playback"),
+        startup_timeout=60.0,
     ),
     _visual(
         "shape_recognition",
