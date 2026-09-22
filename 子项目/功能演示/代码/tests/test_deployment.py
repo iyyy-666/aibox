@@ -9,6 +9,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "部署"
+CAPTURE_CAPABILITY_STUB = '''
+udevadm() { printf 'ID_V4L_CAPABILITIES=:capture:\n'; }
+v4l2-ctl() { return 1; }
+'''
 
 
 def run_hook_bash(
@@ -16,6 +20,7 @@ def run_hook_bash(
     body: str,
     *,
     environment: dict[str, str] | None = None,
+    prelude: str = CAPTURE_CAPABILITY_STUB,
 ) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
     if not Path(bash).is_file():
@@ -24,6 +29,7 @@ def run_hook_bash(
     python = Path(sys.executable).as_posix()
     script = (
         f'python3() {{ "{python}" "$@"; }}\n'
+        f"{prelude}\n"
         f'source <(sed \'/^case "${{1:-}}" in/,$d\' "{hook}")\n{body}'
     )
     return subprocess.run(
@@ -43,6 +49,7 @@ def run_verifier_bash(
     body: str,
     *,
     environment: dict[str, str] | None = None,
+    prelude: str = CAPTURE_CAPABILITY_STUB,
 ) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
     if not Path(bash).is_file():
@@ -51,6 +58,7 @@ def run_verifier_bash(
     python = Path(sys.executable).as_posix()
     script = (
         f'python3() {{ "{python}" "$@"; }}\n'
+        f"{prelude}\n"
         f'source <(sed \'/^check_api$/,$d\' "{verifier}")\n'
         f'ACTIVE_MODULE=""\n{body}'
     )
@@ -230,22 +238,101 @@ def test_verifier_and_hardware_hook_use_the_same_camera_override(tmp_path):
 
 
 @pytest.mark.parametrize("runner", [run_verifier_bash, run_hook_bash])
-def test_deployment_scripts_reject_metadata_camera_override(tmp_path, runner):
+def test_deployment_scripts_accept_capture_capable_video43_override(tmp_path, runner):
     selected = "/dev/video43"
+    result = runner(
+        tmp_path,
+        "printf '%s' \"$CAMERA_DEVICE\"",
+        environment={"AIBOX_CAMERA_DEVICE": selected},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == selected
+
+
+@pytest.mark.parametrize("runner", [run_verifier_bash, run_hook_bash])
+def test_deployment_scripts_reject_metadata_capability_at_any_number(tmp_path, runner):
+    selected = "/dev/video77"
     result = runner(
         tmp_path,
         "printf unreachable",
         environment={"AIBOX_CAMERA_DEVICE": selected},
+        prelude="udevadm() { printf 'ID_V4L_CAPABILITIES=:metadata:\\n'; }\n"
+        "v4l2-ctl() { return 1; }",
     )
 
     assert result.returncode != 0
     assert selected in result.stderr
 
 
-def test_deployed_environment_configures_the_stable_camera_device():
-    config = (DEPLOY / "voice.conf").read_text(encoding="utf-8")
+@pytest.mark.parametrize("runner", [run_verifier_bash, run_hook_bash])
+def test_deployment_scripts_use_v4l2_device_caps_not_driver_caps(tmp_path, runner):
+    selected = "/dev/video88"
+    result = runner(
+        tmp_path,
+        "printf unreachable",
+        environment={"AIBOX_CAMERA_DEVICE": selected},
+        prelude="udevadm() { return 1; }\n"
+        "v4l2-ctl() { printf 'Capabilities     : 0x1\\n\\tVideo Capture\\n"
+        "Device Caps      : 0x2\\n\\tMetadata Capture\\n'; }",
+    )
 
-    assert "AIBOX_CAMERA_DEVICE=/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0" in config
+    assert result.returncode != 0
+    assert selected in result.stderr
+
+
+def test_voice_config_preserves_caller_camera_override(tmp_path):
+    bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
+    if not Path(bash).is_file():
+        pytest.skip("Bash is required for deployment behavior tests")
+    config = (DEPLOY / "voice.conf").as_posix()
+    selected = "/dev/video77"
+    result = subprocess.run(
+        [
+            bash,
+            "-c",
+            f'AIBOX_CAMERA_DEVICE="{selected}"; export AIBOX_CAMERA_DEVICE; '
+            f'source "{config}"; printf "%s" "$AIBOX_CAMERA_DEVICE"',
+        ],
+        cwd=tmp_path,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == selected
+
+
+@pytest.mark.parametrize("runner", [run_verifier_bash, run_hook_bash])
+def test_deployment_scripts_fall_back_from_metadata_stable_link_to_legacy_capture(
+    tmp_path, runner
+):
+    stable = tmp_path / "stable-camera"
+    legacy = tmp_path / "legacy-camera"
+    stable.touch()
+    legacy.touch()
+    prelude = f'''udevadm() {{
+  if [[ "$*" == *"{legacy.as_posix()}"* ]]; then
+    printf 'ID_V4L_CAPABILITIES=:capture:\n'
+  else
+    printf 'ID_V4L_CAPABILITIES=:metadata:\n'
+  fi
+}}
+v4l2-ctl() {{ return 1; }}'''
+    result = runner(
+        tmp_path,
+        f'''unset AIBOX_CAMERA_DEVICE
+STABLE_CAMERA_DEVICE="{stable.as_posix()}"
+LEGACY_CAMERA_DEVICE="{legacy.as_posix()}"
+resolve_camera_device''',
+        prelude=prelude,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == legacy.as_posix()
 
 
 def test_verifier_uses_the_three_specified_high_risk_sequences():

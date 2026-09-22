@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from feature_demo import devices
 from feature_demo.app import build_application
 from feature_demo.launcher import open_main_window
 from feature_demo.models import ModuleState
@@ -68,6 +69,7 @@ def test_build_application_pins_one_camera_path_for_worker_and_verifier(
 ):
     selected = "/dev/custom-capture"
     monkeypatch.setenv("AIBOX_CAMERA_DEVICE", selected)
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
 
     _app, manager = build_application(lock_path=tmp_path / "feature-demo.lock")
     worker = manager._worker_factory(get_module("color_recognition"))

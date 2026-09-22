@@ -5,27 +5,51 @@ API_URL="${FEATURE_DEMO_API_URL:-http://127.0.0.1:8000}"
 RESULT_FILE="${FEATURE_DEMO_RESULT_FILE:-}"
 STABLE_CAMERA_DEVICE="/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
 LEGACY_CAMERA_DEVICE="/dev/video41"
-METADATA_CAMERA_DEVICE="/dev/video43"
 
-validate_camera_device() {
-  local device="$1" canonical
-  canonical=$(readlink -f -- "$device" 2>/dev/null || printf '%s' "$device")
-  if [[ "$device" == "$METADATA_CAMERA_DEVICE" || "$canonical" == "$METADATA_CAMERA_DEVICE" ]]; then
-    echo "Camera device is metadata-only and cannot capture: $device" >&2
-    return 2
+camera_supports_capture() {
+  local device="$1" properties capabilities details device_caps
+  if properties=$(udevadm info --query=property --name "$device" 2>/dev/null); then
+    capabilities=$(printf '%s\n' "$properties" | sed -n 's/^ID_V4L_CAPABILITIES=//p' | head -n 1)
+    if [[ -n "$capabilities" ]]; then
+      [[ "$capabilities" =~ (^|:)capture(:|$) ]]
+      return
+    fi
   fi
+  details=$(v4l2-ctl --all --device "$device" 2>/dev/null) || return 1
+  device_caps=$(printf '%s\n' "$details" | awk '
+    /^[[:space:]]*Device Caps[[:space:]]*:/ { found=1; next }
+    found && /^[^[:space:]]/ { exit }
+    found { print }
+  ')
+  printf '%s\n' "$device_caps" | grep -Eq '^[[:space:]]*Video Capture( Multiplanar)?[[:space:]]*$'
 }
 
-if [[ -n "${AIBOX_CAMERA_DEVICE:-}" ]]; then
-  CAMERA_DEVICE="$AIBOX_CAMERA_DEVICE"
-elif [[ -e "$STABLE_CAMERA_DEVICE" ]]; then
-  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
-elif [[ -e "$LEGACY_CAMERA_DEVICE" ]]; then
-  CAMERA_DEVICE="$LEGACY_CAMERA_DEVICE"
-else
-  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
-fi
-validate_camera_device "$CAMERA_DEVICE"
+resolve_camera_device() {
+  local candidate rejected=()
+  if [[ -n "${AIBOX_CAMERA_DEVICE:-}" ]]; then
+    if camera_supports_capture "$AIBOX_CAMERA_DEVICE"; then
+      printf '%s\n' "$AIBOX_CAMERA_DEVICE"
+      return
+    fi
+    echo "Camera device does not provide Video Capture capability: $AIBOX_CAMERA_DEVICE" >&2
+    return 2
+  fi
+  for candidate in "$STABLE_CAMERA_DEVICE" "$LEGACY_CAMERA_DEVICE"; do
+    [[ -e "$candidate" ]] || continue
+    if camera_supports_capture "$candidate"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+    rejected+=("$candidate")
+  done
+  if (( ${#rejected[@]} )); then
+    echo "Camera devices do not provide Video Capture capability: ${rejected[*]}" >&2
+    return 2
+  fi
+  printf '%s\n' "$STABLE_CAMERA_DEVICE"
+}
+
+CAMERA_DEVICE=$(resolve_camera_device)
 MIC_DEVICE="/dev/snd/pcmC1D0c"
 ROBOT_DEVICE="/dev/esp32_arm"
 GIMBAL_DEVICE="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"

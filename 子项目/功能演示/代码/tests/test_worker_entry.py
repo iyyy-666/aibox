@@ -63,6 +63,7 @@ def test_runtime_keeps_camera_lazy_and_uses_stable_capture_device(monkeypatch):
             "/dev/video41",
         },
     )
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
     cv2 = FakeCv2()
     adapter_calls = []
 
@@ -87,6 +88,7 @@ def test_runtime_keeps_camera_lazy_and_uses_stable_capture_device(monkeypatch):
 
 def test_runtime_uses_environment_camera_override(monkeypatch):
     monkeypatch.setenv("AIBOX_CAMERA_DEVICE", "/dev/custom-capture")
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
     cv2 = FakeCv2()
 
     worker = create_vision_worker(
@@ -104,6 +106,7 @@ def test_runtime_uses_environment_camera_override(monkeypatch):
 def test_camera_open_error_reports_selected_device(monkeypatch):
     selected = "/dev/custom-capture"
     monkeypatch.setenv("AIBOX_CAMERA_DEVICE", selected)
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
     cv2 = FakeCv2()
     worker = create_vision_worker(
         "color_recognition",
