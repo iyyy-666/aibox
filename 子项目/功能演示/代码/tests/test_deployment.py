@@ -1,7 +1,8 @@
-from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -10,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "部署"
 
 
-def run_hook_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+def run_hook_bash(
+    tmp_path: Path,
+    body: str,
+    *,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
     if not Path(bash).is_file():
         pytest.skip("Bash is required for deployment behavior tests")
@@ -28,10 +34,16 @@ def run_hook_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]
         errors="replace",
         capture_output=True,
         check=False,
+        env={**os.environ, **(environment or {})},
     )
 
 
-def run_verifier_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+def run_verifier_bash(
+    tmp_path: Path,
+    body: str,
+    *,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash") or r"C:\Program Files\Git\bin\bash.exe"
     if not Path(bash).is_file():
         pytest.skip("Bash is required for deployment behavior tests")
@@ -50,6 +62,7 @@ def run_verifier_bash(tmp_path: Path, body: str) -> subprocess.CompletedProcess[
         errors="replace",
         capture_output=True,
         check=False,
+        env={**os.environ, **(environment or {})},
     )
 
 
@@ -185,13 +198,54 @@ def test_full_acceptance_runs_api_dependent_switches_before_window_close():
     assert full_block.index("verify_window_close") < full_block.index("write_acceptance_marker")
 
 
-def test_verifier_uses_the_same_camera_microphone_robot_and_gimbal_paths_as_runtime():
-    verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
+def test_verifier_and_hardware_hook_use_the_same_stable_camera_default(tmp_path):
+    expected = "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
+    verifier = run_verifier_bash(tmp_path, "printf '%s' \"${DEVICE_PATHS[0]}\"")
+    hook = run_hook_bash(tmp_path, "printf '%s' \"$CAMERA_DEVICE\"")
 
-    assert "/dev/video41" in verifier
-    assert "/dev/snd/pcmC1D0c" in verifier
-    assert "/dev/esp32_arm" in verifier
-    assert "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0" in verifier
+    assert verifier.returncode == 0, verifier.stderr
+    assert hook.returncode == 0, hook.stderr
+    assert verifier.stdout == expected
+    assert hook.stdout == expected
+
+
+def test_verifier_and_hardware_hook_use_the_same_camera_override(tmp_path):
+    expected = "/dev/custom-capture"
+    environment = {"AIBOX_CAMERA_DEVICE": expected}
+    verifier = run_verifier_bash(
+        tmp_path,
+        "printf '%s' \"${DEVICE_PATHS[0]}\"",
+        environment=environment,
+    )
+    hook = run_hook_bash(
+        tmp_path,
+        "printf '%s' \"$CAMERA_DEVICE\"",
+        environment=environment,
+    )
+
+    assert verifier.returncode == 0, verifier.stderr
+    assert hook.returncode == 0, hook.stderr
+    assert verifier.stdout == expected
+    assert hook.stdout == expected
+
+
+@pytest.mark.parametrize("runner", [run_verifier_bash, run_hook_bash])
+def test_deployment_scripts_reject_metadata_camera_override(tmp_path, runner):
+    selected = "/dev/video43"
+    result = runner(
+        tmp_path,
+        "printf unreachable",
+        environment={"AIBOX_CAMERA_DEVICE": selected},
+    )
+
+    assert result.returncode != 0
+    assert selected in result.stderr
+
+
+def test_deployed_environment_configures_the_stable_camera_device():
+    config = (DEPLOY / "voice.conf").read_text(encoding="utf-8")
+
+    assert "AIBOX_CAMERA_DEVICE=/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0" in config
 
 
 def test_verifier_uses_the_three_specified_high_risk_sequences():
@@ -363,7 +417,7 @@ def test_regular_hardware_hook_inherits_configured_api_url(tmp_path):
     trace = tmp_path / "hook-url.txt"
     hook = tmp_path / "hook.sh"
     hook.write_text(
-        f'#!/bin/sh\nprintf "%s" "$FEATURE_DEMO_API_URL" > "{trace.as_posix()}"\n',
+        f'#!/bin/sh\nprintf "%s\\n%s" "$FEATURE_DEMO_API_URL" "$AIBOX_CAMERA_DEVICE" > "{trace.as_posix()}"\n',
         encoding="utf-8",
     )
     hook.chmod(0o755)
@@ -375,7 +429,10 @@ run_hardware_hook module demo''',
     )
 
     assert result.returncode == 0, result.stderr
-    assert trace.read_text(encoding="utf-8") == "http://127.0.0.1:19090"
+    assert trace.read_text(encoding="utf-8").splitlines() == [
+        "http://127.0.0.1:19090",
+        "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0",
+    ]
 
 
 def test_visual_gimbal_check_trusts_ack_without_persistent_device_owner(tmp_path):
@@ -393,7 +450,9 @@ verify_running_module face_detection''',
     )
 
     assert result.returncode == 0, result.stderr
-    assert Path(trace).read_text(encoding="utf-8").splitlines() == ["/dev/video41"]
+    assert Path(trace).read_text(encoding="utf-8").splitlines() == [
+        "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
+    ]
 
 
 def test_window_close_rejects_a_start_response_that_is_not_running(tmp_path):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import queue
 import sys
 import threading
@@ -10,6 +9,7 @@ from typing import Callable
 from ..adapters.gimbal import GimbalAdapter
 from ..adapters.robot import RobotAdapter
 from ..adapters.vision import LEGACY_VISION_SPECS, build_vision_adapter
+from ..devices import resolve_camera_device
 from ..models import PREEMPTIVE_COMMANDS
 from .assistant import AssistantWorker
 from .robot import ObjectSortingWorker, RobotWorker, SortingController
@@ -17,8 +17,8 @@ from .vision import VisionWorker
 from .voice import VoiceWorker
 
 
-def _configured_camera(cv2_module):
-    device = os.getenv("AIBOX_CAMERA_DEVICE", "/dev/video41")
+def _configured_camera(cv2_module, device: str | None = None):
+    device = device or resolve_camera_device()
     capture = cv2_module.VideoCapture(device, cv2_module.CAP_V4L2)
     capture.set(
         cv2_module.CAP_PROP_FOURCC,
@@ -56,6 +56,7 @@ def create_vision_worker(
         import cv2 as cv2_module
     builder = adapter_builder or build_vision_adapter
     adapter = builder(module_id)
+    camera_device = resolve_camera_device()
     directional_gimbal = gimbal if gimbal is not None else GimbalAdapter()
     pause_tracking = getattr(adapter, "stop_tracking", None) if module_id == "palm_tracking" else None
     manual_gimbal_step = (
@@ -65,9 +66,10 @@ def create_vision_worker(
     )
     return VisionWorker(
         adapter=adapter,
-        camera_factory=lambda: _configured_camera(cv2_module),
+        camera_factory=lambda: _configured_camera(cv2_module, camera_device),
         encode_frame=lambda frame: _jpeg_encoder(cv2_module, frame),
         event_sink=event_sink,
+        camera_device=camera_device,
         gimbal=directional_gimbal,
         pause_tracking=pause_tracking,
         manual_gimbal_step=manual_gimbal_step,

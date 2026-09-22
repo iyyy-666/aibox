@@ -3,7 +3,30 @@ set -euo pipefail
 
 API_URL="${FEATURE_DEMO_URL:-http://127.0.0.1:8000}"
 MODULE_IDS=(ai_assistant object_sorting plate_recognition palm_recognition palm_tracking voice_input_test fruit_recognition color_recognition face_detection robot_button nursery_rhyme shape_recognition voice_robot_arm)
-DEVICE_PATHS=(/dev/video41 /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
+STABLE_CAMERA_DEVICE="/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
+LEGACY_CAMERA_DEVICE="/dev/video41"
+METADATA_CAMERA_DEVICE="/dev/video43"
+
+validate_camera_device() {
+  local device="$1" canonical
+  canonical=$(readlink -f -- "$device" 2>/dev/null || printf '%s' "$device")
+  if [[ "$device" == "$METADATA_CAMERA_DEVICE" || "$canonical" == "$METADATA_CAMERA_DEVICE" ]]; then
+    echo "Camera device is metadata-only and cannot capture: $device" >&2
+    return 2
+  fi
+}
+
+if [[ -n "${AIBOX_CAMERA_DEVICE:-}" ]]; then
+  CAMERA_DEVICE="$AIBOX_CAMERA_DEVICE"
+elif [[ -e "$STABLE_CAMERA_DEVICE" ]]; then
+  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
+elif [[ -e "$LEGACY_CAMERA_DEVICE" ]]; then
+  CAMERA_DEVICE="$LEGACY_CAMERA_DEVICE"
+else
+  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
+fi
+validate_camera_device "$CAMERA_DEVICE"
+DEVICE_PATHS=("$CAMERA_DEVICE" /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
 HIGH_RISK_SEQUENCES=("voice_robot_arm fruit_recognition" "face_detection object_sorting" "ai_assistant nursery_rhyme")
 ACCEPTANCE_MARKER="${FEATURE_DEMO_ACCEPTANCE_MARKER:-/var/lib/feature-demo/full-acceptance.marker}"
 VERIFIER_PATH="${FEATURE_DEMO_VERIFIER_PATH:-$0}"
@@ -93,7 +116,8 @@ resources_are_released() {
 }
 
 run_hardware_hook() {
-  FEATURE_DEMO_API_URL="$API_URL" "$FEATURE_DEMO_HARDWARE_HOOK" "$@"
+  FEATURE_DEMO_API_URL="$API_URL" AIBOX_CAMERA_DEVICE="$CAMERA_DEVICE" \
+    "$FEATURE_DEMO_HARDWARE_HOOK" "$@"
 }
 
 start_module_running() {
