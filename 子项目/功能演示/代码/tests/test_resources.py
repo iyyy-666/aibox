@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from feature_demo import resources
+from feature_demo import devices, resources
 from feature_demo.devices import resolve_camera_device
 from feature_demo.registry import get_module
 from feature_demo.resources import DEFAULT_DEVICE_PATHS, ResourceVerifier
@@ -26,6 +26,7 @@ def test_default_device_paths_match_the_deployed_hardware_names():
 def test_resource_verifier_uses_environment_camera_override(monkeypatch):
     checked = []
     monkeypatch.setenv("AIBOX_CAMERA_DEVICE", "/dev/custom-capture")
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
     verifier = ResourceVerifier(
         pid_exists=lambda _pid: False,
         device_in_use=lambda path: checked.append(path) or False,
@@ -47,6 +48,7 @@ def test_resource_verifier_prefers_stable_device_but_falls_back_to_present_legac
         "exists",
         lambda path: path == "/dev/video41",
     )
+    monkeypatch.setattr(devices, "camera_supports_capture", lambda _path: True)
     verifier = ResourceVerifier(
         pid_exists=lambda _pid: False,
         device_in_use=lambda path: checked.append(path) or False,
@@ -57,17 +59,51 @@ def test_resource_verifier_prefers_stable_device_but_falls_back_to_present_legac
     assert checked[0] == "/dev/video41"
 
 
+def test_camera_override_accepts_capture_capable_video43():
+    assert resolve_camera_device(
+        environ={"AIBOX_CAMERA_DEVICE": "/dev/video43"},
+        supports_capture=lambda _path: True,
+    ) == "/dev/video43"
+
+
+def test_camera_override_rejects_metadata_capability_at_any_number():
+    selected = "/dev/video77"
+    with pytest.raises(ValueError, match=selected):
+        resolve_camera_device(
+            environ={"AIBOX_CAMERA_DEVICE": selected},
+            supports_capture=lambda _path: False,
+        )
+
+
+def test_camera_resolution_falls_back_from_metadata_stable_link_to_legacy_capture():
+    assert resolve_camera_device(
+        environ={},
+        exists=lambda _path: True,
+        supports_capture=lambda path: path == "/dev/video41",
+    ) == "/dev/video41"
+
+
 @pytest.mark.parametrize(
-    ("override", "resolved"),
+    ("udev_output", "v4l2_output", "expected"),
     [
-        ("/dev/video43", "/dev/video43"),
-        ("/dev/v4l/by-id/metadata-alias", "/dev/video43"),
+        ("ID_V4L_CAPABILITIES=:capture:\n", "", True),
+        ("ID_V4L_CAPABILITIES=:metadata:\n", "", False),
+        ("", "Device Caps      : 0x1\n\tVideo Capture\n\tStreaming\n", True),
+        (
+            "",
+            "Capabilities     : 0x1\n\tVideo Capture\nDevice Caps      : 0x2\n\tMetadata Capture\n",
+            False,
+        ),
     ],
 )
-def test_camera_override_rejects_metadata_device(monkeypatch, override, resolved):
-    monkeypatch.setattr(resources.os.path, "realpath", lambda _path: resolved)
-    with pytest.raises(ValueError, match=override):
-        resolve_camera_device(environ={"AIBOX_CAMERA_DEVICE": override})
+def test_camera_capability_probe_uses_node_specific_udev_or_device_caps(
+    udev_output, v4l2_output, expected
+):
+    def run(command, **_kwargs):
+        output = udev_output if command[0] == "udevadm" else v4l2_output
+        return type("Result", (), {"returncode": 0 if output else 1, "stdout": output})()
+
+    assert devices.camera_supports_capture("/dev/video77", run=run) is expected
 
 
 def test_palm_tracking_uses_the_same_gimbal_device_as_resource_verification():
