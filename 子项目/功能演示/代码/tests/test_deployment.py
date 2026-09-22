@@ -278,3 +278,42 @@ verify_running_module nursery_rhyme''',
         "owner=/dev/test-speaker",
         "command=stop_playback",
     ]
+
+
+@pytest.mark.parametrize(
+    ("module_id", "failed_step"),
+    [
+        ("fruit_recognition", "frame"),
+        ("face_detection", "gimbal"),
+        ("nursery_rhyme", "speaker"),
+    ],
+)
+def test_sequence_propagates_verification_failure_and_cleans_up(
+    tmp_path, module_id, failed_step
+):
+    trace = (tmp_path / f"{failed_step}.txt").as_posix()
+    result_file = (tmp_path / f"{failed_step}-result.txt").as_posix()
+    result = run_hook_bash(
+        tmp_path,
+        f'''TRACE="{trace}"
+RESULT_FILE="{result_file}"
+FAILED_STEP="{failed_step}"
+curl() {{ printf '%s\n' "$*" >> "$TRACE"; return 0; }}
+wait_for_state() {{ return 0; }}
+verify_visual_frame() {{ [[ "$FAILED_STEP" != frame ]]; }}
+wait_for_device_owner() {{
+  [[ "$FAILED_STEP" != speaker || "$1" != "$SPEAKER_DEVICE" ]]
+}}
+post_command() {{
+  printf 'command=%s\n' "$2" >> "$TRACE"
+  [[ "$FAILED_STEP" != gimbal || "$2" != gimbal_left ]]
+}}
+wait_for_resources_released() {{ printf 'released\n' >> "$TRACE"; return 0; }}
+set +e
+run_sequence "{module_id}"
+rc=$?
+grep -q '/api/modules/{module_id}/stop' "$TRACE" || exit 90
+test "$rc" -ne 0''',
+    )
+
+    assert result.returncode == 0, result.stderr
