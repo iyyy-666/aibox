@@ -5,11 +5,12 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
+from .devices import STABLE_CAMERA_DEVICE, resolve_camera_device
 from .models import ModuleDefinition
 
 
 DEFAULT_DEVICE_PATHS: dict[str, tuple[str, ...]] = {
-    "camera": ("/dev/video41",),
+    "camera": (STABLE_CAMERA_DEVICE,),
     "microphone": ("/dev/snd/pcmC1D0c",),
     "speaker": ("/dev/snd/pcmC0D0p",),
     "robot": ("/dev/esp32_arm",),
@@ -63,10 +64,17 @@ class ResourceVerifier:
         pid_exists: Callable[[int], bool] = _pid_exists,
         device_in_use: Callable[[str], bool | None] = _device_in_use,
         device_paths: Mapping[str, tuple[str, ...]] | None = None,
+        camera_device: str | None = None,
     ) -> None:
         self._pid_exists = pid_exists
         self._device_in_use = device_in_use
-        self._device_paths = dict(device_paths or DEFAULT_DEVICE_PATHS)
+        if device_paths is None:
+            self._device_paths = dict(DEFAULT_DEVICE_PATHS)
+            self._device_paths["camera"] = (
+                camera_device or resolve_camera_device(),
+            )
+        else:
+            self._device_paths = dict(device_paths)
 
     def verify(
         self,

@@ -4,6 +4,8 @@ import base64
 import threading
 from typing import Callable, Protocol
 
+from ..devices import STABLE_CAMERA_DEVICE
+
 
 class Camera(Protocol):
     def isOpened(self) -> bool: ...
@@ -36,6 +38,7 @@ class VisionWorker:
         gimbal: DirectionalGimbal | None = None,
         pause_tracking: Callable[[], None] | None = None,
         manual_gimbal_step: Callable[[Callable[[], dict]], dict] | None = None,
+        camera_device: str = STABLE_CAMERA_DEVICE,
     ) -> None:
         self._adapter = adapter
         self._camera_factory = camera_factory
@@ -44,6 +47,7 @@ class VisionWorker:
         self._gimbal = gimbal
         self._pause_tracking = pause_tracking
         self._manual_gimbal_step = manual_gimbal_step
+        self._camera_device = camera_device
         self._camera: Camera | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -61,7 +65,7 @@ class VisionWorker:
         camera = self._camera_factory()
         if not camera.isOpened():
             camera.release()
-            raise RuntimeError("无法打开摄像头 /dev/video41。")
+            raise RuntimeError(f"无法打开摄像头 {self._camera_device}。")
         self._camera = camera
         self._stop_event.clear()
         self._thread = threading.Thread(

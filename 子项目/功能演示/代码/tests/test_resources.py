@@ -5,18 +5,69 @@ from pathlib import Path
 import pytest
 
 from feature_demo import resources
+from feature_demo.devices import resolve_camera_device
 from feature_demo.registry import get_module
 from feature_demo.resources import DEFAULT_DEVICE_PATHS, ResourceVerifier
 
 
+STABLE_CAMERA_DEVICE = "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
+
+
 def test_default_device_paths_match_the_deployed_hardware_names():
     assert DEFAULT_DEVICE_PATHS == {
-        "camera": ("/dev/video41",),
+        "camera": (STABLE_CAMERA_DEVICE,),
         "microphone": ("/dev/snd/pcmC1D0c",),
         "speaker": ("/dev/snd/pcmC0D0p",),
         "robot": ("/dev/esp32_arm",),
         "gimbal": ("/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",),
     }
+
+
+def test_resource_verifier_uses_environment_camera_override(monkeypatch):
+    checked = []
+    monkeypatch.setenv("AIBOX_CAMERA_DEVICE", "/dev/custom-capture")
+    verifier = ResourceVerifier(
+        pid_exists=lambda _pid: False,
+        device_in_use=lambda path: checked.append(path) or False,
+    )
+
+    report = verifier.verify(get_module("color_recognition"), ())
+
+    assert report.ok
+    assert checked[0] == "/dev/custom-capture"
+
+
+def test_resource_verifier_prefers_stable_device_but_falls_back_to_present_legacy(
+    monkeypatch,
+):
+    checked = []
+    monkeypatch.delenv("AIBOX_CAMERA_DEVICE", raising=False)
+    monkeypatch.setattr(
+        resources.os.path,
+        "exists",
+        lambda path: path == "/dev/video41",
+    )
+    verifier = ResourceVerifier(
+        pid_exists=lambda _pid: False,
+        device_in_use=lambda path: checked.append(path) or False,
+    )
+
+    verifier.verify(get_module("color_recognition"), ())
+
+    assert checked[0] == "/dev/video41"
+
+
+@pytest.mark.parametrize(
+    ("override", "resolved"),
+    [
+        ("/dev/video43", "/dev/video43"),
+        ("/dev/v4l/by-id/metadata-alias", "/dev/video43"),
+    ],
+)
+def test_camera_override_rejects_metadata_device(monkeypatch, override, resolved):
+    monkeypatch.setattr(resources.os.path, "realpath", lambda _path: resolved)
+    with pytest.raises(ValueError, match=override):
+        resolve_camera_device(environ={"AIBOX_CAMERA_DEVICE": override})
 
 
 def test_palm_tracking_uses_the_same_gimbal_device_as_resource_verification():

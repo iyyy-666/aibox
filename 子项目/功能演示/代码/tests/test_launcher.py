@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from feature_demo.app import build_application
 from feature_demo.launcher import open_main_window
 from feature_demo.models import ModuleState
+from feature_demo.registry import get_module
 
 
 class FakeEvent:
@@ -60,6 +61,19 @@ def test_build_application_does_not_create_a_worker(tmp_path):
     assert app.title == "功能演示"
     assert manager.active_module is None
     assert worker_calls == []
+
+
+def test_build_application_pins_one_camera_path_for_worker_and_verifier(
+    tmp_path, monkeypatch
+):
+    selected = "/dev/custom-capture"
+    monkeypatch.setenv("AIBOX_CAMERA_DEVICE", selected)
+
+    _app, manager = build_application(lock_path=tmp_path / "feature-demo.lock")
+    worker = manager._worker_factory(get_module("color_recognition"))
+
+    assert worker._environment["AIBOX_CAMERA_DEVICE"] == selected
+    assert manager._verifier._device_paths["camera"] == (selected,)
 
 
 def test_open_main_window_creates_one_chinese_window_and_starts_event_loop():

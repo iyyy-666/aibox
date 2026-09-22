@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import threading
 
+import pytest
+
+from feature_demo import devices
 from feature_demo.adapters.robot import RobotAdapter
 from feature_demo.workers.robot import RobotWorker
 from feature_demo.workers import runtime
@@ -49,7 +52,17 @@ class FakeAdapter:
         return None
 
 
-def test_runtime_keeps_camera_lazy_and_uses_existing_capture_settings():
+def test_runtime_keeps_camera_lazy_and_uses_stable_capture_device(monkeypatch):
+    monkeypatch.delenv("AIBOX_CAMERA_DEVICE", raising=False)
+    monkeypatch.setattr(
+        devices.os.path,
+        "exists",
+        lambda path: path
+        in {
+            "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0",
+            "/dev/video41",
+        },
+    )
     cv2 = FakeCv2()
     adapter_calls = []
 
@@ -65,8 +78,52 @@ def test_runtime_keeps_camera_lazy_and_uses_existing_capture_settings():
     camera = worker._camera_factory()
 
     assert adapter_calls == ["color_recognition"]
-    assert cv2.created[0][:2] == ("/dev/video41", 200)
+    assert cv2.created[0][:2] == (
+        "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0",
+        200,
+    )
     assert camera.settings == [(1, 77), (2, 1280), (3, 480), (4, 30), (5, 1)]
+
+
+def test_runtime_uses_environment_camera_override(monkeypatch):
+    monkeypatch.setenv("AIBOX_CAMERA_DEVICE", "/dev/custom-capture")
+    cv2 = FakeCv2()
+
+    worker = create_vision_worker(
+        "color_recognition",
+        cv2_module=cv2,
+        adapter_builder=lambda _module_id: FakeAdapter(),
+        event_sink=lambda _event: None,
+        gimbal=None,
+    )
+    worker._camera_factory()
+
+    assert cv2.created[0][:2] == ("/dev/custom-capture", 200)
+
+
+def test_camera_open_error_reports_selected_device(monkeypatch):
+    selected = "/dev/custom-capture"
+    monkeypatch.setenv("AIBOX_CAMERA_DEVICE", selected)
+    cv2 = FakeCv2()
+    worker = create_vision_worker(
+        "color_recognition",
+        cv2_module=cv2,
+        adapter_builder=lambda _module_id: FakeAdapter(),
+        event_sink=lambda _event: None,
+        gimbal=None,
+    )
+    cv2.VideoCapture = lambda *_args: type(
+        "ClosedCapture",
+        (),
+        {
+            "set": lambda *_args: None,
+            "isOpened": lambda _self: False,
+            "release": lambda _self: None,
+        },
+    )()
+
+    with pytest.raises(RuntimeError, match=selected):
+        worker.start()
 
 
 def test_worker_entry_emits_the_original_startup_failure(monkeypatch):

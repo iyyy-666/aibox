@@ -3,7 +3,29 @@ set -euo pipefail
 
 API_URL="${FEATURE_DEMO_API_URL:-http://127.0.0.1:8000}"
 RESULT_FILE="${FEATURE_DEMO_RESULT_FILE:-}"
-CAMERA_DEVICE="/dev/video41"
+STABLE_CAMERA_DEVICE="/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
+LEGACY_CAMERA_DEVICE="/dev/video41"
+METADATA_CAMERA_DEVICE="/dev/video43"
+
+validate_camera_device() {
+  local device="$1" canonical
+  canonical=$(readlink -f -- "$device" 2>/dev/null || printf '%s' "$device")
+  if [[ "$device" == "$METADATA_CAMERA_DEVICE" || "$canonical" == "$METADATA_CAMERA_DEVICE" ]]; then
+    echo "Camera device is metadata-only and cannot capture: $device" >&2
+    return 2
+  fi
+}
+
+if [[ -n "${AIBOX_CAMERA_DEVICE:-}" ]]; then
+  CAMERA_DEVICE="$AIBOX_CAMERA_DEVICE"
+elif [[ -e "$STABLE_CAMERA_DEVICE" ]]; then
+  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
+elif [[ -e "$LEGACY_CAMERA_DEVICE" ]]; then
+  CAMERA_DEVICE="$LEGACY_CAMERA_DEVICE"
+else
+  CAMERA_DEVICE="$STABLE_CAMERA_DEVICE"
+fi
+validate_camera_device "$CAMERA_DEVICE"
 MIC_DEVICE="/dev/snd/pcmC1D0c"
 ROBOT_DEVICE="/dev/esp32_arm"
 GIMBAL_DEVICE="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
