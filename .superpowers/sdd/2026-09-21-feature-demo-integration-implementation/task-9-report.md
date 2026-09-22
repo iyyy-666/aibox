@@ -163,6 +163,10 @@ Process-group enumeration now returns unknown separately from empty. On `ps` fai
 
 The pre-deployment board audit still showed `robot-arm.service` enabled/active, `feature-demo.service` disabled/inactive, 14 legacy desktop entries, no acceptance marker, `/dev/video41` absent, and `/dev/video42` plus `/dev/video43` present. No package operation, reboot, full acceptance, desktop retirement, or service cutover is authorized while that camera blocker remains.
 
+## Final Residual Deployment
+
+The final emergency-stop token propagation and plate-evidence fixes were independently reviewed with no remaining Critical or Important findings. Before deployment, the current board copies were backed up to `/root/feature-demo-backups/final-residual-20260922_150929`. The updated legacy `robot.py` and hardware acceptance hook were installed incrementally; their board SHA-256 values matched the local files (`5813771e...f24b` and `31cef2b9...c4d7`). The final safety audit still showed the legacy service enabled/active, the unified service disabled/inactive, 14 legacy desktop entries, and no acceptance marker. `/dev/video41` remains absent while `/dev/video42` and `/dev/video43` remain present, so no full hardware acceptance or legacy retirement was attempted.
+
 ### Residual Review Fix Round 2
 
 The scoped re-review found two remaining important gaps. RED used the real shared `RobotArm`: stopping while `set_all_servos` was paused between servo writes returned success and allowed later servo commands after `$DST!` (`1 failed`). The plate evidence RED proved a color-only candidate with an empty `plate` field incorrectly passed while nonempty plate text also passed (`1 failed, 1 passed`).
