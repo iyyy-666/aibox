@@ -139,7 +139,11 @@ def test_installer_verifies_complete_rollback_archives_before_any_deployment_wri
 
 
 def test_service_and_verifier_are_deployable():
-    assert "ExecStart=/usr/local/bin/feature_demo.sh" in (DEPLOY / "feature-demo.service").read_text(encoding="utf-8")
+    service = (DEPLOY / "feature-demo.service").read_text(encoding="utf-8")
+    assert "ExecStart=/usr/local/bin/feature_demo.sh" in service
+    assert "Environment=DISPLAY=:0" in service
+    assert "Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority" in service
+    assert "Environment=XDG_RUNTIME_DIR=/run/user/1000" in service
     verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
     assert "fuser" in verifier
     assert "MODULE_IDS" in verifier
