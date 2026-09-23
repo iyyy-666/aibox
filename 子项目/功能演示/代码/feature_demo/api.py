@@ -64,6 +64,8 @@ def create_app(manager: ModuleManager) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ModuleConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/modules/{module_id}/status")
     def module_status(module_id: str) -> dict:
