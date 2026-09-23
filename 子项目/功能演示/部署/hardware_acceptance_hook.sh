@@ -52,7 +52,7 @@ resolve_camera_device() {
 CAMERA_DEVICE=$(resolve_camera_device)
 MIC_DEVICE="/dev/snd/pcmC1D0c"
 ROBOT_DEVICE="/dev/esp32_arm"
-GIMBAL_DEVICE="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+GIMBAL_DEVICE="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00"
 SPEAKER_DEVICE="/dev/snd/pcmC0D0p"
 VISUAL_MODULES="object_sorting plate_recognition palm_recognition palm_tracking fruit_recognition color_recognition face_detection shape_recognition"
 

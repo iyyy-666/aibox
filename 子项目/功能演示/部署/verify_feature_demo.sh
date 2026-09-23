@@ -50,7 +50,7 @@ resolve_camera_device() {
 }
 
 CAMERA_DEVICE=$(resolve_camera_device)
-DEVICE_PATHS=("$CAMERA_DEVICE" /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0)
+DEVICE_PATHS=("$CAMERA_DEVICE" /dev/snd/pcmC1D0c /dev/snd/pcmC0D0p /dev/esp32_arm /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00)
 HIGH_RISK_SEQUENCES=("voice_robot_arm fruit_recognition" "face_detection object_sorting" "ai_assistant nursery_rhyme")
 ACCEPTANCE_MARKER="${FEATURE_DEMO_ACCEPTANCE_MARKER:-/var/lib/feature-demo/full-acceptance.marker}"
 VERIFIER_PATH="${FEATURE_DEMO_VERIFIER_PATH:-$0}"

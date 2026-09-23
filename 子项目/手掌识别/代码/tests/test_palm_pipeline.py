@@ -114,7 +114,12 @@ def test_palm_pipeline_tries_right_eye_after_left_eye_landmark_miss() -> None:
     app = make_app(RightEyeDetector())
     left = np.zeros((480, 640, 3), dtype=np.uint8)
     right = np.ones((480, 640, 3), dtype=np.uint8)
+    app._candidate_boxes = (
+        lambda image: [] if int(image[0, 0, 0]) == 0 else [(88, 92, 78, 108)]
+    )
 
     detection = app._detect_hands(left, right)[0]
 
     assert detection.source == "MediaPipe"
+    assert app._last_detection_eye == "right"
+    assert not detection.stereo_verified

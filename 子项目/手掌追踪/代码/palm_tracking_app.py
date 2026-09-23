@@ -135,11 +135,15 @@ class PalmTrackingApp:
                 frame = None if self.frame is None else self.frame.copy()
             if frame is not None:
                 try:
-                    left, _right = split_stereo(frame)
-                    self.image_size = (left.shape[1], left.shape[0])
+                    left, right = split_stereo(frame)
+                    selected = left
                     observations = self.hand_detector.detect(left)
                     if not observations:
                         observations = self.hand_detector.detect(right)
+                        if observations:
+                            selected = right
+                    self._detection_eye = "right" if selected is right else "left"
+                    self.image_size = (selected.shape[1], selected.shape[0])
                     boxes = [item.box for item in observations]
                     with self.box_lock:
                         if self.tracking_enabled:
@@ -221,8 +225,9 @@ class PalmTrackingApp:
         if frame is None:
             self.canvas.create_text(canvas_width // 2, canvas_height // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text="Opening camera...")
         else:
-            left, _right = split_stereo(frame)
-            view = self._annotate(left, box)
+            left, right = split_stereo(frame)
+            selected = right if getattr(self, "_detection_eye", "left") == "right" else left
+            view = self._annotate(selected, box)
             rgb = cv2.cvtColor(view, cv2.COLOR_BGR2RGB)
             scale = min(canvas_width / rgb.shape[1], canvas_height / rgb.shape[0])
             target = (max(1, int(rgb.shape[1] * scale)), max(1, int(rgb.shape[0] * scale)))

@@ -370,6 +370,17 @@ def test_installer_deploys_real_hardware_hook_and_board_local_signer():
     assert "FEATURE_DEMO_ACCEPTANCE_KEY" in signer
 
 
+def test_deployment_checks_the_runtime_gimbal_device():
+    stable_gimbal = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00"
+    verifier = (DEPLOY / "verify_feature_demo.sh").read_text(encoding="utf-8")
+    hook = (DEPLOY / "hardware_acceptance_hook.sh").read_text(encoding="utf-8")
+
+    assert stable_gimbal in verifier
+    assert stable_gimbal in hook
+    assert "usb-1a86_USB_Serial-if00-port0" not in verifier
+    assert "usb-1a86_USB_Serial-if00-port0" not in hook
+
+
 def test_hardware_hook_preserves_explicit_json_payload(tmp_path):
     trace = (tmp_path / "curl-args.txt").as_posix()
     result = run_hook_bash(
