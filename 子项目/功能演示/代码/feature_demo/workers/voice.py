@@ -147,6 +147,9 @@ class VoiceWorker:
         with self._lifecycle_lock:
             if self._listening.is_set():
                 return {"ok": True, "listening": True}
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("上一监听线程尚未停止，请稍后重试。")
+            self._thread = None
             self._listen_generation += 1
             generation = self._listen_generation
         engine = None
@@ -197,7 +200,11 @@ class VoiceWorker:
                 if self.module_id == "voice_robot_arm" and self._robot is not None:
                     self._robot.connect()
                 self._listener_started.clear()
-                self._thread = threading.Thread(target=self._listen_loop, daemon=True)
+                self._thread = threading.Thread(
+                    target=self._listen_loop,
+                    args=(generation, engine, pcm),
+                    daemon=True,
+                )
                 self._thread.start()
                 self._emit({"type": "listening", "module": self.module_id, "message": "正在监听中文语音。"})
             if not self._listener_started.wait(timeout=self._join_timeout):
@@ -339,33 +346,43 @@ class VoiceWorker:
             raise RuntimeError("儿歌音频转换失败")
         return str(output_path)
 
-    def _listen_loop(self) -> None:
+    def _listener_is_current(self, generation: int, engine, pcm) -> bool:
+        with self._lifecycle_lock:
+            return (
+                generation == self._listen_generation
+                and self._listening.is_set()
+                and self._engine is engine
+                and self._pcm is pcm
+            )
+
+    def _listen_loop(self, generation: int, engine, pcm) -> None:
         self._listener_started.set()
-        engine = self._engine
-        while self._listening.is_set():
-            pcm = self._pcm
-            if pcm is None:
-                return
+        while self._listener_is_current(generation, engine, pcm):
             try:
                 record = getattr(engine, "_record_utterance", None)
                 if callable(record):
-                    engine.running = self._listening.is_set()
+                    engine.running = True
                     captured = record(pcm)
                     audio = captured[0] if isinstance(captured, tuple) else captured
                 else:
                     length, audio = pcm.read()
                     if not length:
                         continue
+                if not self._listener_is_current(generation, engine, pcm):
+                    return
                 if not audio:
                     continue
                 recognize = getattr(engine, "_recognize_pair", None) or getattr(engine, "recognize_pair", None)
                 if not callable(recognize):
                     continue
                 raw, normalized = recognize(audio)
-                if normalized:
+                if (
+                    normalized
+                    and self._listener_is_current(generation, engine, pcm)
+                ):
                     self._handle_text(str(raw), str(normalized))
             except Exception as exc:
-                if self._listening.is_set():
+                if self._listener_is_current(generation, engine, pcm):
                     self._emit({"type": "error", "message": str(exc)})
                 return
 
