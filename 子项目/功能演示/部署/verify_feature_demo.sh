@@ -370,7 +370,7 @@ retire_legacy_desktop_entries() {
       rm -f "$entry"
     fi
   done
-  install -Dm0644 "$STAGED_DESKTOP_ENTRY" "$DESKTOP_DIR/功能演示.desktop"
+  install -Dm0755 "$STAGED_DESKTOP_ENTRY" "$DESKTOP_DIR/功能演示.desktop"
   chown ztl:ztl "$DESKTOP_DIR/功能演示.desktop" 2>/dev/null || true
 }
 

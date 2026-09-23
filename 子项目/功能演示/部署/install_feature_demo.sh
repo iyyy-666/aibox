@@ -50,7 +50,7 @@ install -Dm0755 "$SOURCE_DIR/启动脚本/feature_demo.sh" /usr/local/bin/featur
 install -Dm0755 "$SOURCE_DIR/部署/verify_feature_demo.sh" /usr/local/bin/verify_feature_demo.sh
 install -Dm0755 "$SOURCE_DIR/部署/hardware_acceptance_hook.sh" /usr/local/bin/feature_demo_hardware_acceptance.sh
 install -Dm0755 "$SOURCE_DIR/部署/acceptance_signer.sh" /usr/local/bin/feature_demo_acceptance_signer.sh
-install -Dm0644 "$SOURCE_DIR/桌面入口/功能演示.desktop" "$STAGED_DESKTOP_ENTRY"
+install -Dm0755 "$SOURCE_DIR/桌面入口/功能演示.desktop" "$STAGED_DESKTOP_ENTRY"
 install -Dm0644 "$SOURCE_DIR/部署/feature-demo.service" /etc/systemd/system/feature-demo.service
 install -Dm0644 "$SOURCE_DIR/部署/voice.conf" /etc/default/feature-demo
 install -d -m0700 /var/lib/feature-demo

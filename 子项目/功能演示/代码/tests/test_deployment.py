@@ -107,7 +107,7 @@ def test_installer_stages_new_desktop_entry_without_replacing_legacy_entries():
     script = (DEPLOY / "install_feature_demo.sh").read_text(encoding="utf-8")
 
     assert "STAGED_DESKTOP_ENTRY" in script
-    assert 'install -Dm0644 "$SOURCE_DIR/桌面入口/功能演示.desktop" "$STAGED_DESKTOP_ENTRY"' in script
+    assert 'install -Dm0755 "$SOURCE_DIR/桌面入口/功能演示.desktop" "$STAGED_DESKTOP_ENTRY"' in script
     assert 'rm -f "$entry"' not in script
     assert '"$DESKTOP_DIR/功能演示.desktop"' not in script
     assert "/usr/local/bin/feature_demo.sh" in script
@@ -170,6 +170,7 @@ def test_full_acceptance_is_required_before_the_legacy_service_can_be_retired():
         "retire_legacy_desktop_entries",
     ):
         assert required in verifier
+    assert 'install -Dm0755 "$STAGED_DESKTOP_ENTRY" "$DESKTOP_DIR/功能演示.desktop"' in verifier
     assert verifier.index("require_valid_acceptance_marker") < verifier.index("systemctl disable --now robot-arm.service")
 
 
