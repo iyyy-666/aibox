@@ -151,3 +151,15 @@ def test_status_socket_reconnects_only_for_the_active_module(app_javascript):
     assert "socketReconnectAttempt" in app_javascript
     assert "[250, 500, 1000, 2000]" in app_javascript
     assert "appState.active?.module_id === moduleId" in app_javascript
+
+
+def test_sorting_keeps_visual_controls_results_and_gimbal_visible(
+    web_document, app_javascript
+):
+    workspace = web_document.select_one("[data-visual-workspace]")
+    side = workspace.select_one(".vision-side")
+
+    assert side.select_one("[data-visual-actions]")
+    assert side.select_one("[data-result-content]")
+    assert side.select_one(".gimbal-panel")
+    assert 'querySelector(".vision-side")' not in app_javascript
