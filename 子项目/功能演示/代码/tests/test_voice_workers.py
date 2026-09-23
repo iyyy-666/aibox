@@ -195,6 +195,67 @@ def test_voice_calibrates_before_listener_reads_pcm() -> None:
     assert calls.index("calibrate") < calls.index("record")
 
 
+def test_voice_restart_calibration_failure_rolls_back_resources() -> None:
+    pcms = [FakePCM([]), FakePCM([]), FakePCM([])]
+
+    class FailingCalibrationEngine(FakeEngine):
+        def _calibrate_noise(self, _pcm):
+            raise RuntimeError("calibration failed")
+
+    engines = [FakeEngine(), FailingCalibrationEngine(), FakeEngine()]
+    worker = VoiceWorker(
+        "voice_input_test",
+        event_sink=lambda _event: None,
+        engine_factory=lambda: engines.pop(0),
+        pcm_factory=lambda: pcms.pop(0),
+    )
+    first_pcm = pcms[0]
+    worker.start()
+    worker.stop_listening()
+    failed_pcm = pcms[0]
+
+    with pytest.raises(RuntimeError, match="calibration failed"):
+        worker.start_listening()
+
+    assert failed_pcm.closed is True
+    assert worker._listening.is_set() is False
+    assert worker._thread is None
+    assert worker.start_listening() == {"ok": True, "listening": True}
+    worker.stop()
+    assert first_pcm.closed is True
+
+
+def test_stop_during_voice_calibration_wins_without_ready_event() -> None:
+    calibration_started = threading.Event()
+    release_calibration = threading.Event()
+    events = []
+
+    class BlockingCalibrationEngine(FakeEngine):
+        def _calibrate_noise(self, _pcm):
+            calibration_started.set()
+            release_calibration.wait(timeout=1.0)
+
+    worker = VoiceWorker(
+        "voice_input_test",
+        event_sink=events.append,
+        engine_factory=BlockingCalibrationEngine,
+        pcm_factory=lambda: FakePCM([]),
+    )
+    result = {}
+    starter = threading.Thread(target=lambda: result.update(worker.start_listening()))
+    starter.start()
+    assert calibration_started.wait(timeout=1.0)
+
+    assert worker.stop_listening() == {"ok": True, "listening": False}
+    release_calibration.set()
+    starter.join(timeout=1.0)
+
+    assert starter.is_alive() is False
+    assert result == {"ok": True, "listening": False}
+    assert worker._thread is None
+    assert [event["type"] for event in events] == ["calibrating"]
+
+
 @pytest.mark.parametrize("text", ["", "   ", "。", "，！", "... "])
 def test_voice_ignores_punctuation_only_transcripts(text) -> None:
     calls: list[str] = []

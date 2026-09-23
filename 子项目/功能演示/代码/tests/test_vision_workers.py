@@ -223,3 +223,131 @@ def test_stop_during_reconnect_never_opens_another_camera():
 
     assert time.monotonic() - started < 0.5
     assert len(created) == 1
+
+
+def test_stop_after_backoff_returns_never_opens_another_camera():
+    reconnecting = threading.Event()
+
+    class BackoffGapEvent(threading.Event):
+        def __init__(self):
+            super().__init__()
+            self.returning = threading.Event()
+            self.allow_return = threading.Event()
+
+        def wait(self, timeout=None):
+            if timeout == 1.0:
+                self.returning.set()
+                self.allow_return.wait(timeout=1.0)
+                return False
+            return super().wait(timeout)
+
+    class FailingCamera(FakeCamera):
+        def read(self):
+            return False, None
+
+    created = []
+    worker = VisionWorker(
+        adapter=FakeVisionAdapter([]),
+        camera_factory=lambda: created.append(FailingCamera([])) or created[-1],
+        encode_frame=lambda frame: b"jpeg",
+        event_sink=lambda event: reconnecting.set()
+        if event["type"] == "camera_reconnecting"
+        else None,
+        read_failure_limit=1,
+        reconnect_delays=(1.0,),
+    )
+    gap_event = BackoffGapEvent()
+    worker._stop_event = gap_event
+
+    worker.start()
+    assert reconnecting.wait(timeout=1.0)
+    assert gap_event.returning.wait(timeout=1.0)
+    stopped = threading.Event()
+    stop_thread = threading.Thread(target=lambda: (worker.stop(), stopped.set()))
+    stop_thread.start()
+    assert gap_event.is_set()
+    gap_event.allow_return.set()
+    stop_thread.join(timeout=1.0)
+
+    assert stopped.is_set()
+    assert len(created) == 1
+
+
+def test_camera_reports_recovered_only_after_first_successful_frame():
+    events = []
+    replacement_reading = threading.Event()
+    allow_frame = threading.Event()
+    recovered = threading.Event()
+    frame_emitted = threading.Event()
+
+    class FailingCamera(FakeCamera):
+        def read(self):
+            return False, None
+
+    class ReplacementCamera(FakeCamera):
+        def read(self):
+            replacement_reading.set()
+            allow_frame.wait(timeout=1.0)
+            return True, "first-recovered-frame"
+
+    cameras = [FailingCamera([]), ReplacementCamera([])]
+
+    def emit(event):
+        events.append(event)
+        if event["type"] == "camera_recovered":
+            recovered.set()
+        if event["type"] == "frame":
+            frame_emitted.set()
+
+    worker = VisionWorker(
+        adapter=FakeVisionAdapter([]),
+        camera_factory=lambda: cameras.pop(0),
+        encode_frame=lambda frame: b"jpeg",
+        event_sink=emit,
+        read_failure_limit=1,
+        reconnect_delays=(0.01,),
+    )
+
+    worker.start()
+    assert replacement_reading.wait(timeout=1.0)
+    assert recovered.is_set() is False
+    allow_frame.set()
+    assert recovered.wait(timeout=1.0)
+    assert frame_emitted.wait(timeout=1.0)
+    worker.stop()
+
+    assert [event["type"] for event in events].index("camera_recovered") < [
+        event["type"] for event in events
+    ].index("frame")
+
+
+def test_camera_read_exception_uses_the_reconnect_path():
+    recovered_frame = threading.Event()
+    events = []
+
+    class RaisingCamera(FakeCamera):
+        def read(self):
+            raise OSError("camera transport failed")
+
+    class ReplacementCamera(FakeCamera):
+        def read(self):
+            time.sleep(0.005)
+            recovered_frame.set()
+            return True, "recovered"
+
+    cameras = [RaisingCamera([]), ReplacementCamera([])]
+    worker = VisionWorker(
+        adapter=FakeVisionAdapter([]),
+        camera_factory=lambda: cameras.pop(0),
+        encode_frame=lambda frame: b"jpeg",
+        event_sink=events.append,
+        read_failure_limit=1,
+        reconnect_delays=(0.01,),
+    )
+
+    worker.start()
+    assert recovered_frame.wait(timeout=1.0)
+    worker.stop()
+
+    assert "camera_reconnecting" in [event["type"] for event in events]
+    assert "camera_recovered" in [event["type"] for event in events]

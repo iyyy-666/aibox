@@ -53,6 +53,9 @@ class VisionWorker:
         self._read_failure_limit = max(1, read_failure_limit)
         self._reconnect_delays = reconnect_delays or (0.1,)
         self._camera: Camera | None = None
+        self._camera_lifecycle_lock = threading.Lock()
+        self._lifecycle_generation = 0
+        self._recovery_pending = False
         self._stop_event = threading.Event()
         self._capture_thread: threading.Thread | None = None
         self._processing_thread: threading.Thread | None = None
@@ -76,6 +79,9 @@ class VisionWorker:
             raise RuntimeError(f"无法打开摄像头 {self._camera_device}。")
         self._camera = camera
         self._stop_event.clear()
+        with self._camera_lifecycle_lock:
+            self._lifecycle_generation += 1
+            self._recovery_pending = False
         with self._frame_ready:
             self._frame_sequence = 0
             self._latest_frame = None
@@ -95,13 +101,25 @@ class VisionWorker:
 
     def _capture_loop(self) -> None:
         failures = 0
+        generation = self._lifecycle_generation
         while not self._stop_event.is_set():
             camera = self._camera
             if camera is None:
                 return
-            ok, frame = camera.read()
+            try:
+                ok, frame = camera.read()
+            except Exception:
+                ok, frame = False, None
             if ok:
                 failures = 0
+                if self._recovery_pending:
+                    self._recovery_pending = False
+                    self._emit(
+                        {
+                            "type": "camera_recovered",
+                            "message": "摄像头已重新连接。",
+                        }
+                    )
                 with self._frame_ready:
                     self._frame_sequence += 1
                     self._latest_frame = frame
@@ -112,10 +130,10 @@ class VisionWorker:
                 self._stop_event.wait(0.05)
                 continue
             failures = 0
-            if not self._reconnect_camera():
+            if not self._reconnect_camera(generation):
                 return
 
-    def _reconnect_camera(self) -> bool:
+    def _reconnect_camera(self, generation: int) -> bool:
         camera = self._camera
         self._camera = None
         if camera is not None:
@@ -132,19 +150,24 @@ class VisionWorker:
             if self._stop_event.wait(delay):
                 return False
             replacement = None
-            try:
-                replacement = self._camera_factory()
-                if replacement.isOpened() and not self._stop_event.is_set():
-                    self._camera = replacement
-                    self._emit(
-                        {
-                            "type": "camera_recovered",
-                            "message": "摄像头已重新连接。",
-                        }
-                    )
-                    return True
-            except Exception:
-                pass
+            with self._camera_lifecycle_lock:
+                if (
+                    self._stop_event.is_set()
+                    or generation != self._lifecycle_generation
+                ):
+                    return False
+                try:
+                    replacement = self._camera_factory()
+                    if (
+                        replacement.isOpened()
+                        and not self._stop_event.is_set()
+                        and generation == self._lifecycle_generation
+                    ):
+                        self._camera = replacement
+                        self._recovery_pending = True
+                        return True
+                except Exception:
+                    pass
             if replacement is not None:
                 replacement.release()
             attempt += 1
@@ -196,6 +219,8 @@ class VisionWorker:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._camera_lifecycle_lock:
+            self._lifecycle_generation += 1
         with self._frame_ready:
             self._frame_ready.notify_all()
         for thread in (self._capture_thread, self._processing_thread):
