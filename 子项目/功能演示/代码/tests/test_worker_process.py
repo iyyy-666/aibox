@@ -157,6 +157,29 @@ def test_worker_snapshot_retains_correlatable_events_without_frame_bytes():
     worker.stop(0.1)
 
 
+def test_worker_snapshot_keeps_latest_frame_when_status_changes():
+    script = (
+        "import json,sys,time;"
+        "print('{\"type\":\"ready\"}',flush=True);"
+        "print(json.dumps({'type':'frame','frame_sequence':7,"
+        "'frame_jpeg_base64':'amBlZw=='}),flush=True);"
+        "print(json.dumps({'type':'camera_reconnecting','message':'retry'}),flush=True);"
+        "time.sleep(0.5)"
+    )
+    worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
+    worker.start()
+    deadline = time.monotonic() + 0.5
+    snapshot = worker.snapshot()
+    while snapshot.get("event_sequence", 0) < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+        snapshot = worker.snapshot()
+
+    assert snapshot["type"] == "camera_reconnecting"
+    assert snapshot["frame_sequence"] == 7
+    assert snapshot["frame_jpeg_base64"] == "amBlZw=="
+    worker.stop(0.1)
+
+
 def test_worker_stop_cleans_process_group_after_leader_exits(monkeypatch):
     worker = WorkerProcess([sys.executable, "-c", "pass"])
 

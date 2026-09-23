@@ -136,3 +136,18 @@ def test_snapshot_action_downloads_the_displayed_frame_without_api_command(
 def test_visual_preemptive_actions_share_per_command_disabled_state(app_javascript):
     assert 'document.querySelectorAll("[data-command]")' in app_javascript
     assert "appState.commandRequestPending && !preemptiveCommands.has" in app_javascript
+
+
+def test_frame_updates_use_abortable_single_request_loop(app_javascript):
+    assert "setInterval(refresh, 250)" not in app_javascript
+    assert "AbortController" in app_javascript
+    assert "frameRequest" in app_javascript
+    assert "document.hidden ? 500 : 80" in app_javascript
+    assert "window.setTimeout" in app_javascript
+
+
+def test_status_socket_reconnects_only_for_the_active_module(app_javascript):
+    assert "socketReconnectTimer" in app_javascript
+    assert "socketReconnectAttempt" in app_javascript
+    assert "[250, 500, 1000, 2000]" in app_javascript
+    assert "appState.active?.module_id === moduleId" in app_javascript

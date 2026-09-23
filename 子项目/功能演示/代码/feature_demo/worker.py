@@ -46,6 +46,7 @@ class WorkerProcess:
         self._pending_commands: dict[str, _PendingCommand] = {}
         self._event_sequence = 0
         self._recent_events: deque[dict] = deque(maxlen=32)
+        self._latest_frame: dict = {}
 
     @property
     def pids(self) -> tuple[int, ...] | None:
@@ -63,6 +64,7 @@ class WorkerProcess:
         self._startup_event.clear()
         self._event_sequence = 0
         self._recent_events.clear()
+        self._latest_frame = {}
         stderr = subprocess.DEVNULL
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +117,11 @@ class WorkerProcess:
                 request_id = event.get("request_id")
                 with self._state_lock:
                     self._last_event = event
+                    if event_type == "frame" and event.get("frame_jpeg_base64"):
+                        self._latest_frame = {
+                            "frame_jpeg_base64": event["frame_jpeg_base64"],
+                            "frame_sequence": event.get("frame_sequence", 0),
+                        }
                     self._event_sequence += 1
                     compact_event = {
                         key: value
@@ -198,8 +205,10 @@ class WorkerProcess:
             last_event = dict(self._last_event)
             recent_events = [dict(event) for event in self._recent_events]
             event_sequence = self._event_sequence
+            latest_frame = dict(self._latest_frame)
         return {
             **last_event,
+            **latest_frame,
             "pid": process.pid if process is not None else None,
             "alive": bool(process is not None and process.poll() is None),
             "event_sequence": event_sequence,

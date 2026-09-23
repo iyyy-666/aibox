@@ -86,7 +86,15 @@ def create_app(manager: ModuleManager) -> FastAPI:
             content = base64.b64decode(encoded_frame, validate=True)
         except (ValueError, TypeError):
             raise HTTPException(status_code=500, detail="画面数据无法读取。")
-        return Response(content=content, media_type="image/jpeg")
+        frame_sequence = (snapshot.details or {}).get("frame_sequence", 0)
+        return Response(
+            content=content,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Frame-Sequence": str(frame_sequence),
+            },
+        )
 
     @app.websocket("/ws/modules/{module_id}")
     async def module_events(websocket: WebSocket, module_id: str) -> None:
