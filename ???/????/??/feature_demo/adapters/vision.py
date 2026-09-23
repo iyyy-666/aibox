@@ -145,8 +145,12 @@ class LegacyVisionAdapter:
                 detections = self.instance._detect_haar(normal)
         elif mode == "palm":
             left, right = self.module.split_stereo(frame)
-            normal = left
             detections = self.instance._detect_hands(left, right)
+            normal = (
+                right
+                if getattr(self.instance, "_last_detection_eye", "left") == "right"
+                else left
+            )
         else:
             raise RuntimeError(f"未知的视觉适配模式：{mode}")
         annotated = self.instance._annotate(normal, detections)

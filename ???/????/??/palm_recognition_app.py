@@ -238,12 +238,16 @@ class PalmRecognitionApp:
         return detections[:3]
 
     def _detect_hands(self, left: np.ndarray, right: np.ndarray) -> list[HandDetection]:
-        right_boxes = self._candidate_boxes(right)
+        self._last_detection_eye = "left"
+        verification_boxes = self._candidate_boxes(right)
         candidates: list[tuple[str, tuple[int, int, int, int], float, int, str]] = []
         if self._detector_mode == "mediapipe":
             observations = self.hand_detector.detect(left)
             if not observations:
                 observations = self.hand_detector.detect(right)
+                if observations:
+                    self._last_detection_eye = "right"
+                    verification_boxes = self._candidate_boxes(left)
             for observation in observations:
                 candidates.append((observation.gesture or "hand", observation.box, max(0.35, observation.confidence), 0, "MediaPipe"))
         else:
@@ -253,7 +257,7 @@ class PalmRecognitionApp:
         detections: list[HandDetection] = []
         labels = {"rock": "\u77f3\u5934", "scissors": "\u526a\u5200", "paper": "\u5e03", "hand": "\u624b\u638c"}
         for gesture, box, confidence, fingers, source in candidates[:1]:
-            stereo = match_stereo_candidate(box, right_boxes, left.shape)
+            stereo = match_stereo_candidate(box, verification_boxes, left.shape)
             tracked = self._tracker.update(box)
             stable_gesture = self._voter.update(gesture if gesture in labels and gesture != "hand" else None, eligible=stereo.matched and tracked)
             display_gesture = stable_gesture or gesture
@@ -365,7 +369,8 @@ class PalmRecognitionApp:
         if frame is None:
             self.canvas.create_text(cw // 2, ch // 2, fill="#dfe7f2", font=("Microsoft YaHei", 16), text=T_OPENING)
         else:
-            normal = self._normal_frame(frame)
+            left, right = split_stereo(frame)
+            normal = right if getattr(self, "_last_detection_eye", "left") == "right" else left
             view = self._annotate(normal, detections)
             self.last_view = view.copy()
             rgb = cv2.cvtColor(view, cv2.COLOR_BGR2RGB)

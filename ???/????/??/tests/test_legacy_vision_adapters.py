@@ -238,3 +238,25 @@ def test_tracking_tries_right_eye_after_left_eye_miss():
     assert annotated is right
     assert instance.current_box == (1, 1, 2, 2)
     assert result["tracking"] is False
+
+
+def test_palm_recognition_annotates_the_eye_used_for_detection():
+    left = np.zeros((4, 6, 3), dtype=np.uint8)
+    right = np.ones((4, 6, 3), dtype=np.uint8)
+    instance = SimpleNamespace()
+    instance._detect_hands = (
+        lambda _left, _right: setattr(instance, "_last_detection_eye", "right") or []
+    )
+    instance._normal_frame = lambda _frame: left
+    instance._annotate = lambda image, _detections: image
+    module = SimpleNamespace(split_stereo=lambda _frame: (left, right))
+    adapter = LegacyVisionAdapter(
+        "palm_recognition",
+        module,
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "palm"),
+    )
+
+    annotated, _result = adapter.process(object())
+
+    assert annotated is right
