@@ -355,6 +355,19 @@ class VoiceWorker:
                 and self._pcm is pcm
             )
 
+    def _accept_transcript(
+        self, generation: int, engine, pcm, raw: object, normalized: object
+    ) -> None:
+        with self._lifecycle_lock:
+            if (
+                generation != self._listen_generation
+                or not self._listening.is_set()
+                or self._engine is not engine
+                or self._pcm is not pcm
+            ):
+                return
+            self._handle_text(str(raw), str(normalized))
+
     def _listen_loop(self, generation: int, engine, pcm) -> None:
         self._listener_started.set()
         while self._listener_is_current(generation, engine, pcm):
@@ -376,11 +389,10 @@ class VoiceWorker:
                 if not callable(recognize):
                     continue
                 raw, normalized = recognize(audio)
-                if (
-                    normalized
-                    and self._listener_is_current(generation, engine, pcm)
-                ):
-                    self._handle_text(str(raw), str(normalized))
+                if normalized:
+                    self._accept_transcript(
+                        generation, engine, pcm, raw, normalized
+                    )
             except Exception as exc:
                 if self._listener_is_current(generation, engine, pcm):
                     self._emit({"type": "error", "message": str(exc)})
