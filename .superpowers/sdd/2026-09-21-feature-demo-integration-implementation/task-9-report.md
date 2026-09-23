@@ -204,3 +204,24 @@ Review then identified a related state-integrity gap. Generation-stale single, b
 A subsequent ordering RED reproduced `old send -> stop -> valid new action -> old state commit`: the pre-stop action overwrote the newer action's PWM state after stop (`1 failed, 8 passed`). Generation validation, serial send, and in-memory state commit now share the motion-write lock, so a later generation always wins. The final latency RED delayed PWM persistence and proved that filesystem I/O could hold the motion lock and block `$DST!` (`1 failed, 9 passed`). Persistence now runs after releasing the motion lock and uses a separate persistence lock, preserving file-write order without delaying emergency stop.
 
 Final focused GREEN was `10 passed`. The fresh unified suite passed `177` tests with two dependency deprecation warnings. Affected legacy suites passed shared resources `12`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit `2`, and shape `3`. Compileall for unified and shared code, Node syntax, all five Bash syntax checks, and `git diff --check` exited `0`; Git reported only line-ending notices. This round remains local-only and has not been deployed.
+
+## Performance and Stability Deployment (2026-09-23)
+
+The unified application now separates camera capture from recognition with a capacity-one latest-frame slot. Three consecutive read failures release the failed capture and reopen the stable camera path with interruptible bounded backoff. The HTTP frame response exposes the actual `X-Frame-Sequence`; the frontend uses one abortable request at a time with 80 ms active and 500 ms hidden-page intervals, and status WebSockets reconnect with bounded backoff. The latest JPEG remains available while camera status events are emitted.
+
+Object sorting is locked to the left monocular image while the right-side actions, results, and four-direction gimbal step controls remain visible. Voice startup now calibrates ambient noise before listening, ignores empty or punctuation-only transcripts before command matching, and uses the installed Paraformer large model with explicit Chinese capture thresholds. No recognition thresholds, ROI values, robot actions, PWM limits, or serial protocols changed.
+
+Local verification passed the unified suite (`218 passed`) and affected legacy suites (shared resources `12`, voice robot arm `5`, palm tracking `21`, palm recognition `12`, fruit `2`, shape `3`). Python compilation, JavaScript syntax, all five Bash syntax checks, and `git diff --check` passed. The old suites must run in separate pytest processes because several legacy projects intentionally use the same top-level `vision_targeting` module name.
+
+Deployment was preceded by a file-level rollback backup at `/root/feature-demo-backups/performance-stability-20260923_101720`. All seven deployed application/configuration files matched local SHA-256 hashes. No apt/dpkg operation or reboot was performed.
+
+Board measurements and lifecycle evidence:
+
+- Color recognition advanced `76` backend frame sequences in five seconds (`15.2 FPS`). A single-flight 80 ms client loop obtained `59` distinct frames (`11.8 FPS`) with no overlapping requests.
+- Color recognition, object sorting, and face detection returned `640x480` single-eye JPEG frames. Object sorting retained the complete right-side control layout by frontend contract.
+- Voice input reached `running` in `5.7s`; recent events showed `calibrating -> listening -> ready`. The worker environment contained `VOICE_BACKEND=paraformer`, `VOICE_LANGUAGE=zh`, and `/root/sherpa_models/paraformer-large-int8`. Four seconds of ambient listening produced no false speech event, and microphone ownership cleared after stop.
+- All 13 registered modules completed real start/stop checks. Every stop returned `idle`, and camera, microphone, robot, and gimbal owner checks were empty.
+- The board's OpenCV build omits `CascadeClassifier`. A test-first compatibility fix skips only the unavailable Haar fallback while preserving the existing DNN/YuNet order and thresholds; face detection then reached `running`, produced `640x480`, and stopped cleanly.
+- The real PyWebView window remained visible with title `功能演示`. The desktop retained exactly one `功能演示.desktop` entry; both legacy and unified systemd services remained disabled/inactive.
+
+Automatic reconnect behavior is covered by deterministic tests for consecutive read failures, replacement capture, latest-frame overwrite, and stop during backoff. A physical USB unplug was not forced during this run. Spoken-phrase accuracy still depends on the room, speaker distance, and microphone gain; the deployed backend, calibration, invalid-result filtering, and thresholds were verified on-device.
