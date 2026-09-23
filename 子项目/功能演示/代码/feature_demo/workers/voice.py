@@ -126,6 +126,8 @@ class VoiceWorker:
         self._engine = None
         self._pcm = None
         self._thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._listen_generation = 0
         self._listener_started = threading.Event()
         self._join_timeout = join_timeout
         self._listening = threading.Event()
@@ -142,71 +144,125 @@ class VoiceWorker:
         self.start_listening()
 
     def start_listening(self) -> dict:
-        if self._listening.is_set():
-            return {"ok": True, "listening": True}
-        if self.module_id == "voice_robot_arm" and self._robot is not None:
-            self._robot.connect()
-        self._engine = self._engine_factory()
-        set_commands = getattr(self._engine, "set_commands", None)
-        if self.module_id == "voice_robot_arm":
-            commands = {name: None for name in ROBOT_COMMANDS}
-            self._engine.use_command_grammar = True
-            if callable(set_commands):
-                set_commands(commands)
-        else:
-            self._engine.use_command_grammar = False
-            if callable(set_commands):
-                set_commands({})
-        load = getattr(self._engine, "load", None)
-        if callable(load) and not load():
-            raise RuntimeError(getattr(self._engine, "last_error", "语音模型加载失败"))
-        self._pcm = self._pcm_factory()
-        self._started = True
-        self._listening.set()
-        calibrate = getattr(self._engine, "_calibrate_noise", None)
-        if callable(calibrate):
-            self._engine.running = True
-            self._emit(
-                {
-                    "type": "calibrating",
-                    "module": self.module_id,
-                    "message": "正在校准环境噪声。",
-                }
-            )
-            calibrate(self._pcm)
-        self._listener_started.clear()
-        self._thread = threading.Thread(target=self._listen_loop, daemon=True)
-        self._thread.start()
-        self._emit({"type": "listening", "module": self.module_id, "message": "正在监听中文语音。"})
-        if not self._listener_started.wait(timeout=self._join_timeout):
-            self.stop_listening()
-            raise TimeoutError("语音监听启动超时。")
-        self._emit({"type": "ready", "module": self.module_id, "message": "语音功能已就绪。"})
-        return {"ok": True, "listening": True}
+        with self._lifecycle_lock:
+            if self._listening.is_set():
+                return {"ok": True, "listening": True}
+            self._listen_generation += 1
+            generation = self._listen_generation
+        engine = None
+        pcm = None
+        try:
+            engine = self._engine_factory()
+            set_commands = getattr(engine, "set_commands", None)
+            if self.module_id == "voice_robot_arm":
+                commands = {name: None for name in ROBOT_COMMANDS}
+                engine.use_command_grammar = True
+                if callable(set_commands):
+                    set_commands(commands)
+            else:
+                engine.use_command_grammar = False
+                if callable(set_commands):
+                    set_commands({})
+            load = getattr(engine, "load", None)
+            if callable(load) and not load():
+                raise RuntimeError(getattr(engine, "last_error", "语音模型加载失败"))
+            pcm = self._pcm_factory()
+            with self._lifecycle_lock:
+                if generation != self._listen_generation:
+                    self._release_listening_resources(engine, pcm)
+                    return {"ok": True, "listening": False}
+                self._engine = engine
+                self._pcm = pcm
+                self._started = True
+                self._listening.set()
+            calibrate = getattr(engine, "_calibrate_noise", None)
+            if callable(calibrate):
+                engine.running = True
+                self._emit(
+                    {
+                        "type": "calibrating",
+                        "module": self.module_id,
+                        "message": "正在校准环境噪声。",
+                    }
+                )
+                calibrate(pcm)
+            with self._lifecycle_lock:
+                if (
+                    generation != self._listen_generation
+                    or not self._listening.is_set()
+                    or self._pcm is not pcm
+                ):
+                    self._release_listening_resources(engine, pcm)
+                    return {"ok": True, "listening": False}
+                if self.module_id == "voice_robot_arm" and self._robot is not None:
+                    self._robot.connect()
+                self._listener_started.clear()
+                self._thread = threading.Thread(target=self._listen_loop, daemon=True)
+                self._thread.start()
+                self._emit({"type": "listening", "module": self.module_id, "message": "正在监听中文语音。"})
+            if not self._listener_started.wait(timeout=self._join_timeout):
+                self.stop_listening()
+                raise TimeoutError("语音监听启动超时。")
+            with self._lifecycle_lock:
+                if generation != self._listen_generation or not self._listening.is_set():
+                    return {"ok": True, "listening": False}
+                self._emit({"type": "ready", "module": self.module_id, "message": "语音功能已就绪。"})
+                return {"ok": True, "listening": True}
+        except Exception:
+            with self._lifecycle_lock:
+                if self._engine is engine:
+                    self._engine = None
+                if self._pcm is pcm:
+                    self._pcm = None
+                if generation == self._listen_generation:
+                    self._listen_generation += 1
+                    self._listening.clear()
+                    self._thread = None
+            self._release_listening_resources(engine, pcm)
+            raise
 
     def stop_listening(self) -> dict:
-        self._listening.clear()
-        if self._engine is not None:
+        with self._lifecycle_lock:
+            self._listen_generation += 1
+            self._listening.clear()
+            engine = self._engine
+            pcm = self._pcm
+            thread = self._thread
+            self._pcm = None
+        if engine is not None:
             with suppress(Exception):
-                self._engine.running = False
+                engine.running = False
         # Close first: ALSA read may be blocked and must release before stopped.
-        pcm = self._pcm
-        self._pcm = None
         close = getattr(pcm, "close", None)
         if callable(close):
             with suppress(Exception):
                 close()
-        stop = getattr(self._engine, "stop", None)
+        stop = getattr(engine, "stop", None)
         if callable(stop):
             with suppress(Exception):
                 stop()
-        thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=self._join_timeout)
         if thread is not None and thread.is_alive():
             raise TimeoutError("语音监听停止超时。")
-        self._thread = None
+        with self._lifecycle_lock:
+            if self._thread is thread:
+                self._thread = None
         return {"ok": True, "listening": False}
+
+    @staticmethod
+    def _release_listening_resources(engine, pcm) -> None:
+        if engine is not None:
+            with suppress(Exception):
+                engine.running = False
+        close = getattr(pcm, "close", None)
+        if callable(close):
+            with suppress(Exception):
+                close()
+        stop = getattr(engine, "stop", None)
+        if callable(stop):
+            with suppress(Exception):
+                stop()
 
     def stop(self) -> None:
         self.stop_listening()
