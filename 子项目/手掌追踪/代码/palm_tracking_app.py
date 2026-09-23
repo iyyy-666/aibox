@@ -138,6 +138,8 @@ class PalmTrackingApp:
                     left, _right = split_stereo(frame)
                     self.image_size = (left.shape[1], left.shape[0])
                     observations = self.hand_detector.detect(left)
+                    if not observations:
+                        observations = self.hand_detector.detect(right)
                     boxes = [item.box for item in observations]
                     with self.box_lock:
                         if self.tracking_enabled:

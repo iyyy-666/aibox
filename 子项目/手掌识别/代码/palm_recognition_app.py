@@ -241,7 +241,10 @@ class PalmRecognitionApp:
         right_boxes = self._candidate_boxes(right)
         candidates: list[tuple[str, tuple[int, int, int, int], float, int, str]] = []
         if self._detector_mode == "mediapipe":
-            for observation in self.hand_detector.detect(left):
+            observations = self.hand_detector.detect(left)
+            if not observations:
+                observations = self.hand_detector.detect(right)
+            for observation in observations:
                 candidates.append((observation.gesture or "hand", observation.box, max(0.35, observation.confidence), 0, "MediaPipe"))
         else:
             for gesture, box, confidence, fingers in self._fallback_detections(left):

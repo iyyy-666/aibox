@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 
 import cv2
@@ -66,8 +67,13 @@ class HandLandmarkDetector:
             self._hands = mp.solutions.hands.Hands(
                 static_image_mode=False,
                 max_num_hands=1,
-                min_detection_confidence=0.60,
-                min_tracking_confidence=0.55,
+                model_complexity=0,
+                min_detection_confidence=float(
+                    os.getenv("PALM_MIN_DETECTION_CONFIDENCE", "0.35")
+                ),
+                min_tracking_confidence=float(
+                    os.getenv("PALM_MIN_TRACKING_CONFIDENCE", "0.45")
+                ),
             )
             self.available = True
         except Exception as exc:

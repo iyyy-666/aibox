@@ -11,6 +11,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+from ..resources import DEFAULT_DEVICE_PATHS, ensure_distinct_actuator_devices
+
 
 @dataclass(frozen=True, slots=True)
 class LegacyVisionSpec:
@@ -154,9 +156,14 @@ class LegacyVisionAdapter:
         with self._tracking_lock:
             tracking_action = None
             generation = self._tracking_generation
-            left, _ = self.module.split_stereo(frame)
-            self.instance.image_size = (left.shape[1], left.shape[0])
+            left, right = self.module.split_stereo(frame)
+            selected = left
             observations = self.instance.hand_detector.detect(left)
+            if not observations:
+                observations = self.instance.hand_detector.detect(right)
+                if observations:
+                    selected = right
+            self.instance.image_size = (selected.shape[1], selected.shape[0])
             boxes = [item.box for item in observations]
             if self.instance.tracking_enabled:
                 self.instance.current_box = self.instance.target_lock.update(boxes)
@@ -188,7 +195,7 @@ class LegacyVisionAdapter:
                         "pitch_delta_pwm": decision.pitch_delta_pwm,
                     }
                 self._last_control_at = now
-            annotated = self.instance._annotate(left, self.instance.current_box)
+            annotated = self.instance._annotate(selected, self.instance.current_box)
             result = {
                 "result": "已检测到手掌" if self.instance.current_box else "未检测到手掌",
                 "tracking": self.instance.tracking_enabled,
@@ -297,8 +304,15 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         )
         instance.controller = module.PalmTrackingController(config)
         instance.target_lock = module.PalmTargetLock()
+        gimbal_port = os.getenv(
+            "PALM_TRACK_SERIAL_PORT",
+            "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00",
+        )
+        ensure_distinct_actuator_devices(
+            {"robot": DEFAULT_DEVICE_PATHS["robot"], "gimbal": (gimbal_port,)}
+        )
         instance.gimbal = module.SerialGimbalClient(
-            port=os.getenv("PALM_TRACK_SERIAL_PORT", "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"),
+            port=gimbal_port,
             baud=int(os.getenv("PALM_TRACK_SERIAL_BAUD", "115200")),
             yaw_id=int(os.getenv("PALM_TRACK_YAW_ID", "1")),
             pitch_id=int(os.getenv("PALM_TRACK_PITCH_ID", "2")),

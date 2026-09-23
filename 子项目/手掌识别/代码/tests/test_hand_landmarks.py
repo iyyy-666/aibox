@@ -46,3 +46,33 @@ def test_detector_gracefully_reports_missing_mediapipe(monkeypatch) -> None:
     assert not detector.available
     assert detector.error
     assert detector.detect(np.zeros((100, 100, 3), dtype=np.uint8)) == []
+
+
+def test_detector_uses_tolerant_configurable_thresholds(monkeypatch) -> None:
+    created = []
+
+    class Hands:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+    fake_mp = type(
+        "MediaPipe",
+        (),
+        {"solutions": type("Solutions", (), {"hands": type("HandsApi", (), {"Hands": Hands})})},
+    )
+    monkeypatch.setattr(hand_landmarks, "mp", fake_mp)
+    monkeypatch.setenv("PALM_MIN_DETECTION_CONFIDENCE", "0.38")
+    monkeypatch.setenv("PALM_MIN_TRACKING_CONFIDENCE", "0.44")
+
+    detector = HandLandmarkDetector()
+
+    assert detector.available
+    assert created == [
+        {
+            "static_image_mode": False,
+            "max_num_hands": 1,
+            "model_complexity": 0,
+            "min_detection_confidence": 0.38,
+            "min_tracking_confidence": 0.44,
+        }
+    ]

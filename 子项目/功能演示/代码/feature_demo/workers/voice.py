@@ -197,8 +197,6 @@ class VoiceWorker:
                 ):
                     self._release_listening_resources(engine, pcm)
                     return {"ok": True, "listening": False}
-                if self.module_id == "voice_robot_arm" and self._robot is not None:
-                    self._robot.connect()
                 self._listener_started.clear()
                 self._thread = threading.Thread(
                     target=self._listen_loop,
@@ -418,11 +416,13 @@ class VoiceWorker:
             return
         command, payload = ROBOT_COMMANDS[text]
         if command == "center":
+            self._robot.connect()
             result = self._robot.command("center", {})
         elif command == "stop_motion":
             self._stop_robot_now()
             result = {"ok": True, "command": command}
         else:
+            self._robot.connect()
             result = self._robot.command(command, payload)
         self._emit(
             {

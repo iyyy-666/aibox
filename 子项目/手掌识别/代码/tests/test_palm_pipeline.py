@@ -42,6 +42,13 @@ class UnknownGestureDetector(FakeDetector):
         ]
 
 
+class RightEyeDetector(FakeDetector):
+    def detect(self, image: np.ndarray) -> list[HandObservation]:
+        if int(image[0, 0, 0]) == 0:
+            return []
+        return super().detect(image)
+
+
 def make_app(detector) -> PalmRecognitionApp:
     app = PalmRecognitionApp.__new__(PalmRecognitionApp)
     app.hand_detector = detector
@@ -101,3 +108,13 @@ def test_palm_pipeline_uses_contour_fallback_when_landmarks_unavailable() -> Non
     assert detection.gesture == "\u77f3\u5934"
     assert detection.source == "Contour"
     assert not detection.stable
+
+
+def test_palm_pipeline_tries_right_eye_after_left_eye_landmark_miss() -> None:
+    app = make_app(RightEyeDetector())
+    left = np.zeros((480, 640, 3), dtype=np.uint8)
+    right = np.ones((480, 640, 3), dtype=np.uint8)
+
+    detection = app._detect_hands(left, right)[0]
+
+    assert detection.source == "MediaPipe"

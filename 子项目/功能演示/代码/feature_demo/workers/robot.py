@@ -20,7 +20,6 @@ class RobotWorker:
     def start(self) -> None:
         if self._started:
             return
-        self._adapter.connect()
         self._started = True
         self._emit({"type": "ready", "message": "机械臂已连接，等待操作。"})
 

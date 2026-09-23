@@ -15,9 +15,20 @@ DEFAULT_DEVICE_PATHS: dict[str, tuple[str, ...]] = {
     "speaker": ("/dev/snd/pcmC0D0p",),
     "robot": ("/dev/esp32_arm",),
     "gimbal": (
-        "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+        "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00",
     ),
 }
+
+
+def ensure_distinct_actuator_devices(
+    device_paths: Mapping[str, tuple[str, ...]],
+) -> None:
+    for robot_path in device_paths.get("robot", ()):
+        for gimbal_path in device_paths.get("gimbal", ()):
+            if os.path.realpath(robot_path) == os.path.realpath(gimbal_path):
+                raise RuntimeError(
+                    "gimbal and robot serial devices resolve to the same device"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +86,7 @@ class ResourceVerifier:
             )
         else:
             self._device_paths = dict(device_paths)
+        ensure_distinct_actuator_devices(self._device_paths)
 
     def verify(
         self,

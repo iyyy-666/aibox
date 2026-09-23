@@ -52,6 +52,8 @@ class RobotAdapter:
             self._robot = self._robot_factory(serial)
 
     def command(self, name: str, payload: dict) -> dict:
+        if name != "stop_motion" and not self.connected:
+            self.connect()
         if name == "sorting_transfer":
             return self._sorting_transfer(payload)
         if name == "stop_motion":
