@@ -18,8 +18,10 @@ class FakePCM:
         self.calls = calls
         self.closed = False
         self.release = threading.Event()
+        self.read_started = threading.Event()
 
     def read(self):
+        self.read_started.set()
         self.release.wait(timeout=1)
         return 0, b""
 
@@ -296,6 +298,7 @@ def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect()
         join_timeout=0.05,
     )
     worker.start()
+    assert pcm.read_started.wait(timeout=1.0)
 
     with pytest.raises(TimeoutError, match="语音监听停止超时"):
         worker.stop()
@@ -303,8 +306,40 @@ def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect()
     assert worker._thread is not None and worker._thread.is_alive()
     assert "disconnect" not in calls
     assert all(event["type"] != "stopped" for event in events)
+    with pytest.raises(RuntimeError, match="上一监听线程"):
+        worker.start_listening()
     pcm.release.set()
     worker._thread.join(timeout=1.0)
+
+
+def test_audio_returned_after_stop_never_emits_speech() -> None:
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    events: list[dict] = []
+
+    class LateAudioEngine(FakeEngine):
+        def _record_utterance(self, _pcm):
+            capture_started.set()
+            release_capture.wait(timeout=1.0)
+            return b"late audio"
+
+    worker = VoiceWorker(
+        "voice_input_test",
+        event_sink=events.append,
+        engine_factory=LateAudioEngine,
+        pcm_factory=lambda: BlockedPCM([]),
+        join_timeout=0.05,
+    )
+    worker.start()
+    assert capture_started.wait(timeout=1.0)
+
+    with pytest.raises(TimeoutError, match="语音监听停止超时"):
+        worker.stop_listening()
+    release_capture.set()
+    worker._thread.join(timeout=1.0)
+
+    assert all(event["type"] != "speech" for event in events)
+    worker.stop_listening()
 
 
 @pytest.mark.parametrize(
