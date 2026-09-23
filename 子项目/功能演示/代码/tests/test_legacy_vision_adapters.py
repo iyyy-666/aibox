@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import numpy as np
+
 from feature_demo.adapters.vision import (
     LEGACY_VISION_SPECS,
     LegacyVisionAdapter,
@@ -52,6 +54,30 @@ def test_adapter_build_does_not_call_legacy_tk_constructor(monkeypatch):
     assert constructor_calls == []
     assert annotated == "frame"
     assert result["result"] == []
+
+
+def test_sorting_returns_only_annotated_left_eye():
+    left = np.full((4, 6, 3), 11, dtype=np.uint8)
+    right = np.full((4, 6, 3), 222, dtype=np.uint8)
+    stereo = np.concatenate((left, right), axis=1)
+    module = SimpleNamespace(
+        split_stereo=lambda frame: (frame[:, :6], frame[:, 6:]),
+    )
+    instance = SimpleNamespace(
+        _detect_color=lambda _frame: None,
+        _annotate=lambda frame, _detected: frame,
+    )
+    adapter = LegacyVisionAdapter(
+        "object_sorting",
+        module,
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "sorting"),
+    )
+
+    annotated, _result = adapter.process(stereo)
+
+    assert annotated.shape == left.shape
+    assert np.all(annotated == 11)
 
 
 def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
