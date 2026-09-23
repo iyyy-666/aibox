@@ -165,6 +165,59 @@ def test_voice_worker_emits_ready_as_its_final_startup_signal() -> None:
     worker.stop()
 
 
+def test_voice_calibrates_before_listener_reads_pcm() -> None:
+    calls: list[str] = []
+
+    class CalibratingEngine(FakeEngine):
+        running = False
+
+        def _calibrate_noise(self, _pcm) -> None:
+            assert self.running is True
+            calls.append("calibrate")
+
+        def _record_utterance(self, _pcm):
+            calls.append("record")
+            return b""
+
+    worker = VoiceWorker(
+        "voice_input_test",
+        event_sink=lambda _event: None,
+        engine_factory=CalibratingEngine,
+        pcm_factory=lambda: FakePCM([]),
+    )
+
+    worker.start()
+    deadline = time.monotonic() + 1.0
+    while "record" not in calls and time.monotonic() < deadline:
+        time.sleep(0.005)
+    worker.stop()
+
+    assert calls.index("calibrate") < calls.index("record")
+
+
+@pytest.mark.parametrize("text", ["", "   ", "。", "，！", "... "])
+def test_voice_ignores_punctuation_only_transcripts(text) -> None:
+    calls: list[str] = []
+    events: list[dict] = []
+    adapter = RobotAdapter(
+        serial_factory=lambda: FakeSerial(calls),
+        robot_factory=lambda serial: FakeRobot(serial, calls),
+    )
+    worker = VoiceWorker(
+        "voice_robot_arm",
+        event_sink=events.append,
+        engine_factory=FakeEngine,
+        pcm_factory=lambda: FakePCM(calls),
+        robot_adapter=adapter,
+        command_matcher=lambda _text, _commands: "抓取",
+    )
+
+    worker._handle_text(text, text)
+
+    assert events == []
+    assert calls == []
+
+
 def test_blocked_voice_listener_prevents_premature_stopped_or_robot_disconnect() -> None:
     calls: list[str] = []
     pcm = BlockedPCM(calls)

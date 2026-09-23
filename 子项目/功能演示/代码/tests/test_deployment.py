@@ -505,6 +505,30 @@ def test_voice_configuration_is_installed_and_loaded_for_service_and_direct_laun
     assert '. /etc/default/feature-demo' in launcher
 
 
+def test_voice_configuration_selects_tuned_paraformer_chinese_capture():
+    assignments = {}
+    for line in (DEPLOY / "voice.conf").read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            assignments[key] = value
+
+    assert assignments["VOICE_BACKEND"] == "paraformer"
+    assert assignments["VOICE_LANGUAGE"] == "zh"
+    assert assignments["VOICE_GAIN"] == "3.0"
+    assert assignments["VOICE_TRIGGER_PEAK"] == "0.038"
+    assert assignments["VOICE_SILENCE_PEAK"] == "0.022"
+    assert assignments["VOICE_MIN_RECORD_SEC"] == "0.46"
+    assert assignments["VOICE_MAX_RECORD_SEC"] == "3.20"
+    assert assignments["VOICE_POST_SILENCE_SEC"] == "0.58"
+    assert assignments["VOICE_FAST_POST_SILENCE_SEC"] == "0.38"
+    assert assignments["VOICE_PRE_ROLL_FRAMES"] == "35"
+    assert assignments["VOICE_NOISE_TRIGGER_MULT"] == "1.25"
+    assert assignments["VOICE_NOISE_SILENCE_MULT"] == "1.05"
+    assert assignments["VOICE_MIN_TRIGGER_MARGIN"] == "0.009"
+    assert assignments["VOICE_MAX_DYNAMIC_TRIGGER"] == "0.22"
+    assert assignments["VOICE_MAX_DYNAMIC_SILENCE"] == "0.14"
+
+
 def test_regular_hardware_hook_inherits_configured_api_url(tmp_path):
     trace = tmp_path / "hook-url.txt"
     hook = tmp_path / "hook.sh"

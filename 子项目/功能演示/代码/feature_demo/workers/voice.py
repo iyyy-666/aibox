@@ -57,6 +57,10 @@ ROBOT_COMMANDS = {
 }
 
 
+def _is_meaningful_transcript(text: str) -> bool:
+    return any(character.isalnum() for character in (text or ""))
+
+
 def _legacy_engine_factory():
     root = Path(os.getenv("AIBOX_LEGACY_ROOT", "/root/robot_arm"))
     if str(root) not in sys.path:
@@ -159,6 +163,17 @@ class VoiceWorker:
         self._pcm = self._pcm_factory()
         self._started = True
         self._listening.set()
+        calibrate = getattr(self._engine, "_calibrate_noise", None)
+        if callable(calibrate):
+            self._engine.running = True
+            self._emit(
+                {
+                    "type": "calibrating",
+                    "module": self.module_id,
+                    "message": "正在校准环境噪声。",
+                }
+            )
+            calibrate(self._pcm)
         self._listener_started.clear()
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
@@ -299,6 +314,8 @@ class VoiceWorker:
                 return
 
     def _handle_text(self, raw: str, normalized: str) -> None:
+        if not _is_meaningful_transcript(normalized):
+            return
         self._emit({"type": "speech", "raw": raw, "normalized": normalized})
         if self._on_text is not None:
             self._on_text(normalized)
