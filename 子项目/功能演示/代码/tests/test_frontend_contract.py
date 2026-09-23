@@ -105,6 +105,15 @@ def test_command_request_locks_ordinary_commands_without_overriding_lifecycle_lo
     assert 'document.querySelectorAll("[data-command]")' in app_javascript
 
 
+def test_command_result_cannot_report_success_when_worker_rejects_it(app_javascript):
+    start = app_javascript.index("async function sendCommand")
+    end = app_javascript.index("\nfunction requestExit", start)
+    implementation = app_javascript[start:end]
+
+    assert "if (result?.ok === false)" in implementation
+    assert "throw new Error(result.message" in implementation
+
+
 def test_preemptive_controls_remain_available_during_long_commands(app_javascript):
     assert "preemptiveCommands" in app_javascript
     assert "preemptiveCommands.has(control.dataset.command)" in app_javascript

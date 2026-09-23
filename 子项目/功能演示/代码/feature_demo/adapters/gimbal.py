@@ -35,7 +35,10 @@ def _load_existing_service() -> GimbalServiceProtocol:
         sys.path.insert(0, str(legacy_root))
     from gimbal_service import GimbalService
 
-    return GimbalService()
+    state_path = os.getenv(
+        "AIBOX_GIMBAL_POSITION_STATE", "/tmp/aibox_gimbal_position.json"
+    )
+    return GimbalService(state_path=state_path)
 
 
 class GimbalAdapter:

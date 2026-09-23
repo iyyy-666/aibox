@@ -448,6 +448,9 @@ async function sendCommand(command, control) {
   }
   try {
     const result = await requestJson(`/api/modules/${appState.active.module_id}/commands/${command}`, { method: "POST", body: JSON.stringify(payload) });
+    if (result?.ok === false) {
+      throw new Error(result.message || "操作执行失败。");
+    }
     showToast(`${commandLabels[command] || "操作"}已发送。`);
     renderWorkerDetails(result || {});
     if (assistantText) assistantText.value = "";

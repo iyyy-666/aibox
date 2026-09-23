@@ -27,11 +27,17 @@ def _default_worker_factory(
     camera_device: str | None = None,
 ) -> ManagedWorker:
     selected_camera = camera_device or resolve_camera_device()
+    runtime_uid = getattr(os, "getuid", lambda: 0)()
+    gimbal_position_state = os.getenv(
+        "AIBOX_GIMBAL_POSITION_STATE",
+        f"/tmp/aibox_gimbal_position_{runtime_uid}.json",
+    )
     return WorkerProcess(
         [sys.executable, "-m", "feature_demo.workers", module.worker],
         environment={
             "PYTHONUNBUFFERED": "1",
             CAMERA_DEVICE_ENV: selected_camera,
+            "AIBOX_GIMBAL_POSITION_STATE": gimbal_position_state,
         },
         start_timeout=module.startup_timeout,
     )

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from feature_demo.adapters.gimbal import GimbalAdapter, UnsupportedCommand
@@ -60,3 +63,25 @@ def test_gimbal_close_releases_service():
     gimbal.close()
 
     assert service.closed is True
+
+
+def test_default_gimbal_service_shares_configured_position_state(monkeypatch):
+    created = []
+
+    class RecordingGimbalService(FakeGimbalService):
+        def __init__(self, *, state_path):
+            super().__init__()
+            created.append(state_path)
+
+    monkeypatch.setenv(
+        "AIBOX_GIMBAL_POSITION_STATE", "/tmp/aibox_gimbal_position_1000.json"
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "gimbal_service",
+        types.SimpleNamespace(GimbalService=RecordingGimbalService),
+    )
+
+    GimbalAdapter().step("left", 30)
+
+    assert created == ["/tmp/aibox_gimbal_position_1000.json"]

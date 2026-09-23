@@ -116,6 +116,22 @@ def test_registered_command_is_forwarded_to_active_worker(client):
     assert response.json() == {"ok": True, "command": "gimbal_left"}
 
 
+def test_hardware_command_failure_returns_readable_api_error(client, manager):
+    client.post("/api/modules/palm_tracking/start")
+
+    def fail_command(_name, _payload):
+        raise RuntimeError("云台通信失败：状态文件无权限")
+
+    manager._worker.command = fail_command
+
+    response = client.post(
+        "/api/modules/palm_tracking/commands/start_tracking", json={}
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "云台通信失败：状态文件无权限"
+
+
 def test_frame_endpoint_returns_no_content_until_worker_has_a_frame(client):
     client.post("/api/modules/color_recognition/start")
 

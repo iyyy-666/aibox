@@ -1,3 +1,5 @@
+import os
+
 from feature_demo.registry import MODULES, get_module
 from feature_demo.app import _default_worker_factory
 from feature_demo.workers.assistant import AssistantWorker
@@ -93,3 +95,23 @@ def test_production_factory_keeps_lightweight_worker_startup_timeout_short():
     process = _default_worker_factory(get_module("color_recognition"))
 
     assert process._start_timeout == 15.0
+
+
+def test_production_factory_isolates_gimbal_position_state_by_runtime_user(monkeypatch):
+    monkeypatch.delenv("AIBOX_GIMBAL_POSITION_STATE", raising=False)
+    monkeypatch.setattr(os, "getuid", lambda: 1000, raising=False)
+
+    process = _default_worker_factory(get_module("palm_tracking"))
+
+    assert process._environment["AIBOX_GIMBAL_POSITION_STATE"] == (
+        "/tmp/aibox_gimbal_position_1000.json"
+    )
+
+
+def test_production_factory_preserves_explicit_gimbal_position_state(monkeypatch):
+    selected = "/tmp/custom-gimbal-state.json"
+    monkeypatch.setenv("AIBOX_GIMBAL_POSITION_STATE", selected)
+
+    process = _default_worker_factory(get_module("palm_tracking"))
+
+    assert process._environment["AIBOX_GIMBAL_POSITION_STATE"] == selected
