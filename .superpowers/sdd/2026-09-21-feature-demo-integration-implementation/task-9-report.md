@@ -225,3 +225,11 @@ Board measurements and lifecycle evidence:
 - The real PyWebView window remained visible with title `功能演示`. The desktop retained exactly one `功能演示.desktop` entry; both legacy and unified systemd services remained disabled/inactive.
 
 Automatic reconnect behavior is covered by deterministic tests for consecutive read failures, replacement capture, latest-frame overwrite, and stop during backoff. A physical USB unplug was not forced during this run. Spoken-phrase accuracy still depends on the room, speaker distance, and microphone gain; the deployed backend, calibration, invalid-result filtering, and thresholds were verified on-device.
+
+### Performance Review Fixes
+
+Independent review identified shutdown boundaries not covered by the first implementation. Camera reads that raise now enter the same consecutive-failure reconnect path; stop is rechecked under a camera lifecycle generation before replacement creation; and recovery is emitted only after the replacement produces its first successful frame. Deterministic tests cover stop after backoff completion, read exceptions, and the first-frame recovery boundary.
+
+Voice start/stop now uses a listener generation. Calibration failure rolls back PCM and engine state, a concurrent stop prevents a post-calibration listener from being created, and a timed-out old listener blocks restart. Each listener owns immutable engine/PCM references and revalidates its generation after capture and recognition, so audio returned after stop cannot emit speech or trigger a command.
+
+The final unified suite passed `224` tests. Post-deployment smoke checks again reached a real color frame and the voice `calibrating -> listening -> ready` sequence; both modules stopped to `idle` with no camera, microphone, robot, or gimbal owners. The final deployed voice-worker SHA-256 was `b1ee6dda14c093f732a38e86973b0032a641c4cdd3a8422072205446128d86b3`, matching local.
