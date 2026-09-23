@@ -271,7 +271,12 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
     elif mode == "face":
         instance.dnn = instance._load_dnn()
         instance.yunet = instance._load_yunet()
-        instance.face_detectors = instance._load_cascades()
+        cv2_module = getattr(module, "cv2", None)
+        instance.face_detectors = (
+            instance._load_cascades()
+            if callable(getattr(cv2_module, "CascadeClassifier", None))
+            else []
+        )
     elif mode == "palm":
         instance.use_mediapipe = module.USE_MEDIAPIPE
         instance.hand_detector = module.HandLandmarkDetector()

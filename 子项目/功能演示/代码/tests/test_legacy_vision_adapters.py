@@ -80,6 +80,33 @@ def test_sorting_returns_only_annotated_left_eye():
     assert np.all(annotated == 11)
 
 
+def test_face_adapter_skips_haar_when_opencv_build_omits_cascade(monkeypatch):
+    class LegacyFace:
+        def _load_dnn(self):
+            return "dnn"
+
+        def _load_yunet(self):
+            return "yunet"
+
+        def _load_cascades(self):
+            raise AttributeError("CascadeClassifier is unavailable")
+
+    fake_module = SimpleNamespace(
+        FaceRecognitionApp=LegacyFace,
+        cv2=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "feature_demo.adapters.vision._load_legacy_module",
+        lambda _spec, _legacy_root: fake_module,
+    )
+
+    adapter = build_vision_adapter("face_detection", legacy_root="unused")
+
+    assert adapter.instance.dnn == "dnn"
+    assert adapter.instance.yunet == "yunet"
+    assert adapter.instance.face_detectors == []
+
+
 def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
     automatic_started = threading.Event()
     release_automatic = threading.Event()
