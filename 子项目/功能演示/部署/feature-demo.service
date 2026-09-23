@@ -7,6 +7,9 @@ Type=simple
 User=ztl
 EnvironmentFile=-/etc/default/feature-demo
 Environment=VOICE_LANGUAGE=zh
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 ExecStart=/usr/local/bin/feature_demo.sh
 Restart=on-failure
 
