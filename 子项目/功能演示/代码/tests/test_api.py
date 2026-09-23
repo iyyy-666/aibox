@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -121,6 +123,20 @@ def test_frame_endpoint_returns_no_content_until_worker_has_a_frame(client):
 
     assert response.status_code == 204
     assert response.content == b""
+
+
+def test_frame_response_exposes_frame_sequence(client, manager):
+    client.post("/api/modules/color_recognition/start")
+    manager._worker.snapshot = lambda: {
+        "frame_jpeg_base64": base64.b64encode(b"jpeg").decode("ascii"),
+        "frame_sequence": 7,
+    }
+
+    response = client.get("/api/modules/color_recognition/frame")
+
+    assert response.status_code == 200
+    assert response.content == b"jpeg"
+    assert response.headers["x-frame-sequence"] == "7"
 
 
 def test_websocket_sends_current_module_snapshot(client):

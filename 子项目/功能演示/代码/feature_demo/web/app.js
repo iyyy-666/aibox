@@ -4,7 +4,13 @@ const appState = {
   modules: [],
   active: null,
   socket: null,
+  socketGeneration: 0,
+  socketReconnectTimer: null,
+  socketReconnectAttempt: 0,
   frameTimer: null,
+  frameRequest: null,
+  frameGeneration: 0,
+  frameSequence: null,
   toastTimer: null,
   commandRequestPending: false,
   lifecycleControlsDisabled: false,
@@ -310,51 +316,93 @@ function renderWorkerDetails(details) {
   }
 }
 
-function connectStatusSocket(moduleId) {
-  closeStatusSocket();
+function connectStatusSocket(moduleId, generation = null) {
+  if (generation === null) {
+    closeStatusSocket();
+    generation = appState.socketGeneration;
+  }
+  if (appState.active?.module_id !== moduleId || generation !== appState.socketGeneration) return;
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${location.host}/ws/modules/${moduleId}`);
   appState.socket = socket;
+  socket.addEventListener("open", () => { appState.socketReconnectAttempt = 0; });
   socket.addEventListener("message", (event) => {
     try { updateLifecycle(JSON.parse(event.data)); } catch (_error) { showToast("收到了无法读取的状态信息。"); }
   });
   socket.addEventListener("close", () => {
-    if (appState.active?.module_id === moduleId) document.querySelector("[data-status-message]").textContent = "状态连接已断开，正在等待重新连接。";
+    if (appState.socket === socket) appState.socket = null;
+    if (appState.active?.module_id !== moduleId || generation !== appState.socketGeneration) return;
+    document.querySelector("[data-status-message]").textContent = "状态连接已断开，正在重新连接。";
+    const delays = [250, 500, 1000, 2000];
+    const delay = delays[Math.min(appState.socketReconnectAttempt, delays.length - 1)];
+    appState.socketReconnectAttempt += 1;
+    appState.socketReconnectTimer = window.setTimeout(
+      () => connectStatusSocket(moduleId, generation),
+      delay,
+    );
   });
 }
 
 function closeStatusSocket() {
+  appState.socketGeneration += 1;
+  if (appState.socketReconnectTimer) window.clearTimeout(appState.socketReconnectTimer);
+  appState.socketReconnectTimer = null;
+  appState.socketReconnectAttempt = 0;
   if (appState.socket) appState.socket.close();
   appState.socket = null;
 }
 
 function startFrameUpdates(moduleId) {
   stopFrameUpdates();
+  const generation = appState.frameGeneration;
+  refreshFrame(moduleId, generation);
+}
+
+async function refreshFrame(moduleId, generation) {
   const image = document.querySelector("[data-camera-frame]");
   const empty = document.querySelector("[data-frame-empty]");
-  const refresh = async () => {
-    try {
-      const response = await fetch(`/api/modules/${moduleId}/frame?t=${Date.now()}`, { cache: "no-store" });
-      if (response.status === 200) {
+  const controller = new AbortController();
+  appState.frameRequest = controller;
+  try {
+    const response = await fetch(`/api/modules/${moduleId}/frame`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (response.status === 200) {
+      const sequence = response.headers.get("X-Frame-Sequence");
+      if (sequence !== appState.frameSequence) {
         const blob = await response.blob();
         const nextUrl = URL.createObjectURL(blob);
         if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
         image.dataset.objectUrl = nextUrl;
         image.src = nextUrl;
+        appState.frameSequence = sequence;
         image.hidden = false;
         empty.hidden = true;
       }
-    } catch (_error) {
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") {
       empty.querySelector("span").textContent = "画面暂时中断，正在继续尝试。";
     }
-  };
-  refresh();
-  appState.frameTimer = window.setInterval(refresh, 250);
+  } finally {
+    if (appState.frameRequest === controller) appState.frameRequest = null;
+    if (generation === appState.frameGeneration && appState.active?.module_id === moduleId) {
+      appState.frameTimer = window.setTimeout(
+        () => refreshFrame(moduleId, generation),
+        document.hidden ? 500 : 80,
+      );
+    }
+  }
 }
 
 function stopFrameUpdates() {
-  if (appState.frameTimer) window.clearInterval(appState.frameTimer);
+  appState.frameGeneration += 1;
+  if (appState.frameTimer) window.clearTimeout(appState.frameTimer);
   appState.frameTimer = null;
+  if (appState.frameRequest) appState.frameRequest.abort();
+  appState.frameRequest = null;
+  appState.frameSequence = null;
   const image = document.querySelector("[data-camera-frame]");
   if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
   image.removeAttribute("src");
@@ -424,21 +472,25 @@ async function confirmExit() {
   if (!appState.active) return;
   setControlsDisabled(true);
   updateLifecycle({ state: "stopping", message: "正在停止任务并验证设备资源已释放…" });
+  closeStatusSocket();
+  stopFrameUpdates();
   try {
     const snapshot = await requestJson(`/api/modules/${appState.active.module_id}/stop`, { method: "POST", body: "{}" });
     updateLifecycle(snapshot);
     if (snapshot.state === "idle") {
-      closeStatusSocket();
-      stopFrameUpdates();
       showHomeView();
       showToast("功能已停止，设备资源已释放。");
       return;
     }
     setControlsDisabled(false);
+    connectStatusSocket(appState.active.module_id);
+    if (appState.active.visual) startFrameUpdates(appState.active.module_id);
     showToast(snapshot.message || "资源未能完全释放。", true);
   } catch (error) {
     updateLifecycle({ state: "cleanup_failed", message: error.message });
     setControlsDisabled(false);
+    connectStatusSocket(appState.active.module_id);
+    if (appState.active.visual) startFrameUpdates(appState.active.module_id);
     showToast(error.message, true);
   }
 }
