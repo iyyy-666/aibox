@@ -342,6 +342,45 @@ def test_audio_returned_after_stop_never_emits_speech() -> None:
     worker.stop_listening()
 
 
+def test_stop_between_final_check_and_text_acceptance_discards_audio() -> None:
+    final_check_passed = threading.Event()
+    release_final_check = threading.Event()
+    events: list[dict] = []
+
+    class ImmediateAudioEngine(FakeEngine):
+        def _record_utterance(self, _pcm):
+            return b"captured audio"
+
+    class PausingWorker(VoiceWorker):
+        def _accept_transcript(self, generation, engine, pcm, raw, normalized):
+            final_check_passed.set()
+            release_final_check.wait(timeout=1.0)
+            return super()._accept_transcript(
+                generation, engine, pcm, raw, normalized
+            )
+
+    worker = PausingWorker(
+        "voice_input_test",
+        event_sink=events.append,
+        engine_factory=ImmediateAudioEngine,
+        pcm_factory=lambda: FakePCM([]),
+        join_timeout=0.5,
+    )
+    worker.start()
+    assert final_check_passed.wait(timeout=1.0)
+    stopped = {}
+    stopper = threading.Thread(target=lambda: stopped.update(worker.stop_listening()))
+    stopper.start()
+    deadline = time.monotonic() + 1.0
+    while worker._listening.is_set() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    release_final_check.set()
+    stopper.join(timeout=1.0)
+
+    assert stopped == {"ok": True, "listening": False}
+    assert all(event["type"] != "speech" for event in events)
+
+
 @pytest.mark.parametrize(
     "module_id", ["voice_input_test", "nursery_rhyme", "ai_assistant"]
 )
