@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
+import feature_demo.workers.voice as voice_workers
 
 from feature_demo.adapters.audio import deployment_environment
 from feature_demo.adapters.robot import RobotAdapter
@@ -450,6 +451,13 @@ def test_voice_robot_arm_stops_microphone_before_robot_shutdown() -> None:
     )
 
     worker.start()
+    worker._dispatch_robot(
+        next(
+            label
+            for label, (command, _payload) in voice_workers.ROBOT_COMMANDS.items()
+            if command != "stop_motion"
+        )
+    )
     worker.stop()
 
     assert calls.index("pcm_close") < calls.index("stop_motion") < calls.index("disconnect")

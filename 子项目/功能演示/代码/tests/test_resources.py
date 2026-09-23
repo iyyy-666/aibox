@@ -19,7 +19,7 @@ def test_default_device_paths_match_the_deployed_hardware_names():
         "microphone": ("/dev/snd/pcmC1D0c",),
         "speaker": ("/dev/snd/pcmC0D0p",),
         "robot": ("/dev/esp32_arm",),
-        "gimbal": ("/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",),
+        "gimbal": ("/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00",),
     }
 
 
@@ -109,7 +109,17 @@ def test_camera_capability_probe_uses_node_specific_udev_or_device_caps(
 def test_palm_tracking_uses_the_same_gimbal_device_as_resource_verification():
     adapter_source = (Path(__file__).resolve().parents[1] / "feature_demo" / "adapters" / "vision.py").read_text(encoding="utf-8")
 
-    assert "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0" in adapter_source
+    assert "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C67040336-if00" in adapter_source
+
+
+def test_resource_verifier_rejects_gimbal_aliasing_robot_device(tmp_path):
+    robot = tmp_path / "robot"
+    robot.write_text("", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="gimbal.*robot"):
+        ResourceVerifier(
+            device_paths={"robot": (str(robot),), "gimbal": (str(robot),)}
+        )
 
 
 def test_resource_verifier_reports_live_worker_pid():

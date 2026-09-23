@@ -161,6 +161,17 @@ def make_adapter(calls):
     )
 
 
+def test_robot_worker_does_not_open_serial_until_explicit_motion_command():
+    calls = []
+    worker = RobotWorker(make_adapter(calls), event_sink=lambda _event: None)
+
+    worker.start()
+
+    assert calls == []
+    worker.command("pose", {"name": "stand"})
+    assert calls[:2] == ["connect", ("pose", "stand")]
+
+
 def make_worker(calls, robot_type=FakeRobot):
     return RobotWorker(
         RobotAdapter(
@@ -190,7 +201,7 @@ def test_robot_serial_is_lazy():
     assert calls == []
     worker.start()
 
-    assert calls == ["connect"]
+    assert calls == []
     worker.stop()
 
 
@@ -200,7 +211,7 @@ def test_robot_start_does_not_move_upright():
 
     worker.start()
 
-    assert calls == ["connect"]
+    assert calls == []
     worker.stop()
 
 
@@ -208,6 +219,7 @@ def test_robot_stop_stops_motion_before_disconnect():
     calls = []
     worker = RobotWorker(make_adapter(calls), event_sink=lambda event: None)
     worker.start()
+    worker.command("pose", {"name": "stand"})
 
     worker.stop()
 
@@ -244,7 +256,7 @@ def test_runtime_dispatches_robot_button_without_opening_serial():
     assert isinstance(worker, RobotWorker)
     assert calls == []
     worker.start()
-    assert calls == ["connect"]
+    assert calls == []
     worker.stop()
 
 
@@ -321,6 +333,7 @@ def test_stop_motion_preempts_blocking_transfer_before_disconnect():
     calls = []
     worker, created = make_blocking_transfer_worker(calls)
     worker.start()
+    worker.command("pose", {"name": "stand"})
     robot = created[0]
     transfer = threading.Thread(target=lambda: worker.command("sorting_transfer", {"side": "left"}))
     transfer.start()
@@ -353,6 +366,7 @@ def test_stop_motion_preempts_blocking_sequence_through_robot_worker():
         event_sink=lambda event: None,
     )
     worker.start()
+    worker.command("pose", {"name": "stand"})
     robot = created[0]
     sequence = threading.Thread(
         target=lambda: worker.command("sequence", {"name": "搬运"})
@@ -384,6 +398,7 @@ def test_object_sorting_stop_requests_robot_stop_before_vision_shutdown():
         event_sink=lambda event: None,
     )
     worker.start()
+    worker.command("prepare", {})
 
     worker.stop()
 
@@ -427,6 +442,7 @@ def test_robot_stop_disconnects_when_stop_motion_raises():
     calls = []
     worker = make_worker(calls, robot_type=StopFailureRobot)
     worker.start()
+    worker.command("pose", {"name": "stand"})
 
     try:
         worker.stop()
@@ -449,6 +465,7 @@ def test_object_sorting_releases_robot_when_vision_stop_fails():
         event_sink=lambda event: None,
     )
     worker.start()
+    robot_worker.command("sorting_ready", {})
 
     try:
         worker.stop()

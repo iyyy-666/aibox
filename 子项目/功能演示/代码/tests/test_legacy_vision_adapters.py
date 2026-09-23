@@ -198,3 +198,43 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
         "pitch_delta_pwm": 5,
     }
     assert instance.tracking_enabled is False
+
+
+def test_tracking_tries_right_eye_after_left_eye_miss():
+    left = np.zeros((4, 6, 3), dtype=np.uint8)
+    right = np.ones((4, 6, 3), dtype=np.uint8)
+    calls = []
+
+    def detect(image):
+        calls.append(image)
+        return [] if image is left else [SimpleNamespace(box=(1, 1, 2, 2))]
+
+    module = SimpleNamespace(
+        split_stereo=lambda _frame: (left, right),
+        CONTROL_INTERVAL_MS=100,
+    )
+    instance = SimpleNamespace(
+        hand_detector=SimpleNamespace(detect=detect),
+        target_lock=SimpleNamespace(update=lambda boxes: boxes[0], clear=lambda: None),
+        controller=SimpleNamespace(stop=lambda: None),
+        gimbal=SimpleNamespace(disconnect=lambda: None),
+        tracking_enabled=False,
+        current_box=None,
+        image_size=(6, 4),
+        _annotate=lambda image, _box: image,
+    )
+    adapter = LegacyVisionAdapter(
+        "palm_tracking",
+        module,
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "tracking"),
+    )
+
+    annotated, result = adapter.process(object())
+
+    assert len(calls) == 2
+    assert calls[0] is left
+    assert calls[1] is right
+    assert annotated is right
+    assert instance.current_box == (1, 1, 2, 2)
+    assert result["tracking"] is False
