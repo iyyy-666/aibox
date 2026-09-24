@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f8fb">
+  <meta name="description" content="AI 试验箱统一功能演示软件">
+  <title>功能演示</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主内容</a>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-spark" viewBox="0 0 24 24"><path d="M12 3l1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Z"/><path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z"/><path d="m5 14 1 2.8L9 18l-3 1.2L5 22l-1-2.8L1 18l3-1.2L5 14Z"/></symbol>
+    <symbol id="icon-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6M1 12h3M20 12h3"/></symbol>
+    <symbol id="icon-boxes" viewBox="0 0 24 24"><path d="m12 2 4 2.3v4.6L12 11 8 8.9V4.3L12 2ZM6 13l4 2.3v4.6L6 22l-4-2.1v-4.6L6 13ZM18 13l4 2.3v4.6L18 22l-4-2.1v-4.6l4-2.3Z"/></symbol>
+    <symbol id="icon-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 9h10M7 12h7M7 15h10"/></symbol>
+    <symbol id="icon-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v4-6a2 2 0 0 0-4 0v6-4a2 2 0 0 0-4 0v7l-1.2-1.2a2 2 0 0 0-2.8 2.8l5.1 5.1A5 5 0 0 0 10.6 21H15a6 6 0 0 0 6-6v-4a2 2 0 0 0-3-1.7"/></symbol>
+    <symbol id="icon-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></symbol>
+    <symbol id="icon-fruit" viewBox="0 0 24 24"><path d="M12 7c-2.5-2.1-7-1.4-8.4 2.4C2 13.8 5.1 21 9 21c1.2 0 1.9-.6 3-.6s1.8.6 3 .6c3.9 0 7-7.2 5.4-11.6C19 5.6 14.5 4.9 12 7Z"/><path d="M12 7c0-3 2-5 5-5M12 5c-1.5-1.6-3.4-2-5-1"/></symbol>
+    <symbol id="icon-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18h1.5a1.5 1.5 0 0 0 0-3H12a2 2 0 0 1 0-4h3a6 6 0 0 0 0-12h-3Z"/><path d="M7.5 10h.01M9 6.5h.01M14 6h.01M17.5 9h.01"/></symbol>
+    <symbol id="icon-face" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="11" r="4"/><path d="M8 18c1-2 2.3-3 4-3s3 1 4 3"/></symbol>
+    <symbol id="icon-sliders" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+    <symbol id="icon-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13M9 9l11-2"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+    <symbol id="icon-shapes" viewBox="0 0 24 24"><circle cx="6" cy="7" r="3"/><rect x="13" y="4" width="6" height="6"/><path d="m4 20 4-7 4 7H4ZM15 14l5 6H10l5-6Z"/></symbol>
+    <symbol id="icon-audio" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 3v18M16 6v12M20 9v6"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="icon-exit" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+    <symbol id="icon-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="icon-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="icon-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <span class="brand-mark"><svg><use href="#icon-spark"></use></svg></span>
+        <span><strong>AI 试验箱</strong><small>智能教学系统</small></span>
+      </div>
+      <nav aria-label="主导航">
+        <button class="nav-item is-active" type="button" data-nav="feature-demo">
+          <svg><use href="#icon-bot"></use></svg><span>功能演示</span>
+        </button>
+      </nav>
+      <div class="device-note"><span></span><p>设备已就绪<small>按需启动实验功能</small></p></div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div><span>AI 试验箱</span><strong data-page-title>功能演示</strong></div>
+        <div class="top-status"><span></span><b data-global-status>等待选择功能</b></div>
+      </header>
+
+      <main id="main-content">
+        <section class="home-view" data-view="home">
+          <div class="home-heading">
+            <div><h1>功能演示</h1><p>选择一个功能模块，开始 AI 实验与功能演示</p></div>
+            <span class="module-count"><b data-module-count>13</b> 项实验</span>
+          </div>
+
+          <section class="education-banner" aria-label="AI 教学实验">
+            <div class="banner-copy"><h2>从观察到交互，让 AI 变得可见</h2><p>每次只运行一项实验，退出后自动释放设备资源。</p></div>
+            <div class="banner-visual" aria-hidden="true">
+              <span class="signal signal-one"></span><span class="signal signal-two"></span>
+              <div class="lab-console"><svg><use href="#icon-bot"></use></svg><i></i><i></i><i></i></div>
+            </div>
+          </section>
+
+          <div class="section-heading"><h2>选择功能</h2><p>点击“开始演示”后才会启动所需的模型和设备。</p></div>
+          <div class="module-grid" data-module-grid aria-busy="true">
+            <div class="loading-row"><span class="loading-bar"></span><span class="loading-bar"></span><span class="loading-bar"></span></div>
+          </div>
+          <div class="inline-message" data-home-message role="status" hidden></div>
+        </section>
+
+        <section class="module-view" data-view="module" hidden>
+          <div class="module-toolbar">
+            <button class="exit-button" type="button" data-action="exit-module"><svg><use href="#icon-exit"></use></svg>退出功能</button>
+            <div class="module-identity"><span class="module-icon" data-active-icon></span><div><small data-active-category></small><h1 data-active-name>功能</h1></div></div>
+            <div class="state-badge" data-state-badge><span></span><b>正在准备</b></div>
+          </div>
+
+          <div class="module-layout">
+            <aside class="guide-panel">
+              <p class="module-description" data-active-description></p>
+              <section><h2>操作步骤</h2><ol data-instructions></ol></section>
+              <section><h2>资源状态</h2><div class="resource-list" data-resources></div></section>
+            </aside>
+
+            <section class="demo-stage">
+              <div class="stage-status" aria-live="polite">
+                <div><span class="status-dot"></span><strong data-status-title>正在启动功能</strong></div>
+                <p data-status-message>正在加载模型并连接所需设备…</p>
+              </div>
+
+              <div class="visual-workspace" data-visual-workspace hidden>
+                <div class="camera-frame">
+                  <img data-camera-frame src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="实时识别画面" hidden>
+                  <div class="frame-empty" data-frame-empty><svg><use href="#icon-scan"></use></svg><strong>正在等待画面</strong><span>摄像头就绪后将显示实时识别结果</span></div>
+                  <span class="live-label">实时画面</span>
+                </div>
+                <div class="vision-side">
+                  <section class="visual-action-panel"><h2>功能操作</h2><div class="visual-actions" data-visual-actions></div></section>
+                  <section class="result-panel"><h2>识别结果</h2><div data-result-content class="result-empty">暂无识别结果</div></section>
+                  <section class="gimbal-panel"><div><h2>云台步进</h2><label>步进量 <input type="number" value="30" min="5" max="90" step="5" data-gimbal-amount></label></div><div class="direction-pad" aria-label="云台方向步进"><button type="button" data-command="gimbal_up" title="向上步进"><svg><use href="#icon-up"></use></svg><span class="sr-only">向上</span></button><button type="button" data-command="gimbal_left" title="向左步进"><svg><use href="#icon-left"></use></svg><span class="sr-only">向左</span></button><span class="pad-center" aria-hidden="true"></span><button type="button" data-command="gimbal_right" title="向右步进"><svg><use href="#icon-right"></use></svg><span class="sr-only">向右</span></button><button type="button" data-command="gimbal_down" title="向下步进"><svg><use href="#icon-down"></use></svg><span class="sr-only">向下</span></button></div></section>
+                </div>
+              </div>
+
+              <div class="command-workspace" data-command-workspace hidden>
+                <div class="interaction-panel"><span class="interaction-icon" data-interaction-icon></span><h2 data-interaction-title>功能控制</h2><p data-interaction-copy></p><div class="command-list" data-command-list></div></div>
+                <div class="activity-panel"><h2>实验记录</h2><div class="activity-empty" data-activity-log>启动后，识别文本、执行结果和错误信息将显示在这里。</div></div>
+              </div>
+
+              <div class="stage-error" data-stage-error role="alert" hidden><strong>功能启动失败</strong><p></p><button type="button" data-action="error-exit">返回功能演示</button></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog class="exit-dialog" data-exit-dialog aria-labelledby="exit-title">
+    <div class="dialog-symbol"><svg><use href="#icon-exit"></use></svg></div><h2 id="exit-title">退出当前功能？</h2><p>退出后，当前功能将停止运行并释放所占用的设备资源。</p>
+    <div class="dialog-actions"><button type="button" data-action="continue-module">继续演示</button><button type="button" class="danger-button" data-action="confirm-exit">退出功能</button></div>
+  </dialog>
+  <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+</body>
+</html>

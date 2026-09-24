@@ -22,9 +22,9 @@ CAMERA_FPS = int(os.getenv("SHAPE_CAMERA_FPS", "30"))
 DISPLAY_INTERVAL_MS = int(os.getenv("SHAPE_DISPLAY_INTERVAL_MS", "80"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("SHAPE_CAPTURE_INTERVAL_SEC", "0.025"))
 DETECT_INTERVAL_SEC = float(os.getenv("SHAPE_DETECT_INTERVAL_SEC", "0.16"))
-MIN_AREA = int(os.getenv("SHAPE_MIN_AREA", "2200"))
+MIN_AREA = int(os.getenv("SHAPE_MIN_AREA", "700"))
 MAX_RESULTS = int(os.getenv("SHAPE_MAX_RESULTS", "3"))
-STABLE_HITS = int(os.getenv("SHAPE_STABLE_HITS", "3"))
+STABLE_HITS = int(os.getenv("SHAPE_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("SHAPE_SNAPSHOT_DIR", "/root/robot_arm/assets/shape_snapshots"))
 
 T_TITLE = "Shape Recognition"
@@ -225,10 +225,10 @@ class ShapeRecognitionApp:
         detections: list[ShapeDetection] = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area < max(MIN_AREA, roi_w * roi_h * 0.012) or area > roi_w * roi_h * 0.58:
+            if area < max(MIN_AREA, roi_w * roi_h * 0.004) or area > roi_w * roi_h * 0.58:
                 continue
             x, y, bw, bh = cv2.boundingRect(contour)
-            if bw < 38 or bh < 38:
+            if bw < 24 or bh < 24:
                 continue
             if bw > roi_w * 0.92 or bh > roi_h * 0.92:
                 continue

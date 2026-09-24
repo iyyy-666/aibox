@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=功能演示
+Exec=/usr/local/bin/feature_demo.sh
+Terminal=false
+Categories=Education;

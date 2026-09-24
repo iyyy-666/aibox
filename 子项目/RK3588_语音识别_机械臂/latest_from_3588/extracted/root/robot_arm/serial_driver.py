@@ -1,19 +1,40 @@
 """
 串口驱动 - 本地 pyserial 模式（generic usbserial 驱动）
 """
+import json
+import os
+import time
 import serial
 import threading
+from pathlib import Path
 from config import SERIAL_PORT, SERIAL_BAUD
 
 class SerialDriver:
 
-    def __init__(self):
+    def __init__(self, *, serial_factory=serial.Serial, audit_path=None):
         self.ser = None
         self.lock = threading.Lock()
         self.connected = False
         self._last_cmd = ""
         self._port = SERIAL_PORT
         self._baud = SERIAL_BAUD
+        self._serial_factory = serial_factory
+        self._audit_path = Path(
+            audit_path
+            or os.getenv("AIBOX_ROBOT_SERIAL_AUDIT", "/tmp/aibox_robot_serial_audit.jsonl")
+        )
+
+    def _audit(self, event: str, **details) -> None:
+        record = {
+            "timestamp": time.time(),
+            "pid": os.getpid(),
+            "event": event,
+            "port": self._port,
+            **details,
+        }
+        with self._audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=True) + "\n")
+            fh.flush()
 
     def connect(self, port=SERIAL_PORT, baud=SERIAL_BAUD):
         try:
@@ -21,7 +42,18 @@ class SerialDriver:
             self._baud = baud
             if self.ser and self.ser.is_open:
                 self.ser.close()
-            self.ser = serial.Serial(port, baud, timeout=0.1)
+            self.ser = self._serial_factory(
+                port=None,
+                baudrate=baud,
+                timeout=0.1,
+                dsrdtr=False,
+                rtscts=False,
+            )
+            self.ser.dtr = False
+            self.ser.rts = False
+            self.ser.port = port
+            self.ser.open()
+            self._audit("serial_open")
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
             self.connected = True
@@ -30,6 +62,11 @@ class SerialDriver:
         except Exception as e:
             print(f"[串口] 连接失败: {e}")
             self.connected = False
+            try:
+                if self.ser and self.ser.is_open:
+                    self.ser.close()
+            except Exception:
+                pass
             return False
 
     def disconnect(self):
@@ -46,10 +83,11 @@ class SerialDriver:
         if not cmd.endswith("\r\n"):
             cmd = cmd.rstrip() + "\r\n"
         with self.lock:
-            return self._send_locked(cmd, retry=True)
+            return self._send_locked(cmd)
 
-    def _send_locked(self, cmd: str, retry: bool = True) -> bool:
+    def _send_locked(self, cmd: str) -> bool:
         try:
+            self._audit("command_write", command=cmd.strip(), phase="attempt")
             self.ser.write(cmd.encode("utf-8"))
             self.ser.flush()
             self._last_cmd = cmd.strip()
@@ -62,12 +100,7 @@ class SerialDriver:
                     self.ser.close()
             except Exception:
                 pass
-            if not retry:
-                return False
-            print("[串口] 尝试自动重连后重发")
-            if not self.connect(self._port, self._baud):
-                return False
-            return self._send_locked(cmd, retry=False)
+            return False
 
     def read_line(self) -> str | None:
         if not self.connected or not self.ser:
