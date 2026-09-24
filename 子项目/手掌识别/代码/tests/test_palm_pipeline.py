@@ -49,9 +49,10 @@ class RightEyeDetector(FakeDetector):
         return super().detect(image)
 
 
-def make_app(detector) -> PalmRecognitionApp:
+def make_app(detector, right_detector=None) -> PalmRecognitionApp:
     app = PalmRecognitionApp.__new__(PalmRecognitionApp)
     app.hand_detector = detector
+    app.right_hand_detector = right_detector or detector
     app.use_mediapipe = True
     app._tracker = BoxTracker(iou_threshold=0.3, hold_misses=3)
     app._voter = TemporalGestureVote(confirm_hits=4, hold_misses=3)
@@ -111,7 +112,22 @@ def test_palm_pipeline_uses_contour_fallback_when_landmarks_unavailable() -> Non
 
 
 def test_palm_pipeline_tries_right_eye_after_left_eye_landmark_miss() -> None:
-    app = make_app(RightEyeDetector())
+    calls = []
+
+    class LeftMissDetector:
+        available = True
+        error = ""
+
+        def detect(self, image):
+            calls.append(("left", image))
+            return []
+
+    class RightHitDetector(FakeDetector):
+        def detect(self, image):
+            calls.append(("right", image))
+            return super().detect(image)
+
+    app = make_app(LeftMissDetector(), RightHitDetector())
     left = np.zeros((480, 640, 3), dtype=np.uint8)
     right = np.ones((480, 640, 3), dtype=np.uint8)
     app._candidate_boxes = (
@@ -123,3 +139,17 @@ def test_palm_pipeline_tries_right_eye_after_left_eye_landmark_miss() -> None:
     assert detection.source == "MediaPipe"
     assert app._last_detection_eye == "right"
     assert not detection.stereo_verified
+    assert calls == [("left", left), ("right", right)]
+
+
+def test_palm_pipeline_uses_healthy_right_detector_when_left_is_unavailable() -> None:
+    app = make_app(UnavailableDetector(), FakeDetector())
+    left = np.zeros((480, 640, 3), dtype=np.uint8)
+    right = np.ones((480, 640, 3), dtype=np.uint8)
+    app._candidate_boxes = lambda _image: []
+
+    detection = app._detect_hands(left, right)[0]
+
+    assert app._detector_mode == "mediapipe"
+    assert app._last_detection_eye == "right"
+    assert detection.source == "MediaPipe"

@@ -71,7 +71,7 @@ def test_detector_uses_tolerant_configurable_thresholds(monkeypatch) -> None:
         {
             "static_image_mode": False,
             "max_num_hands": 1,
-            "model_complexity": 0,
+            "model_complexity": 1,
             "min_detection_confidence": 0.38,
             "min_tracking_confidence": 0.44,
         }

@@ -205,16 +205,21 @@ def test_tracking_tries_right_eye_after_left_eye_miss():
     right = np.ones((4, 6, 3), dtype=np.uint8)
     calls = []
 
-    def detect(image):
-        calls.append(image)
-        return [] if image is left else [SimpleNamespace(box=(1, 1, 2, 2))]
+    def detect_left(image):
+        calls.append(("left", image))
+        return []
+
+    def detect_right(image):
+        calls.append(("right", image))
+        return [SimpleNamespace(box=(1, 1, 2, 2), landmarks=np.zeros((21, 2)))]
 
     module = SimpleNamespace(
         split_stereo=lambda _frame: (left, right),
         CONTROL_INTERVAL_MS=100,
     )
     instance = SimpleNamespace(
-        hand_detector=SimpleNamespace(detect=detect),
+        hand_detector=SimpleNamespace(detect=detect_left),
+        right_hand_detector=SimpleNamespace(detect=detect_right),
         target_lock=SimpleNamespace(update=lambda boxes: boxes[0], clear=lambda: None),
         controller=SimpleNamespace(stop=lambda: None),
         gimbal=SimpleNamespace(disconnect=lambda: None),
@@ -233,10 +238,11 @@ def test_tracking_tries_right_eye_after_left_eye_miss():
     annotated, result = adapter.process(object())
 
     assert len(calls) == 2
-    assert calls[0] is left
-    assert calls[1] is right
+    assert calls[0] == ("left", left)
+    assert calls[1] == ("right", right)
     assert annotated is right
     assert instance.current_box == (1, 1, 2, 2)
+    np.testing.assert_array_equal(instance.current_landmarks, np.zeros((21, 2)))
     assert result["tracking"] is False
 
 

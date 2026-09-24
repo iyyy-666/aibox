@@ -57,6 +57,7 @@ class HandDetection:
     source: str
     stereo_verified: bool
     stable: bool
+    landmarks: np.ndarray | None = None
 
 
 class PalmRecognitionApp:
@@ -78,6 +79,7 @@ class PalmRecognitionApp:
         self.detections: list[HandDetection] = []
         self.use_mediapipe = USE_MEDIAPIPE
         self.hand_detector = HandLandmarkDetector()
+        self.right_hand_detector = HandLandmarkDetector()
         self._tracker = BoxTracker(hold_misses=HOLD_MISSES)
         self._voter = TemporalGestureVote(confirm_hits=STABLE_HITS, hold_misses=HOLD_MISSES)
         self.photo: tk.PhotoImage | None = None
@@ -161,7 +163,8 @@ class PalmRecognitionApp:
 
     @property
     def _detector_mode(self) -> str:
-        return "mediapipe" if self.use_mediapipe and self.hand_detector.available else "fallback"
+        detector_available = self.hand_detector.available or self.right_hand_detector.available
+        return "mediapipe" if self.use_mediapipe and detector_available else "fallback"
 
     def _detect_loop(self) -> None:
         while self.running:
@@ -240,30 +243,30 @@ class PalmRecognitionApp:
     def _detect_hands(self, left: np.ndarray, right: np.ndarray) -> list[HandDetection]:
         self._last_detection_eye = "left"
         verification_boxes = self._candidate_boxes(right)
-        candidates: list[tuple[str, tuple[int, int, int, int], float, int, str]] = []
+        candidates: list[tuple[str, tuple[int, int, int, int], float, int, str, np.ndarray | None]] = []
         if self._detector_mode == "mediapipe":
             observations = self.hand_detector.detect(left)
             if not observations:
-                observations = self.hand_detector.detect(right)
+                observations = self.right_hand_detector.detect(right)
                 if observations:
                     self._last_detection_eye = "right"
                     verification_boxes = self._candidate_boxes(left)
             for observation in observations:
-                candidates.append((observation.gesture or "hand", observation.box, max(0.35, observation.confidence), 0, "MediaPipe"))
+                candidates.append((observation.gesture or "hand", observation.box, max(0.35, observation.confidence), 0, "MediaPipe", observation.landmarks))
         else:
             for gesture, box, confidence, fingers in self._fallback_detections(left):
-                candidates.append((gesture, box, confidence, fingers, "Contour"))
+                candidates.append((gesture, box, confidence, fingers, "Contour", None))
 
         detections: list[HandDetection] = []
         labels = {"rock": "\u77f3\u5934", "scissors": "\u526a\u5200", "paper": "\u5e03", "hand": "\u624b\u638c"}
-        for gesture, box, confidence, fingers, source in candidates[:1]:
+        for gesture, box, confidence, fingers, source, landmarks in candidates[:1]:
             stereo = match_stereo_candidate(box, verification_boxes, left.shape)
             tracked = self._tracker.update(box)
             stable_gesture = self._voter.update(gesture if gesture in labels and gesture != "hand" else None, eligible=stereo.matched and tracked)
             display_gesture = stable_gesture or gesture
             x, y, bw, bh = box
             detections.append(
-                HandDetection(labels[display_gesture], box, confidence if stereo.matched else confidence * 0.45, (x + bw // 2, y + bh // 2), float(bw * bh), fingers, source, stereo.matched, stable_gesture is not None)
+                HandDetection(labels[display_gesture], box, confidence if stereo.matched else confidence * 0.45, (x + bw // 2, y + bh // 2), float(bw * bh), fingers, source, stereo.matched, stable_gesture is not None, landmarks)
             )
         if not candidates:
             self._tracker.update(None)
@@ -328,6 +331,19 @@ class PalmRecognitionApp:
             y0 = max(0, y - th - 16)
             cv2.rectangle(out, (x, y0), (x + tw + 18, y0 + th + 14), color, -1)
             cv2.putText(out, text, (x + 9, y0 + th + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (20, 24, 28), 2, cv2.LINE_AA)
+            if det.landmarks is not None:
+                connections = (
+                    (0, 1), (1, 2), (2, 3), (3, 4),
+                    (0, 5), (5, 6), (6, 7), (7, 8),
+                    (5, 9), (9, 10), (10, 11), (11, 12),
+                    (9, 13), (13, 14), (14, 15), (15, 16),
+                    (13, 17), (17, 18), (18, 19), (19, 20), (0, 17),
+                )
+                points = [tuple(np.rint(point).astype(int)) for point in det.landmarks]
+                for start, end in connections:
+                    cv2.line(out, points[start], points[end], (40, 210, 255), 2, cv2.LINE_AA)
+                for point in points:
+                    cv2.circle(out, point, 3, (80, 255, 160), -1, cv2.LINE_AA)
         cv2.putText(out, f"FPS {self.fps:.1f}", (14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (100, 255, 180), 2, cv2.LINE_AA)
         return out
 
@@ -399,6 +415,8 @@ class PalmRecognitionApp:
         self.running = False
         if self.cap is not None:
             self.cap.release()
+        self.hand_detector.close()
+        self.right_hand_detector.close()
         self.root.after(80, self.root.destroy)
 
     def run(self) -> None:

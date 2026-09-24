@@ -164,11 +164,12 @@ class LegacyVisionAdapter:
             selected = left
             observations = self.instance.hand_detector.detect(left)
             if not observations:
-                observations = self.instance.hand_detector.detect(right)
+                observations = self.instance.right_hand_detector.detect(right)
                 if observations:
                     selected = right
             self.instance.image_size = (selected.shape[1], selected.shape[0])
             boxes = [item.box for item in observations]
+            self.instance.current_landmarks = getattr(observations[0], "landmarks", None) if observations else None
             if self.instance.tracking_enabled:
                 self.instance.current_box = self.instance.target_lock.update(boxes)
             else:
@@ -256,6 +257,10 @@ class LegacyVisionAdapter:
         close = getattr(hand_detector, "close", None)
         if callable(close):
             close()
+        right_hand_detector = getattr(self.instance, "right_hand_detector", None)
+        close = getattr(right_hand_detector, "close", None)
+        if callable(close):
+            close()
 
 
 def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
@@ -291,6 +296,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
     elif mode == "palm":
         instance.use_mediapipe = module.USE_MEDIAPIPE
         instance.hand_detector = module.HandLandmarkDetector()
+        instance.right_hand_detector = module.HandLandmarkDetector()
         instance._tracker = module.BoxTracker(hold_misses=module.HOLD_MISSES)
         instance._voter = module.TemporalGestureVote(confirm_hits=module.STABLE_HITS, hold_misses=module.HOLD_MISSES)
     elif mode == "tracking":
@@ -325,8 +331,10 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             initial_pwm=int(os.getenv("PALM_TRACK_INITIAL_PWM", "1500")),
         )
         instance.hand_detector = module.HandLandmarkDetector()
+        instance.right_hand_detector = module.HandLandmarkDetector()
         instance.tracking_enabled = False
         instance.current_box = None
+        instance.current_landmarks = None
         instance.image_size = (module.CAMERA_WIDTH // 2, module.CAMERA_HEIGHT)
     elif mode == "sorting":
         instance.paused = False

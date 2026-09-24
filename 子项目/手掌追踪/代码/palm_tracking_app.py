@@ -61,11 +61,13 @@ class PalmTrackingApp:
             initial_pwm=int(os.getenv("PALM_TRACK_INITIAL_PWM", "1500")),
         )
         self.hand_detector = HandLandmarkDetector()
+        self.right_hand_detector = HandLandmarkDetector()
         self.running = True
         self.tracking_enabled = False
         self.frame: np.ndarray | None = None
         self.frame_lock = threading.Lock()
         self.current_box: Box | None = None
+        self.current_landmarks: np.ndarray | None = None
         self.box_lock = threading.Lock()
         self.image_size = (CAMERA_WIDTH // 2, CAMERA_HEIGHT)
         self.cap: cv2.VideoCapture | None = None
@@ -139,13 +141,14 @@ class PalmTrackingApp:
                     selected = left
                     observations = self.hand_detector.detect(left)
                     if not observations:
-                        observations = self.hand_detector.detect(right)
+                        observations = self.right_hand_detector.detect(right)
                         if observations:
                             selected = right
                     self._detection_eye = "right" if selected is right else "left"
                     self.image_size = (selected.shape[1], selected.shape[0])
                     boxes = [item.box for item in observations]
                     with self.box_lock:
+                        self.current_landmarks = getattr(observations[0], "landmarks", None) if observations else None
                         if self.tracking_enabled:
                             self.current_box = self.target_lock.update(boxes)
                         else:
@@ -212,6 +215,20 @@ class PalmTrackingApp:
             color = (80, 220, 245) if self.tracking_enabled else (110, 210, 120)
             cv2.rectangle(out, (x, y), (x + box_width, y + box_height), color, 3)
             cv2.putText(out, "TRACKING" if self.tracking_enabled else "PALM", (x, max(24, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA)
+        landmarks = getattr(self, "current_landmarks", None)
+        if landmarks is not None and landmarks.shape == (21, 2):
+            connections = (
+                (0, 1), (1, 2), (2, 3), (3, 4),
+                (0, 5), (5, 6), (6, 7), (7, 8),
+                (5, 9), (9, 10), (10, 11), (11, 12),
+                (9, 13), (13, 14), (14, 15), (15, 16),
+                (13, 17), (17, 18), (18, 19), (19, 20), (0, 17),
+            )
+            points = [tuple(np.rint(point).astype(int)) for point in landmarks]
+            for start, end in connections:
+                cv2.line(out, points[start], points[end], (40, 210, 255), 2, cv2.LINE_AA)
+            for point in points:
+                cv2.circle(out, point, 3, (80, 255, 160), -1, cv2.LINE_AA)
         return out
 
     def _update_view(self) -> None:
@@ -254,6 +271,8 @@ class PalmTrackingApp:
         self.gimbal.disconnect()
         if self.cap is not None:
             self.cap.release()
+        self.hand_detector.close()
+        self.right_hand_detector.close()
         self.root.after(80, self.root.destroy)
 
     def run(self) -> None:
