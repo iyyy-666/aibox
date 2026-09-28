@@ -55,6 +55,27 @@ def test_stream_parser_discards_one_bad_byte_then_finds_next_node():
     assert [point.angle_deg for point in points] == [30.0, 40.0]
 
 
+def test_stream_parser_consumes_zero_distance_nodes_and_preserves_rotation_starts():
+    parser = A1ScanStreamParser()
+    records = []
+    for rotation in range(10):
+        records.extend(
+            (
+                node(float(rotation), 0, start=True),
+                node(10.0 + rotation, 800),
+                node(20.0 + rotation, 0),
+                node(30.0 + rotation, 1200),
+            )
+        )
+
+    points = parser.feed(b"".join(records))
+
+    assert len(points) == len(records)
+    assert [point.scan_start for point in points] == [True, False, False, False] * 10
+    assert [point.distance_mm for point in points[::4]] == [0.0] * 10
+    assert [point.angle_deg for point in points[1:4]] == [10.0, 20.0, 30.0]
+
+
 def test_region_filters_points_without_assuming_a_quadrant():
     region = DetectionRegion(260, 280, 500, 1500)
     points = (ScanPoint(270, 1000, 10), ScanPoint(250, 1000, 10), ScanPoint(270, 2000, 10))

@@ -11,7 +11,7 @@ class ScanPoint:
     scan_start: bool = False
 
 
-def parse_scan_node(data: bytes) -> ScanPoint | None:
+def _decode_structural_scan_node(data: bytes) -> ScanPoint | None:
     if len(data) != 5:
         return None
     quality_flags, angle_low, angle_high, distance_low, distance_high = data
@@ -21,9 +21,14 @@ def parse_scan_node(data: bytes) -> ScanPoint | None:
         return None
     angle_deg = (((angle_high << 8) | angle_low) >> 1) / 64.0
     distance_mm = ((distance_high << 8) | distance_low) / 4.0
-    if not 0 <= angle_deg < 360 or distance_mm <= 0:
+    if not 0 <= angle_deg < 360:
         return None
     return ScanPoint(angle_deg, distance_mm, quality_flags >> 2, bool(start))
+
+
+def parse_scan_node(data: bytes) -> ScanPoint | None:
+    """Decode a structurally valid node, including zero-distance returns."""
+    return _decode_structural_scan_node(data)
 
 
 class A1ScanStreamParser:
