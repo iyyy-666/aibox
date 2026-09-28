@@ -98,6 +98,8 @@ def test_radar_frontend_contract_has_scan_rendering_and_manual_confirmation_only
     assert "RADAR_MAX_DISTANCE_MM = 8000" in app
     assert "Math.sin(angleRad)" in app
     assert "-Math.cos(angleRad)" in app
+    assert "Math.sin(regionEnd) * innerRadius" in app
+    assert "-Math.cos(regionEnd) * innerRadius" in app
     assert "radar_data_valid" in app
     assert "data-radar-readiness" in app
     assert "data-radar-byte-rate" in app
@@ -108,6 +110,66 @@ def test_radar_frontend_contract_has_scan_rendering_and_manual_confirmation_only
     assert "radar-workspace" in app
     assert "radar-mode" in app
     assert "sequence\"" not in app.split('moduleId === "radar_detection"', 1)[1].split("if (moduleId ===", 1)[0]
+
+
+def test_radar_uses_backend_detection_region_for_render_state():
+    run_radar_javascript(
+        """
+        const context = new Proxy({}, {
+          get(target, property) {
+            if (property === "setTransform" || property === "clearRect" || property === "fillRect" ||
+                property === "beginPath" || property === "arc" || property === "stroke" ||
+                property === "fillText" || property === "moveTo" || property === "lineTo" ||
+                property === "closePath" || property === "fill") return () => {};
+            return target[property];
+          },
+          set(target, property, value) { target[property] = value; return true; },
+        });
+        elements.set("[data-radar-canvas]", {
+          width: 0,
+          height: 0,
+          getBoundingClientRect: () => ({ width: 360, height: 360 }),
+          getContext: () => context,
+        });
+
+        hooks.renderWorkerDetails({
+          type: "scan",
+          radar_data_valid: true,
+          points: [{ angle_deg: 270, distance_mm: 1000 }],
+          detection_region: {
+            angle_min_deg: 250,
+            angle_max_deg: 290,
+            distance_min_mm: 450,
+            distance_max_mm: 1750,
+          },
+        });
+
+        assert.deepEqual(hooks.appState.radarScan.region, {
+          angleMin: 250,
+          angleMax: 290,
+          distanceMin: 450,
+          distanceMax: 1750,
+        });
+
+        hooks.renderWorkerDetails({
+          type: "detection",
+          radar_data_valid: true,
+          result: "clear",
+          detection_region: {
+            angle_min_deg: 255,
+            angle_max_deg: 285,
+            distance_min_mm: 500,
+            distance_max_mm: 1600,
+          },
+        });
+        assert.deepEqual(hooks.appState.radarScan.region, {
+          angleMin: 255,
+          angleMax: 285,
+          distanceMin: 500,
+          distanceMax: 1600,
+        });
+        """
+    )
 
 
 def test_radar_commands_are_gated_by_worker_readiness():

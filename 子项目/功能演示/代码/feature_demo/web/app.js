@@ -369,16 +369,18 @@ function drawRadarScan(scan = appState.radarScan) {
   }
 
   const region = scan.region || RADAR_DETECTION_REGION;
-  const regionStart = region.angleMin * Math.PI / 180 - Math.PI / 2;
-  const regionEnd = region.angleMax * Math.PI / 180 - Math.PI / 2;
+  const regionStart = region.angleMin * Math.PI / 180;
+  const regionEnd = region.angleMax * Math.PI / 180;
+  const arcStart = regionStart - Math.PI / 2;
+  const arcEnd = regionEnd - Math.PI / 2;
   const innerRadius = Math.min(region.distanceMin, RADAR_MAX_DISTANCE_MM) / RADAR_MAX_DISTANCE_MM * plotRadius;
   const outerRadius = Math.min(region.distanceMax, RADAR_MAX_DISTANCE_MM) / RADAR_MAX_DISTANCE_MM * plotRadius;
   context.strokeStyle = "rgba(255, 190, 72, .9)";
   context.lineWidth = 1.5;
   context.beginPath();
-  context.arc(centerX, centerY, outerRadius, regionStart, regionEnd);
-  context.lineTo(centerX + Math.cos(regionEnd) * innerRadius, centerY + Math.sin(regionEnd) * innerRadius);
-  context.arc(centerX, centerY, innerRadius, regionEnd, regionStart, true);
+  context.arc(centerX, centerY, outerRadius, arcStart, arcEnd);
+  context.lineTo(centerX + Math.sin(regionEnd) * innerRadius, centerY + -Math.cos(regionEnd) * innerRadius);
+  context.arc(centerX, centerY, innerRadius, arcEnd, arcStart, true);
   context.closePath();
   context.stroke();
 
@@ -455,8 +457,6 @@ function stopRadarResizeTracking() {
 
 function updateRadarScan(details) {
   if (!document.querySelector("[data-radar-canvas]")) return;
-  if (!Array.isArray(details.points)) return;
-  const valid = details.radar_data_valid === true && Array.isArray(details.points) && details.points.length > 0;
   const previousRegion = appState.radarScan.region || RADAR_DETECTION_REGION;
   const incomingRegion = details.detection_region || {};
   const region = {
@@ -465,6 +465,13 @@ function updateRadarScan(details) {
     distanceMin: Number(incomingRegion.distance_min_mm ?? previousRegion.distanceMin),
     distanceMax: Number(incomingRegion.distance_max_mm ?? previousRegion.distanceMax),
   };
+  if (!Array.isArray(details.points)) {
+    if (!details.detection_region) return;
+    appState.radarScan = { ...appState.radarScan, region };
+    drawRadarScan();
+    return;
+  }
+  const valid = details.radar_data_valid === true && details.points.length > 0;
   const points = valid ? details.points : [];
   appState.radarScan = {
     points,

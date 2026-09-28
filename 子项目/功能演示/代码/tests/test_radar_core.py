@@ -348,10 +348,41 @@ def test_device_consumes_split_descriptor_and_yields_only_complete_rotation():
     assert serial.writes == [bytes.fromhex("a520")]
     assert device.diagnostics["descriptor_valid"] is True
     assert device.diagnostics["bytes_received"] == len(descriptor) + len(payload)
+    assert device.diagnostics["structural_points"] == 3
     assert device.diagnostics["valid_points"] == 3
     assert device.diagnostics["complete_rotations"] == 1
     assert device.diagnostics["last_frame_size"] == 2
+    assert device.diagnostics["last_frame_positive_points"] == 2
     assert device.diagnostics["last_frame_timestamp"] > 0
+
+
+def test_device_keeps_zero_distance_nodes_but_counts_only_positive_returns_as_valid():
+    descriptor = bytes.fromhex("a55a0500004081")
+    payload = (
+        node(0.0, 0, start=True)
+        + node(90.0, 600)
+        + node(180.0, 0)
+        + node(1.0, 550, start=True)
+    )
+    serial = FakeSerial(reads=[descriptor + payload])
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+
+    assert device.open() is True
+    frame = next(device.iter_scans(threading.Event()))
+
+    assert [(point.angle_deg, point.distance_mm) for point in frame] == [
+        (0.0, 0.0),
+        (90.0, 600.0),
+        (180.0, 0.0),
+    ]
+    assert device.diagnostics["structural_points"] == 4
+    assert device.diagnostics["valid_points"] == 2
+    assert device.diagnostics["last_frame_size"] == 3
+    assert device.diagnostics["last_frame_positive_points"] == 1
 
 
 def test_device_rejects_invalid_descriptor():

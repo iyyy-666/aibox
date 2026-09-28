@@ -13,9 +13,11 @@ class FakeDevice:
         self.frames = list(frames)
         self.closed = False
         self._bytes_received = 0
+        self._structural_points = 0
         self._valid_points = 0
         self._complete_rotations = 0
         self._last_frame_size = 0
+        self._last_frame_positive_points = 0
         self._last_frame_timestamp = 0.0
 
     def open(self):
@@ -38,17 +40,22 @@ class FakeDevice:
         return {
             "descriptor_valid": True,
             "bytes_received": self._bytes_received,
+            "structural_points": self._structural_points,
             "valid_points": self._valid_points,
             "complete_rotations": self._complete_rotations,
             "last_frame_size": self._last_frame_size,
+            "last_frame_positive_points": self._last_frame_positive_points,
             "last_frame_timestamp": self._last_frame_timestamp,
         }
 
     def _record(self, frame):
         self._bytes_received += len(frame) * 5
-        self._valid_points += len(frame)
+        positive_points = sum(point.distance_mm > 0 for point in frame)
+        self._structural_points += len(frame)
+        self._valid_points += positive_points
         self._complete_rotations += 1
         self._last_frame_size = len(frame)
+        self._last_frame_positive_points = positive_points
         self._last_frame_timestamp = time.monotonic()
 
 
@@ -199,6 +206,82 @@ def test_worker_excludes_undersized_rotations_from_readiness():
     scans = [event for event in events if event.get("type") == "scan"]
     assert scans[-1]["valid_rotations"] == 5
     assert len(scans) == 5
+
+
+def test_default_threshold_rejects_zero_only_and_fewer_than_ten_positive_returns():
+    events = []
+    device = ControlledDevice()
+    worker = RadarWorker(
+        device_factory=lambda: device,
+        event_sink=events.append,
+        baseline_frames=1,
+        readiness_frames=1,
+        sample_period_s=0,
+    )
+    zero_only = tuple(ScanPoint(float(angle), 0, 15) for angle in range(20))
+    undersized = tuple(ScanPoint(float(angle), 1000, 15) for angle in range(9)) + zero_only
+    valid = tuple(ScanPoint(float(angle), 1000, 15) for angle in range(260, 270))
+
+    worker.start()
+    try:
+        device.push(zero_only)
+        device.push(undersized)
+        wait_until(lambda: device.diagnostics["complete_rotations"] == 2)
+
+        not_ready = worker.command("build_baseline", {})
+        assert not_ready["error"] == "not_ready"
+        assert not_ready["valid_rotations"] == 0
+        assert not [event for event in events if event.get("type") == "scan"]
+
+        device.push(valid)
+        wait_until(lambda: any(event.get("data_ready") is True for event in events))
+        assert worker.command("build_baseline", {})["ok"] is True
+    finally:
+        worker.stop()
+
+    scan = next(event for event in events if event.get("type") == "scan")
+    assert scan["valid_rotations"] == 1
+    assert scan["last_rotation_points"] == 10
+    assert len(scan["points"]) == 10
+
+
+def test_scan_and_detection_events_include_effective_detection_region():
+    events = []
+    device = ControlledDevice()
+    region = DetectionRegion(260, 280, 500, 1500)
+    worker = RadarWorker(
+        device_factory=lambda: device,
+        event_sink=events.append,
+        region=region,
+        baseline_frames=1,
+        readiness_frames=1,
+        minimum_frame_points=1,
+        confirmation_frames=1,
+        sample_period_s=0,
+    )
+    frame = (ScanPoint(270, 1000, 15),)
+
+    worker.start()
+    try:
+        device.push(frame)
+        wait_until(lambda: any(event.get("data_ready") is True for event in events))
+        assert worker.command("build_baseline", {})["ok"] is True
+        assert worker.command("start_detection", {})["ok"] is True
+        device.push(frame)
+        wait_until(lambda: any(event.get("type") == "detection" for event in events))
+    finally:
+        worker.stop()
+
+    expected = {
+        "angle_min_deg": 260,
+        "angle_max_deg": 280,
+        "distance_min_mm": 500,
+        "distance_max_mm": 1500,
+    }
+    scan = next(event for event in events if event.get("type") == "scan")
+    detection = next(event for event in events if event.get("type") == "detection")
+    assert scan["detection_region"] == expected
+    assert detection["detection_region"] == expected
 
 
 def test_build_baseline_rejects_disconnected_and_not_ready_states():

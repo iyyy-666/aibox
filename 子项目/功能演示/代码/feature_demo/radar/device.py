@@ -61,9 +61,11 @@ class A1M8Device:
         self._descriptor_timeout_s = max(0.0, float(descriptor_timeout_s))
         self._descriptor_valid = False
         self._bytes_received = 0
+        self._structural_points = 0
         self._valid_points = 0
         self._complete_rotations = 0
         self._last_frame_size = 0
+        self._last_frame_positive_points = 0
         self._last_frame_timestamp = 0.0
 
     @property
@@ -71,9 +73,11 @@ class A1M8Device:
         return {
             "descriptor_valid": self._descriptor_valid,
             "bytes_received": self._bytes_received,
+            "structural_points": self._structural_points,
             "valid_points": self._valid_points,
             "complete_rotations": self._complete_rotations,
             "last_frame_size": self._last_frame_size,
+            "last_frame_positive_points": self._last_frame_positive_points,
             "last_frame_timestamp": self._last_frame_timestamp,
         }
 
@@ -159,7 +163,8 @@ class A1M8Device:
                 continue
             self._bytes_received += len(chunk)
             points = parser.feed(chunk)
-            self._valid_points += len(points)
+            self._structural_points += len(points)
+            self._valid_points += sum(point.distance_mm > 0 for point in points)
             for point in points:
                 if point.scan_start:
                     if synchronized and scan:
@@ -167,6 +172,9 @@ class A1M8Device:
                         scan = [point]
                         self._complete_rotations += 1
                         self._last_frame_size = len(frame)
+                        self._last_frame_positive_points = sum(
+                            point.distance_mm > 0 for point in frame
+                        )
                         self._last_frame_timestamp = time.monotonic()
                         yield frame
                     else:

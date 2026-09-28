@@ -19,7 +19,7 @@ class RadarWorker:
         region: DetectionRegion | None = None,
         baseline_frames: int = 12,
         readiness_frames: int = 5,
-        minimum_frame_points: int = 1,
+        minimum_frame_points: int = 10,
         confirmation_frames: int = 3,
         change_distance_mm: float = 80,
         change_ratio: float = 0.35,
@@ -78,6 +78,14 @@ class RadarWorker:
         self._confirmation = ConfirmationState(required_frames=self._confirmation_frames)
         self._last_result = "无物块"
 
+    def _detection_region_payload(self) -> dict:
+        return {
+            "angle_min_deg": self._region.min_angle_deg,
+            "angle_max_deg": self._region.max_angle_deg,
+            "distance_min_mm": self._region.min_distance_mm,
+            "distance_max_mm": self._region.max_distance_mm,
+        }
+
     def start(self) -> None:
         if self.reader_alive:
             return
@@ -116,7 +124,7 @@ class RadarWorker:
             for frame in self._device.iter_scans(self._stop_event):
                 if self._stop_event.is_set():
                     return
-                frame = tuple(frame)
+                frame = tuple(point for point in frame if point.distance_mm > 0)
                 if len(frame) < self._minimum_frame_points:
                     continue
                 with self._frames_condition:
@@ -158,6 +166,7 @@ class RadarWorker:
                                 "threshold": self._comparator.change_ratio_threshold,
                                 "confirmation": self._confirmation.progress,
                                 "confirmation_required": self._confirmation.required_frames,
+                                "detection_region": self._detection_region_payload(),
                             }
                         )
         except Exception as exc:
@@ -197,6 +206,7 @@ class RadarWorker:
                 "data_ready": data_ready,
                 "valid_rotations": valid_rotations,
                 "required_rotations": self._readiness_frames,
+                "detection_region": self._detection_region_payload(),
                 **diagnostics,
                 "points": [
                     {
@@ -222,7 +232,9 @@ class RadarWorker:
             "bytes_per_second": round(rate("bytes_received"), 1),
             "points_per_second": round(rate("valid_points"), 1),
             "rotations_per_second": round(rate("complete_rotations"), 2),
-            "last_rotation_points": int(diagnostics.get("last_frame_size", 0) or 0),
+            "last_rotation_points": int(
+                diagnostics.get("last_frame_positive_points", 0) or 0
+            ),
             "last_rotation_age_ms": round(
                 max(0.0, (now - float(diagnostics.get("last_frame_timestamp", 0.0) or 0.0)) * 1000),
                 1,
