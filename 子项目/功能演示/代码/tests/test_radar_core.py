@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -184,13 +185,41 @@ def test_device_reports_when_no_descriptor_was_received():
         ports=("/dev/radar",),
         serial_factory=lambda *_args, **_kwargs: FakeSerial(),
         motor_start_delay_s=0,
+        descriptor_timeout_s=0.01,
     )
     stop = threading.Event()
-    stop.set()
 
     assert device.open() is True
+    started_at = time.monotonic()
     with pytest.raises(RadarProtocolError, match="未收到扫描响应描述头"):
         next(device.iter_scans(stop))
+    assert time.monotonic() - started_at < 0.25
+    assert stop.is_set() is False
+
+
+def test_device_resets_descriptor_valid_when_reopened():
+    descriptor = bytes.fromhex("a55a0500004081")
+    payload = node(0.0, 500, start=True) + node(1.0, 550, start=True)
+    serial = FakeSerial(reads=[descriptor + payload])
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+
+    assert device.open() is True
+    iterator = device.iter_scans(threading.Event())
+    next(iterator)
+    iterator.close()
+    assert device.diagnostics["descriptor_valid"] is True
+
+    device.close()
+    serial.reads = [bytes.fromhex("a55a0500004080")]
+    assert device.open() is True
+    assert device.diagnostics["descriptor_valid"] is False
+    with pytest.raises(RadarProtocolError, match="扫描响应描述头无效"):
+        next(device.iter_scans(threading.Event()))
+    assert device.diagnostics["descriptor_valid"] is False
 
 
 def test_device_discards_points_before_first_rotation_start():

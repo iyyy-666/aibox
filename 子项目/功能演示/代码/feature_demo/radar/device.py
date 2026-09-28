@@ -51,12 +51,14 @@ class A1M8Device:
         *,
         serial_factory=None,
         motor_start_delay_s: float = 1.0,
+        descriptor_timeout_s: float = 1.0,
     ) -> None:
         self.ports = ports or discover_radar_ports()
         self._serial_factory = serial_factory
         self._serial = None
         self.port: str | None = None
         self._motor_start_delay_s = max(0.0, float(motor_start_delay_s))
+        self._descriptor_timeout_s = max(0.0, float(descriptor_timeout_s))
         self._descriptor_valid = False
         self._bytes_received = 0
         self._valid_points = 0
@@ -76,6 +78,7 @@ class A1M8Device:
         }
 
     def open(self) -> bool:
+        self._descriptor_valid = False
         if self._serial_factory is not None:
             factory = self._serial_factory
         else:
@@ -119,7 +122,12 @@ class A1M8Device:
         if serial_port is None:
             return b""
         data = bytearray()
-        while len(data) < size and not stop_event.is_set():
+        deadline = time.monotonic() + self._descriptor_timeout_s
+        while (
+            len(data) < size
+            and not stop_event.is_set()
+            and time.monotonic() < deadline
+        ):
             chunk = serial_port.read(size - len(data))
             if not chunk:
                 continue
@@ -131,6 +139,7 @@ class A1M8Device:
         serial_port = self._serial
         if serial_port is None:
             return
+        self._descriptor_valid = False
         descriptor = self._read_exact(len(SCAN_DESCRIPTOR), stop_event)
         if not descriptor:
             raise RadarProtocolError("未收到扫描响应描述头")
