@@ -96,6 +96,62 @@ def test_baseline_uses_multiple_frames_and_detects_distance_change():
     assert result.change_ratio == 1.0
 
 
+def test_comparison_matches_nearby_angle_with_default_tolerance():
+    region = DetectionRegion(260, 280, 500, 1500)
+    comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
+    comparator.build_baseline(((ScanPoint(270, 1000, 10),),))
+
+    result = comparator.compare((ScanPoint(271.5, 1300, 10),))
+
+    assert result.data_valid is True
+    assert result.has_change is True
+    assert result.changed_points == 1
+    assert result.compared_points == 1
+
+
+def test_comparison_marks_point_beyond_configured_angle_tolerance_as_invalid():
+    region = DetectionRegion(260, 280, 500, 1500)
+    comparator = BaselineComparator(
+        region,
+        change_distance_mm=100,
+        change_ratio=0.2,
+        angle_match_tolerance_deg=1.0,
+    )
+    comparator.build_baseline(((ScanPoint(270, 1000, 10),),))
+
+    result = comparator.compare((ScanPoint(271.5, 1300, 10),))
+
+    assert result.data_valid is False
+    assert result.has_change is False
+    assert result.compared_points == 0
+
+
+def test_comparison_matches_nearby_angles_across_zero_degrees():
+    region = DetectionRegion(350, 10, 500, 1500)
+    comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
+    comparator.build_baseline(((ScanPoint(359, 1000, 10),),))
+
+    result = comparator.compare((ScanPoint(0.5, 1300, 10),))
+
+    assert result.data_valid is True
+    assert result.has_change is True
+    assert result.compared_points == 1
+
+
+def test_comparison_uses_each_current_sample_at_most_once():
+    region = DetectionRegion(260, 280, 500, 1500)
+    comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
+    comparator.build_baseline(
+        ((ScanPoint(270, 1000, 10), ScanPoint(271, 1000, 10)),)
+    )
+
+    result = comparator.compare((ScanPoint(270.5, 1300, 10),))
+
+    assert result.data_valid is True
+    assert result.changed_points == 1
+    assert result.compared_points == 1
+
+
 def test_comparison_marks_empty_current_region_as_invalid():
     region = DetectionRegion(260, 280, 500, 1500)
     comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)

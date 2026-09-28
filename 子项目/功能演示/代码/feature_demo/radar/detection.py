@@ -35,12 +35,22 @@ class DetectionResult:
 
 
 class BaselineComparator:
-    def __init__(self, region: DetectionRegion, *, change_distance_mm: float, change_ratio: float) -> None:
+    def __init__(
+        self,
+        region: DetectionRegion,
+        *,
+        change_distance_mm: float,
+        change_ratio: float,
+        angle_match_tolerance_deg: float = 2.0,
+    ) -> None:
         if change_distance_mm <= 0 or not 0 < change_ratio <= 1:
             raise ValueError("change thresholds must be positive")
+        if angle_match_tolerance_deg < 0:
+            raise ValueError("angle match tolerance must not be negative")
         self.region = region
         self.change_distance_mm = float(change_distance_mm)
         self.change_ratio_threshold = float(change_ratio)
+        self.angle_match_tolerance_deg = float(angle_match_tolerance_deg)
         self._baseline: dict[int, float] = {}
 
     @property
@@ -62,24 +72,43 @@ class BaselineComparator:
         current: dict[int, float] = {}
         for point in self.region.select(frame):
             current[self._key(point.angle_deg)] = point.distance_mm
-        common_keys = self._baseline.keys() & current.keys()
-        if not common_keys:
+        candidates = sorted(
+            (self._key_distance(baseline_key, current_key), baseline_key, current_key)
+            for baseline_key in self._baseline
+            for current_key in current
+            if self._key_distance(baseline_key, current_key) <= self.angle_match_tolerance_deg
+        )
+        matches: list[tuple[int, int]] = []
+        used_baseline_keys: set[int] = set()
+        used_current_keys: set[int] = set()
+        for _, baseline_key, current_key in candidates:
+            if baseline_key in used_baseline_keys or current_key in used_current_keys:
+                continue
+            matches.append((baseline_key, current_key))
+            used_baseline_keys.add(baseline_key)
+            used_current_keys.add(current_key)
+        if not matches:
             return DetectionResult(False, False, 0.0, 0, 0)
         changed = 0
-        for key in common_keys:
-            baseline_distance = self._baseline[key]
-            if abs(current[key] - baseline_distance) >= max(
+        for baseline_key, current_key in matches:
+            baseline_distance = self._baseline[baseline_key]
+            if abs(current[current_key] - baseline_distance) >= max(
                 self.change_distance_mm,
                 baseline_distance * self.change_ratio_threshold,
             ):
                 changed += 1
-        compared = len(common_keys)
+        compared = len(matches)
         ratio = changed / compared
         return DetectionResult(True, ratio >= self.change_ratio_threshold, ratio, changed, compared)
 
     @staticmethod
     def _key(angle: float) -> int:
         return round((angle % 360.0) * 2)
+
+    @staticmethod
+    def _key_distance(first: int, second: int) -> float:
+        difference = abs(first - second) / 2.0
+        return min(difference, 360.0 - difference)
 
 
 class ConfirmationState:
