@@ -152,6 +152,60 @@ def test_comparison_uses_each_current_sample_at_most_once():
     assert result.compared_points == 1
 
 
+def test_comparison_maximizes_nearby_match_count():
+    region = DetectionRegion(0, 20, 500, 1500)
+    comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
+    comparator.build_baseline(
+        ((ScanPoint(10, 1000, 10), ScanPoint(12, 1000, 10)),)
+    )
+
+    result = comparator.compare(
+        (ScanPoint(8, 1300, 10), ScanPoint(10, 1300, 10))
+    )
+
+    assert result.data_valid is True
+    assert result.changed_points == 2
+    assert result.compared_points == 2
+
+
+def test_comparison_minimizes_distance_among_maximum_matchings():
+    region = DetectionRegion(0, 20, 500, 1500)
+    comparator = BaselineComparator(
+        region,
+        change_distance_mm=100,
+        change_ratio=0.1,
+        angle_match_tolerance_deg=11.0,
+    )
+    comparator.build_baseline(
+        ((ScanPoint(0, 1000, 10), ScanPoint(10, 1400, 10)),)
+    )
+
+    result = comparator.compare(
+        (ScanPoint(9, 1000, 10), ScanPoint(11, 1400, 10))
+    )
+
+    assert result.data_valid is True
+    assert result.has_change is False
+    assert result.changed_points == 0
+    assert result.compared_points == 2
+
+
+@pytest.mark.parametrize(
+    "tolerance",
+    (float("nan"), float("inf"), float("-inf"), -0.5, 180.5),
+)
+def test_comparator_rejects_invalid_angle_match_tolerance(tolerance):
+    region = DetectionRegion(0, 20, 500, 1500)
+
+    with pytest.raises(ValueError, match="between 0 and 180"):
+        BaselineComparator(
+            region,
+            change_distance_mm=100,
+            change_ratio=0.2,
+            angle_match_tolerance_deg=tolerance,
+        )
+
+
 def test_comparison_marks_empty_current_region_as_invalid():
     region = DetectionRegion(260, 280, 500, 1500)
     comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
