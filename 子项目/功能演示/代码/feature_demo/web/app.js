@@ -1,5 +1,8 @@
 "use strict";
 
+const RADAR_MAX_DISTANCE_MM = 8000;
+const RADAR_DETECTION_REGION = { angleMin: 225, angleMax: 315, distanceMin: 300, distanceMax: 2000 };
+
 const appState = {
   modules: [],
   active: null,
@@ -14,6 +17,10 @@ const appState = {
   toastTimer: null,
   commandRequestPending: false,
   lifecycleControlsDisabled: false,
+  radarScan: { points: [], valid: false, latestAngle: null, region: RADAR_DETECTION_REGION },
+  radarDataReady: false,
+  radarBaselineReady: false,
+  radarConfirm: false,
 };
 
 const iconByModule = {
@@ -30,6 +37,7 @@ const iconByModule = {
   nursery_rhyme: "music",
   shape_recognition: "shapes",
   voice_robot_arm: "audio",
+  radar_detection: "scan",
 };
 
 const accentByCategory = {
@@ -48,6 +56,7 @@ const resourceLabels = {
   asr: "语音识别",
   llm: "AI 模型",
   tts: "语音合成",
+  radar: "雷达",
 };
 
 const commandLabels = {
@@ -69,6 +78,9 @@ const commandLabels = {
   stop_motion: "停止动作",
   play: "播放儿歌",
   stop_playback: "停止播放",
+  build_baseline: "建立基准",
+  start_detection: "开始检测",
+  stop_detection: "停止检测",
 };
 
 const secondaryCommands = new Set(["stop_listening", "interrupt", "pause_sorting", "stop_sorting", "stop_tracking", "stop_motion", "stop_playback"]);
@@ -228,16 +240,28 @@ function renderResources(resources) {
 }
 
 function renderCommandWorkspace(module, accent, soft) {
+  const workspace = document.querySelector("[data-command-workspace]");
   const icon = document.querySelector("[data-interaction-icon]");
+  workspace.classList.toggle("radar-workspace", module.module_id === "radar_detection");
+  document.querySelector("[data-interaction-panel]").classList.toggle("radar-mode", module.module_id === "radar_detection");
   icon.style.setProperty("--card-accent", accent);
   icon.style.setProperty("--card-soft", soft);
   icon.innerHTML = iconMarkup(iconByModule[module.module_id] || "spark");
   document.querySelector("[data-interaction-title]").textContent = module.name;
   document.querySelector("[data-interaction-copy]").textContent = module.description;
   const list = document.querySelector("[data-command-list]");
-  if (["ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm"].includes(module.module_id)) {
+  if (["ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm", "radar_detection"].includes(module.module_id)) {
     list.classList.add("nonvisual-controls");
+    if (module.module_id === "radar_detection") {
+      appState.radarScan = { points: [], valid: false, latestAngle: null, region: RADAR_DETECTION_REGION };
+      appState.radarDataReady = false;
+      appState.radarBaselineReady = false;
+    }
     list.innerHTML = nonVisualControls(module.module_id);
+    if (module.module_id === "radar_detection") {
+      updateCommandControls();
+      window.requestAnimationFrame(() => drawRadarScan());
+    }
     return;
   }
   list.classList.remove("nonvisual-controls");
@@ -255,6 +279,7 @@ function renderCommandWorkspace(module, accent, soft) {
 function nonVisualControls(moduleId) {
   const button = (command, label, extra = "", secondary = false) => `<button type="button" class="command-button${secondary ? " is-secondary" : ""}" data-command="${command}" ${extra}>${label}</button>`;
   const listening = () => `<div class="command-row" aria-label="语音监听控制">${button("start_listening", "开始监听")}${button("stop_listening", "停止监听", "", true)}</div>`;
+  if (moduleId === "radar_detection") return `<fieldset class="control-group radar-controls"><legend>雷达检测</legend><div class="radar-console"><div class="radar-screen"><canvas data-radar-canvas aria-label="实时雷达扫描图，零度朝上，角度顺时针增加，最大距离八米"></canvas><span class="radar-screen-label">实时扫描 · 8 m</span></div><div class="radar-control-column"><div class="radar-result-strip" aria-live="polite"><strong data-radar-result>雷达数据无效</strong><span data-radar-data-status>等待有效扫描数据</span></div><dl class="radar-status-grid"><div><dt>雷达状态</dt><dd data-radar-connection>未连接</dd></div><div><dt>扫描就绪</dt><dd data-radar-readiness>有效扫描 0/5</dd></div><div><dt>基准状态</dt><dd data-radar-baseline>未建立</dd></div><div><dt>检测状态</dt><dd data-radar-detection>未开始</dd></div><div><dt>传输速率</dt><dd data-radar-byte-rate>0 B/s</dd></div><div><dt>测距点率</dt><dd data-radar-point-rate>0 点/s</dd></div><div><dt>旋转速度</dt><dd data-radar-rotation-rate>0 Hz / 0 RPM</dd></div><div><dt>最近一帧</dt><dd data-radar-last-frame>0 点 / -- ms</dd></div></dl><div class="command-row">${button("build_baseline", "建立基准")}${button("start_detection", "开始检测")}${button("stop_detection", "停止检测", "", true)}<button type="button" class="command-button is-secondary" data-radar-confirm>是否搬运</button></div><section class="worker-output radar-details"><h3>检测参数</h3><dl><div><dt>固定位置</dt><dd data-radar-location>等待检测</dd></div><div><dt>检测区域</dt><dd><span data-radar-angle>225° ~ 315°</span> / <span data-radar-distance>300 ~ 2000 mm</span></dd></div><div><dt>当前变化程度</dt><dd data-radar-change>0%</dd></div><div><dt>变化阈值</dt><dd data-radar-threshold>35%</dd></div><div><dt>连续确认</dt><dd data-radar-confirmation>0 / 3</dd></div></dl></section></div></div></fieldset>`;
   if (moduleId === "ai_assistant") return `<fieldset class="control-group"><legend>文字与语音对话</legend><label for="assistant-prompt">请输入问题</label><textarea id="assistant-prompt" data-assistant-text rows="3" maxlength="500" aria-describedby="assistant-hint" placeholder="例如：什么是图像识别？"></textarea><p id="assistant-hint" class="control-hint">支持文字输入，也可开启语音监听。</p><div class="command-row">${button("ask", "发送问题")}${button("interrupt", "停止回答", "", true)}</div>${listening()}<section class="worker-output" aria-labelledby="dialogue-title"><h3 id="dialogue-title">对话记录</h3><div data-dialogue role="log" aria-live="polite">等待提问。</div></section></fieldset>`;
   if (moduleId === "voice_input_test") return `<fieldset class="control-group"><legend>语音输入测试</legend>${listening()}<section class="worker-output" aria-live="polite"><h3>识别结果</h3><dl><div><dt>原始文本</dt><dd data-raw>等待语音输入。</dd></div><div><dt>规范文本</dt><dd data-normalized>等待语音输入。</dd></div></dl></section></fieldset>`;
   if (moduleId === "nursery_rhyme") return `<fieldset class="control-group"><legend>儿歌播放</legend><div class="command-row" aria-label="选择儿歌">${button("play", "播放小星星", 'data-song-id="twinkle"')}${button("play", "播放两只老虎", 'data-song-id="two_tigers"')}${button("stop_playback", "停止播放", "", true)}</div>${listening()}<section class="worker-output" aria-live="polite"><h3>当前播放</h3><p data-current-song>尚未选择儿歌。</p><div data-lyrics>歌词将在播放时显示。</div></section></fieldset>`;
@@ -296,6 +321,109 @@ function updateLifecycle(snapshot) {
   renderWorkerDetails(snapshot.details || {});
 }
 
+function drawRadarScan(scan = appState.radarScan) {
+  const canvas = document.querySelector("[data-radar-canvas]");
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const size = Math.max(1, Math.floor(Math.min(rect.width || 460, rect.height || rect.width || 460)));
+  const ratio = window.devicePixelRatio || 1;
+  const backingSize = Math.round(size * ratio);
+  if (canvas.width !== backingSize || canvas.height !== backingSize) {
+    canvas.width = backingSize;
+    canvas.height = backingSize;
+  }
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const centerX = size / 2;
+  const centerY = size / 2;
+  const plotRadius = Math.max(1, centerX - 34);
+  context.clearRect(0, 0, size, size);
+  context.fillStyle = "#000000";
+  context.fillRect(0, 0, size, size);
+  context.strokeStyle = "rgba(89, 183, 196, .28)";
+  context.lineWidth = 1;
+  for (let ring = 1; ring <= 4; ring += 1) {
+    context.beginPath();
+    context.arc(centerX, centerY, plotRadius * ring / 4, 0, Math.PI * 2);
+    context.stroke();
+    context.fillStyle = "rgba(189, 218, 222, .72)";
+    context.font = "10px sans-serif";
+    context.fillText(`${ring * 2000} mm`, centerX + 4, centerY - plotRadius * ring / 4 + 12);
+  }
+  for (let angle = 0; angle < 360; angle += 30) {
+    const angleRad = angle * Math.PI / 180;
+    const x = centerX + Math.sin(angleRad) * plotRadius;
+    const y = centerY + -Math.cos(angleRad) * plotRadius;
+    context.beginPath();
+    context.moveTo(centerX, centerY);
+    context.lineTo(x, y);
+    context.stroke();
+    context.fillStyle = "rgba(189, 218, 222, .82)";
+    context.fillText(`${angle}°`, centerX + Math.sin(angleRad) * (plotRadius + 15) - 8, centerY - Math.cos(angleRad) * (plotRadius + 15) + 4);
+  }
+
+  const region = scan.region || RADAR_DETECTION_REGION;
+  const regionStart = region.angleMin * Math.PI / 180 - Math.PI / 2;
+  const regionEnd = region.angleMax * Math.PI / 180 - Math.PI / 2;
+  const innerRadius = Math.min(region.distanceMin, RADAR_MAX_DISTANCE_MM) / RADAR_MAX_DISTANCE_MM * plotRadius;
+  const outerRadius = Math.min(region.distanceMax, RADAR_MAX_DISTANCE_MM) / RADAR_MAX_DISTANCE_MM * plotRadius;
+  context.strokeStyle = "rgba(255, 190, 72, .9)";
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.arc(centerX, centerY, outerRadius, regionStart, regionEnd);
+  context.lineTo(centerX + Math.cos(regionEnd) * innerRadius, centerY + Math.sin(regionEnd) * innerRadius);
+  context.arc(centerX, centerY, innerRadius, regionEnd, regionStart, true);
+  context.closePath();
+  context.stroke();
+
+  if (scan.valid) {
+    context.fillStyle = "#33ddf2";
+    for (const point of scan.points) {
+      if (!Number.isFinite(point.angle_deg) || !Number.isFinite(point.distance_mm) || point.distance_mm <= 0) continue;
+      const angleRad = point.angle_deg * Math.PI / 180;
+      const radius = Math.min(point.distance_mm, RADAR_MAX_DISTANCE_MM) / RADAR_MAX_DISTANCE_MM * plotRadius;
+      const x = centerX + Math.sin(angleRad) * radius;
+      const y = centerY + -Math.cos(angleRad) * radius;
+      context.beginPath();
+      context.arc(x, y, 1.8, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+  if (Number.isFinite(scan.latestAngle)) {
+    const angleRad = scan.latestAngle * Math.PI / 180;
+    context.strokeStyle = "rgba(255, 255, 255, .78)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(centerX, centerY);
+    context.lineTo(centerX + Math.sin(angleRad) * plotRadius, centerY + -Math.cos(angleRad) * plotRadius);
+    context.stroke();
+  }
+}
+
+function updateRadarScan(details) {
+  if (!document.querySelector("[data-radar-canvas]")) return;
+  if (!Array.isArray(details.points)) return;
+  const valid = details.radar_data_valid === true && Array.isArray(details.points) && details.points.length > 0;
+  const previousRegion = appState.radarScan.region || RADAR_DETECTION_REGION;
+  const incomingRegion = details.detection_region || {};
+  const region = {
+    angleMin: Number(incomingRegion.angle_min_deg ?? previousRegion.angleMin),
+    angleMax: Number(incomingRegion.angle_max_deg ?? previousRegion.angleMax),
+    distanceMin: Number(incomingRegion.distance_min_mm ?? previousRegion.distanceMin),
+    distanceMax: Number(incomingRegion.distance_max_mm ?? previousRegion.distanceMax),
+  };
+  const points = valid ? details.points : [];
+  appState.radarScan = {
+    points,
+    valid,
+    latestAngle: points.length ? points[points.length - 1].angle_deg : appState.radarScan.latestAngle,
+    region,
+  };
+  drawRadarScan();
+  const status = document.querySelector("[data-radar-data-status]");
+  if (status) status.textContent = valid ? `${details.points.length} 个有效测距点` : "等待有效扫描数据";
+}
+
 function renderWorkerDetails(details) {
   const setDetail = (selector, value) => {
     const target = document.querySelector(selector);
@@ -308,6 +436,35 @@ function renderWorkerDetails(details) {
   setDetail("[data-current-song]", details.song);
   setDetail("[data-lyrics]", Array.isArray(details.lyrics) ? details.lyrics.join("\n") : details.lyrics);
   setDetail("[data-voice-result]", details.voice_result || (details.type === "speech" ? details.normalized : details.result));
+  setDetail("[data-radar-connection]", details.connected === true ? "已连接" : details.connected === false ? "未连接" : undefined);
+  if (details.data_ready !== undefined) appState.radarDataReady = details.data_ready === true;
+  if (details.baseline_ready !== undefined) appState.radarBaselineReady = details.baseline_ready === true;
+  setDetail("[data-radar-readiness]", details.valid_rotations !== undefined || details.required_rotations !== undefined ? `有效扫描 ${details.valid_rotations || 0}/${details.required_rotations || 5}` : undefined);
+  setDetail("[data-radar-byte-rate]", details.bytes_per_second !== undefined ? `${Number(details.bytes_per_second).toFixed(1)} B/s` : undefined);
+  setDetail("[data-radar-point-rate]", details.points_per_second !== undefined ? `${Number(details.points_per_second).toFixed(1)} 点/s` : undefined);
+  setDetail("[data-radar-rotation-rate]", details.rotations_per_second !== undefined ? `${Number(details.rotations_per_second).toFixed(2)} Hz / ${(Number(details.rotations_per_second) * 60).toFixed(1)} RPM` : undefined);
+  setDetail("[data-radar-last-frame]", details.last_rotation_points !== undefined || details.last_rotation_age_ms !== undefined ? `${details.last_rotation_points || 0} 点 / ${details.last_rotation_age_ms ?? "--"} ms` : undefined);
+  setDetail("[data-radar-baseline]", details.baseline_ready === true ? "已建立" : details.baseline_ready === false ? "未建立" : undefined);
+  setDetail("[data-radar-detection]", details.detecting === true ? "检测中" : details.detecting === false ? "已停止" : undefined);
+  updateRadarScan(details);
+  if (details.type === "error" || details.ok === false) {
+    setDetail("[data-radar-result]", details.message || "雷达运行错误");
+  } else if (details.radar_data_valid === false) {
+    setDetail("[data-radar-result]", "雷达数据无效");
+  } else if (details.result === "有物块") {
+    setDetail("[data-radar-result]", "固定位置存在物块");
+  } else if (details.result === "无物块") {
+    setDetail("[data-radar-result]", "固定位置不存在物块");
+  } else {
+    setDetail("[data-radar-result]", details.result);
+  }
+  if (details.result === "有物块" || details.result === "无物块") {
+    setDetail("[data-radar-location]", details.result === "有物块" ? "存在物块" : "不存在物块");
+  }
+  if (details.change_ratio !== undefined) setDetail("[data-radar-change]", `${Math.round(Number(details.change_ratio) * 100)}%`);
+  if (details.threshold !== undefined) setDetail("[data-radar-threshold]", `${Math.round(Number(details.threshold) * 100)}%`);
+  if (details.confirmation !== undefined || details.confirmation_required !== undefined) setDetail("[data-radar-confirmation]", `${details.confirmation || 0} / ${details.confirmation_required || 0}`);
+  updateCommandControls();
   const result = details.result || details.text || details.message;
   if (result) {
     const target = appState.active?.visual ? document.querySelector("[data-result-content]") : document.querySelector("[data-activity-log]");
@@ -456,6 +613,9 @@ async function sendCommand(command, control) {
     if (assistantText) assistantText.value = "";
   } catch (error) {
     showToast(error.message, true);
+    if (appState.active?.module_id === "radar_detection") {
+      renderWorkerDetails({ type: "error", message: error.message });
+    }
   } finally {
     if (!preemptive) {
       appState.commandRequestPending = false;
@@ -515,7 +675,8 @@ function updateCommandControls() {
   document.querySelectorAll("[data-command]").forEach((control) => {
     control.disabled = appState.lifecycleControlsDisabled || (
       appState.commandRequestPending && !preemptiveCommands.has(control.dataset.command)
-    );
+    ) || (control.dataset.command === "build_baseline" && !appState.radarDataReady)
+      || (control.dataset.command === "start_detection" && !appState.radarBaselineReady);
   });
   document.querySelectorAll("[data-local-action]").forEach((control) => {
     control.disabled = appState.lifecycleControlsDisabled;
@@ -532,6 +693,14 @@ function showToast(message, isError = false) {
 }
 
 document.addEventListener("click", (event) => {
+  const radarConfirm = event.target.closest("[data-radar-confirm]");
+  if (radarConfirm) {
+    appState.radarConfirm = !appState.radarConfirm;
+    radarConfirm.textContent = appState.radarConfirm ? "已确认搬运" : "是否搬运";
+    radarConfirm.classList.toggle("is-confirmed", appState.radarConfirm);
+    showToast(appState.radarConfirm ? "已记录人工搬运确认，未执行机械臂动作。" : "已取消搬运确认。");
+    return;
+  }
   const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
   if (localAction === "save_snapshot") {
     saveSnapshot();
