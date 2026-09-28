@@ -33,10 +33,12 @@ class RadarWorker:
         self._minimum_frame_points = max(1, int(minimum_frame_points))
         self._confirmation_frames = max(1, int(confirmation_frames))
         self._sample_period_s = max(0.0, float(sample_period_s))
+        self._change_distance_mm = float(change_distance_mm)
+        self._change_ratio = float(change_ratio)
         self._comparator = BaselineComparator(
             self._region,
-            change_distance_mm=change_distance_mm,
-            change_ratio=change_ratio,
+            change_distance_mm=self._change_distance_mm,
+            change_ratio=self._change_ratio,
         )
         self._confirmation = ConfirmationState(required_frames=self._confirmation_frames)
         self._frames: deque[tuple[ScanPoint, ...]] = deque(
@@ -67,10 +69,21 @@ class RadarWorker:
     def reader_alive(self) -> bool:
         return bool(self._reader and self._reader.is_alive())
 
+    def _reset_baseline_state(self) -> None:
+        self._comparator = BaselineComparator(
+            self._region,
+            change_distance_mm=self._change_distance_mm,
+            change_ratio=self._change_ratio,
+        )
+        self._confirmation = ConfirmationState(required_frames=self._confirmation_frames)
+        self._last_result = "无物块"
+
     def start(self) -> None:
         if self.reader_alive:
             return
         self._stop_event.clear()
+        self._detect_event.clear()
+        self._reset_baseline_state()
         with self._frames_condition:
             self._frames.clear()
             self._valid_rotations = 0
@@ -140,7 +153,7 @@ class RadarWorker:
                             {
                                 "type": "detection",
                                 "radar_data_valid": result.data_valid,
-                                "result": self._last_result,
+                                "result": self._last_result if result.data_valid else None,
                                 "change_ratio": round(result.change_ratio, 4),
                                 "threshold": self._comparator.change_ratio_threshold,
                                 "confirmation": self._confirmation.progress,

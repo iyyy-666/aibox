@@ -264,6 +264,54 @@ def test_build_baseline_waits_for_twelve_rotations_and_uses_newest_frames():
     assert result["frames"] == 12
 
 
+def test_build_baseline_uses_newest_buffered_rotation_distances():
+    events = []
+    device = ControlledDevice()
+    worker = RadarWorker(
+        device_factory=lambda: device,
+        event_sink=events.append,
+        region=DetectionRegion(260, 280, 500, 1500),
+        baseline_frames=12,
+        readiness_frames=5,
+        minimum_frame_points=1,
+        confirmation_frames=1,
+        change_distance_mm=100,
+        change_ratio=0.1,
+        sample_period_s=0,
+    )
+    old_frame = (ScanPoint(270, 1000, 15),)
+    newest_frame = (ScanPoint(270, 1400, 15),)
+
+    worker.start()
+    try:
+        device.push(old_frame, count=12)
+        device.push(newest_frame, count=12)
+        wait_until(
+            lambda: any(event.get("valid_rotations") == 24 for event in events)
+        )
+
+        assert worker.command("build_baseline", {})["ok"] is True
+        assert worker.command("start_detection", {})["ok"] is True
+        device.push(old_frame)
+        wait_until(
+            lambda: any(
+                event.get("type") == "detection"
+                and event.get("radar_data_valid") is True
+                for event in events
+            )
+        )
+    finally:
+        worker.stop()
+
+    detection = next(
+        event
+        for event in reversed(events)
+        if event.get("type") == "detection"
+        and event.get("radar_data_valid") is True
+    )
+    assert detection["result"] == "有物块"
+
+
 def test_stop_wakes_a_baseline_command_waiting_for_more_rotations():
     events = []
     device = ControlledDevice()
@@ -366,6 +414,7 @@ def test_invalid_region_frame_does_not_advance_confirmation():
             and event.get("radar_data_valid") is False
         )
         assert invalid_event["confirmation"] == 1
+        assert invalid_event["result"] is None
 
         device.push(changed, count=2)
         wait_until(lambda: any(event.get("result") == "有物块" for event in events))
@@ -402,3 +451,44 @@ def test_worker_builds_baseline_detects_object_and_stops_reader():
     assert any(event.get("result") == "有物块" for event in events)
     assert device.closed is True
     assert worker.reader_alive is False
+
+
+def test_restart_requires_a_new_baseline_before_detection():
+    events = []
+    device = ControlledDevice()
+    worker = RadarWorker(
+        device_factory=lambda: device,
+        event_sink=events.append,
+        region=DetectionRegion(260, 280, 500, 1500),
+        baseline_frames=5,
+        readiness_frames=5,
+        minimum_frame_points=1,
+        confirmation_frames=1,
+        sample_period_s=0,
+    )
+    baseline = (ScanPoint(270, 1000, 15),)
+    changed = (ScanPoint(270, 1500, 15),)
+
+    worker.start()
+    device.push(baseline, count=5)
+    wait_until(lambda: any(event.get("data_ready") is True for event in events))
+    assert worker.command("build_baseline", {})["ok"] is True
+    assert worker.command("start_detection", {})["ok"] is True
+    device.push(changed)
+    wait_until(lambda: any(event.get("result") == "有物块" for event in events))
+    worker.stop()
+
+    events.clear()
+    worker.start()
+    try:
+        stale_start = worker.command("start_detection", {})
+        assert stale_start["ok"] is False
+
+        device.push(baseline, count=5)
+        wait_until(lambda: any(event.get("data_ready") is True for event in events))
+        assert worker.command("build_baseline", {})["ok"] is True
+        restarted = worker.command("start_detection", {})
+        assert restarted["ok"] is True
+        assert restarted["result"] == "无物块"
+    finally:
+        worker.stop()
