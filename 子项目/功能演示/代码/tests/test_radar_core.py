@@ -1,3 +1,7 @@
+import threading
+
+import pytest
+
 from feature_demo.radar.detection import (
     BaselineComparator,
     ConfirmationState,
@@ -9,7 +13,7 @@ from feature_demo.radar.protocol import (
     parse_scan_node,
     parse_scan_nodes,
 )
-from feature_demo.radar.device import A1M8Device
+from feature_demo.radar.device import A1M8Device, RadarProtocolError
 
 
 def node(angle: float, distance: int, quality: int = 15, *, start: bool = False) -> bytes:
@@ -79,8 +83,9 @@ def test_confirmation_requires_consecutive_frames_in_each_direction():
 
 
 class FakeSerial:
-    def __init__(self, port=None, *_args, **kwargs):
+    def __init__(self, port=None, *_args, reads=(), **kwargs):
         self.writes = []
+        self.reads = list(reads)
         self.closed = False
         self.is_open = port is not None
         self.port = port
@@ -100,6 +105,11 @@ class FakeSerial:
         pass
 
     def read(self, size):
+        if self.reads:
+            chunk = self.reads.pop(0)
+            if len(chunk) > size:
+                self.reads.insert(0, chunk[size:])
+            return chunk[:size]
         return b""
 
     def close(self):
@@ -130,3 +140,75 @@ def test_device_starts_scanning_without_info_query():
 
     device.close()
     assert serial.writes[-1] == bytes.fromhex("a525")
+
+
+def test_device_consumes_split_descriptor_and_yields_only_complete_rotation():
+    descriptor = bytes.fromhex("a55a0500004081")
+    payload = node(0.0, 500, start=True) + node(90.0, 600) + node(1.0, 550, start=True)
+    serial = FakeSerial(reads=[descriptor[:3], descriptor[3:] + payload])
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+    stop = threading.Event()
+
+    assert device.open() is True
+    frame = next(device.iter_scans(stop))
+
+    assert [point.angle_deg for point in frame] == [0.0, 90.0]
+    assert serial.writes == [bytes.fromhex("a520")]
+    assert device.diagnostics["descriptor_valid"] is True
+    assert device.diagnostics["bytes_received"] == len(descriptor) + len(payload)
+    assert device.diagnostics["valid_points"] == 3
+    assert device.diagnostics["complete_rotations"] == 1
+    assert device.diagnostics["last_frame_size"] == 2
+    assert device.diagnostics["last_frame_timestamp"] > 0
+
+
+def test_device_rejects_invalid_descriptor():
+    serial = FakeSerial(reads=[bytes.fromhex("a55a0500004080")])
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+
+    assert device.open() is True
+    with pytest.raises(RadarProtocolError, match="扫描响应描述头无效"):
+        next(device.iter_scans(threading.Event()))
+
+
+def test_device_reports_when_no_descriptor_was_received():
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: FakeSerial(),
+        motor_start_delay_s=0,
+    )
+    stop = threading.Event()
+    stop.set()
+
+    assert device.open() is True
+    with pytest.raises(RadarProtocolError, match="未收到扫描响应描述头"):
+        next(device.iter_scans(stop))
+
+
+def test_device_discards_points_before_first_rotation_start():
+    descriptor = bytes.fromhex("a55a0500004081")
+    payload = (
+        node(270.0, 400)
+        + node(0.0, 500, start=True)
+        + node(90.0, 600)
+        + node(1.0, 550, start=True)
+    )
+    serial = FakeSerial(reads=[descriptor + payload])
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+
+    assert device.open() is True
+    frame = next(device.iter_scans(threading.Event()))
+
+    assert [point.angle_deg for point in frame] == [0.0, 90.0]
