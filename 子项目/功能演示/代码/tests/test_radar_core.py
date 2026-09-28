@@ -70,8 +70,23 @@ def test_baseline_uses_multiple_frames_and_detects_distance_change():
     comparator.build_baseline(frames)
 
     result = comparator.compare((ScanPoint(270, 1250, 10),))
+    assert result.data_valid is True
     assert result.has_change is True
     assert result.change_ratio == 1.0
+
+
+def test_comparison_marks_empty_current_region_as_invalid():
+    region = DetectionRegion(260, 280, 500, 1500)
+    comparator = BaselineComparator(region, change_distance_mm=100, change_ratio=0.2)
+    comparator.build_baseline(((ScanPoint(270, 1000, 10),),))
+
+    result = comparator.compare((ScanPoint(10, 1000, 10),))
+
+    assert result.data_valid is False
+    assert result.has_change is False
+    assert result.change_ratio == 0.0
+    assert result.changed_points == 0
+    assert result.compared_points == 0
 
 
 def test_confirmation_requires_consecutive_frames_in_each_direction():
