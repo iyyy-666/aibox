@@ -754,33 +754,38 @@ function showToast(message, isError = false) {
   appState.toastTimer = window.setTimeout(() => { toast.hidden = true; }, 3200);
 }
 
+function handleDocumentClick(event) {
+  const radarConfirm = event.target.closest("[data-radar-confirm]");
+  if (radarConfirm) {
+    appState.radarConfirm = !appState.radarConfirm;
+    radarConfirm.textContent = appState.radarConfirm ? "已确认搬运" : "是否搬运";
+    radarConfirm.classList.toggle("is-confirmed", appState.radarConfirm);
+    showToast(appState.radarConfirm ? "已记录人工搬运确认，未执行机械臂动作。" : "已取消搬运确认。");
+    return;
+  }
+  const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
+  if (localAction === "save_snapshot") {
+    saveSnapshot();
+    return;
+  }
+  const command = event.target.closest("[data-command]")?.dataset.command;
+  if (command) sendCommand(command, event.target.closest("[data-command]"));
+}
+
 if (globalThis.__FEATURE_DEMO_TEST__) {
   globalThis.__featureDemoTestHooks = {
     appState,
+    handleDocumentClick,
+    renderCommandWorkspace,
     renderWorkerDetails,
     resetRadarState,
+    showHomeView,
     startRadarResizeTracking,
     stopRadarResizeTracking,
     updateCommandControls,
   };
 } else {
-  document.addEventListener("click", (event) => {
-    const radarConfirm = event.target.closest("[data-radar-confirm]");
-    if (radarConfirm) {
-      appState.radarConfirm = !appState.radarConfirm;
-      radarConfirm.textContent = appState.radarConfirm ? "已确认搬运" : "是否搬运";
-      radarConfirm.classList.toggle("is-confirmed", appState.radarConfirm);
-      showToast(appState.radarConfirm ? "已记录人工搬运确认，未执行机械臂动作。" : "已取消搬运确认。");
-      return;
-    }
-    const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
-    if (localAction === "save_snapshot") {
-      saveSnapshot();
-      return;
-    }
-    const command = event.target.closest("[data-command]")?.dataset.command;
-    if (command) sendCommand(command, event.target.closest("[data-command]"));
-  });
+  document.addEventListener("click", handleDocumentClick);
   document.querySelector('[data-action="exit-module"]').addEventListener("click", requestExit);
   document.querySelector('[data-action="continue-module"]').addEventListener("click", () => document.querySelector("[data-exit-dialog]").close());
   document.querySelector('[data-action="confirm-exit"]').addEventListener("click", confirmExit);

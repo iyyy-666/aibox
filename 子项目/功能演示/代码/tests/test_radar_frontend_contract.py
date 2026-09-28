@@ -46,8 +46,8 @@ def run_radar_javascript(scenario: str) -> None:
               removeEventListener(name, callback) {{ if (name === "change") dprListeners.delete(callback); }},
             }};
           }},
-          setTimeout,
-          clearTimeout,
+          setTimeout() {{ return 1; }},
+          clearTimeout() {{}},
           scrollTo() {{}},
         }};
         globalThis.fetch = async () => ({{ ok: true, json: async () => [] }});
@@ -135,14 +135,80 @@ def test_radar_commands_are_gated_by_worker_readiness():
 def test_radar_reentry_resets_manual_confirmation_and_scan_state():
     run_radar_javascript(
         """
-        hooks.appState.radarConfirm = true;
+        const classList = () => {
+          const values = new Set();
+          return {
+            add(...names) { names.forEach(name => values.add(name)); },
+            remove(...names) { names.forEach(name => values.delete(name)); },
+            toggle(name, force) {
+              const enabled = force === undefined ? !values.has(name) : force;
+              if (enabled) values.add(name); else values.delete(name);
+              return enabled;
+            },
+            contains(name) { return values.has(name); },
+          };
+        };
+        const node = () => ({
+          classList: classList(),
+          hidden: false,
+          innerHTML: "",
+          style: { setProperty() {} },
+          textContent: "",
+        });
+        const workspace = node();
+        const interactionPanel = node();
+        const commandList = node();
+        let confirmButton = null;
+        Object.defineProperty(commandList, "innerHTML", {
+          set() {
+            confirmButton = node();
+            confirmButton.textContent = "是否搬运";
+            commandControls.splice(
+              0,
+              commandControls.length,
+              { dataset: { command: "build_baseline" }, disabled: false },
+              { dataset: { command: "start_detection" }, disabled: false },
+              { dataset: { command: "stop_detection" }, disabled: false },
+            );
+          },
+        });
+        elements.set("[data-command-workspace]", workspace);
+        elements.set("[data-interaction-panel]", interactionPanel);
+        elements.set("[data-interaction-icon]", node());
+        elements.set("[data-interaction-title]", node());
+        elements.set("[data-interaction-copy]", node());
+        elements.set("[data-command-list]", commandList);
+        elements.set('[data-view="module"]', node());
+        elements.set('[data-view="home"]', node());
+        elements.set("[data-page-title]", node());
+        elements.set("[data-global-status]", node());
+        elements.set("[data-toast]", node());
+        const radarModule = {
+          module_id: "radar_detection",
+          name: "雷达检测",
+          description: "检测固定位置物块",
+          commands: ["build_baseline", "start_detection", "stop_detection"],
+        };
+        window.requestAnimationFrame = () => {};
+
+        hooks.renderCommandWorkspace(radarModule, "#2468d8", "#e6f0ff");
+        hooks.handleDocumentClick({
+          target: { closest(selector) { return selector === "[data-radar-confirm]" ? confirmButton : null; } },
+        });
+
+        assert.equal(hooks.appState.radarConfirm, true);
+        assert.equal(confirmButton.textContent, "已确认搬运");
+        assert.equal(confirmButton.classList.contains("is-confirmed"), true);
         hooks.appState.radarDataReady = true;
         hooks.appState.radarBaselineReady = true;
         hooks.appState.radarScan = { points: [{ angle_deg: 90, distance_mm: 1000 }], valid: true };
 
-        hooks.resetRadarState();
+        hooks.showHomeView();
+        hooks.renderCommandWorkspace(radarModule, "#2468d8", "#e6f0ff");
 
         assert.equal(hooks.appState.radarConfirm, false);
+        assert.equal(confirmButton.textContent, "是否搬运");
+        assert.equal(confirmButton.classList.contains("is-confirmed"), false);
         assert.equal(hooks.appState.radarDataReady, false);
         assert.equal(hooks.appState.radarBaselineReady, false);
         assert.deepEqual(hooks.appState.radarScan.points, []);
