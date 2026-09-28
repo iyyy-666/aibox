@@ -21,7 +21,13 @@ const appState = {
   radarDataReady: false,
   radarBaselineReady: false,
   radarConfirm: false,
+  radarError: null,
 };
+
+let radarResizeObserver = null;
+let radarWindowResizeHandler = null;
+let radarDprMediaQuery = null;
+let radarDprChangeHandler = null;
 
 const iconByModule = {
   ai_assistant: "bot",
@@ -240,6 +246,7 @@ function renderResources(resources) {
 }
 
 function renderCommandWorkspace(module, accent, soft) {
+  stopRadarResizeTracking();
   const workspace = document.querySelector("[data-command-workspace]");
   const icon = document.querySelector("[data-interaction-icon]");
   workspace.classList.toggle("radar-workspace", module.module_id === "radar_detection");
@@ -253,14 +260,12 @@ function renderCommandWorkspace(module, accent, soft) {
   if (["ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm", "radar_detection"].includes(module.module_id)) {
     list.classList.add("nonvisual-controls");
     if (module.module_id === "radar_detection") {
-      appState.radarScan = { points: [], valid: false, latestAngle: null, region: RADAR_DETECTION_REGION };
-      appState.radarDataReady = false;
-      appState.radarBaselineReady = false;
+      resetRadarState();
     }
     list.innerHTML = nonVisualControls(module.module_id);
     if (module.module_id === "radar_detection") {
       updateCommandControls();
-      window.requestAnimationFrame(() => drawRadarScan());
+      window.requestAnimationFrame(() => startRadarResizeTracking());
     }
     return;
   }
@@ -295,6 +300,7 @@ function showModuleView() {
 }
 
 function showHomeView() {
+  stopRadarResizeTracking();
   document.querySelector('[data-view="module"]').hidden = true;
   document.querySelector('[data-view="home"]').hidden = false;
   document.querySelector("[data-page-title]").textContent = "功能演示";
@@ -400,6 +406,53 @@ function drawRadarScan(scan = appState.radarScan) {
   }
 }
 
+function resetRadarState() {
+  appState.radarScan = { points: [], valid: false, latestAngle: null, region: RADAR_DETECTION_REGION };
+  appState.radarDataReady = false;
+  appState.radarBaselineReady = false;
+  appState.radarConfirm = false;
+  appState.radarError = null;
+}
+
+function watchRadarDpr(redraw) {
+  if (radarDprMediaQuery && radarDprChangeHandler) {
+    radarDprMediaQuery.removeEventListener("change", radarDprChangeHandler);
+  }
+  radarDprMediaQuery = window.matchMedia?.(`(resolution: ${window.devicePixelRatio || 1}dppx)`) || null;
+  radarDprChangeHandler = radarDprMediaQuery ? () => {
+    redraw();
+    watchRadarDpr(redraw);
+  } : null;
+  radarDprMediaQuery?.addEventListener("change", radarDprChangeHandler);
+}
+
+function startRadarResizeTracking() {
+  stopRadarResizeTracking();
+  const canvas = document.querySelector("[data-radar-canvas]");
+  if (!canvas) return;
+  const redraw = () => drawRadarScan(appState.radarScan);
+  if (typeof ResizeObserver !== "undefined") {
+    radarResizeObserver = new ResizeObserver(redraw);
+    radarResizeObserver.observe(canvas);
+  }
+  radarWindowResizeHandler = redraw;
+  window.addEventListener("resize", radarWindowResizeHandler);
+  watchRadarDpr(redraw);
+  redraw();
+}
+
+function stopRadarResizeTracking() {
+  radarResizeObserver?.disconnect();
+  radarResizeObserver = null;
+  if (radarWindowResizeHandler) window.removeEventListener("resize", radarWindowResizeHandler);
+  radarWindowResizeHandler = null;
+  if (radarDprMediaQuery && radarDprChangeHandler) {
+    radarDprMediaQuery.removeEventListener("change", radarDprChangeHandler);
+  }
+  radarDprMediaQuery = null;
+  radarDprChangeHandler = null;
+}
+
 function updateRadarScan(details) {
   if (!document.querySelector("[data-radar-canvas]")) return;
   if (!Array.isArray(details.points)) return;
@@ -448,13 +501,21 @@ function renderWorkerDetails(details) {
   setDetail("[data-radar-detection]", details.detecting === true ? "检测中" : details.detecting === false ? "已停止" : undefined);
   updateRadarScan(details);
   if (details.type === "error" || details.ok === false) {
-    setDetail("[data-radar-result]", details.message || "雷达运行错误");
+    appState.radarError = details.message || "雷达运行错误";
+    setDetail("[data-radar-result]", appState.radarError);
+  } else if (appState.radarError && details.radar_data_valid !== true) {
+    setDetail("[data-radar-result]", appState.radarError);
   } else if (details.radar_data_valid === false) {
     setDetail("[data-radar-result]", "雷达数据无效");
   } else if (details.result === "有物块") {
+    appState.radarError = null;
     setDetail("[data-radar-result]", "固定位置存在物块");
   } else if (details.result === "无物块") {
+    appState.radarError = null;
     setDetail("[data-radar-result]", "固定位置不存在物块");
+  } else if (details.radar_data_valid === true) {
+    appState.radarError = null;
+    setDetail("[data-radar-result]", "雷达数据有效");
   } else {
     setDetail("[data-radar-result]", details.result);
   }
@@ -659,6 +720,7 @@ async function confirmExit() {
 }
 
 function showStageError(message) {
+  stopRadarResizeTracking();
   document.querySelector("[data-visual-workspace]").hidden = true;
   document.querySelector("[data-command-workspace]").hidden = true;
   const panel = document.querySelector("[data-stage-error]");
@@ -692,27 +754,38 @@ function showToast(message, isError = false) {
   appState.toastTimer = window.setTimeout(() => { toast.hidden = true; }, 3200);
 }
 
-document.addEventListener("click", (event) => {
-  const radarConfirm = event.target.closest("[data-radar-confirm]");
-  if (radarConfirm) {
-    appState.radarConfirm = !appState.radarConfirm;
-    radarConfirm.textContent = appState.radarConfirm ? "已确认搬运" : "是否搬运";
-    radarConfirm.classList.toggle("is-confirmed", appState.radarConfirm);
-    showToast(appState.radarConfirm ? "已记录人工搬运确认，未执行机械臂动作。" : "已取消搬运确认。");
-    return;
-  }
-  const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
-  if (localAction === "save_snapshot") {
-    saveSnapshot();
-    return;
-  }
-  const command = event.target.closest("[data-command]")?.dataset.command;
-  if (command) sendCommand(command, event.target.closest("[data-command]"));
-});
-document.querySelector('[data-action="exit-module"]').addEventListener("click", requestExit);
-document.querySelector('[data-action="continue-module"]').addEventListener("click", () => document.querySelector("[data-exit-dialog]").close());
-document.querySelector('[data-action="confirm-exit"]').addEventListener("click", confirmExit);
-document.querySelector('[data-action="error-exit"]').addEventListener("click", confirmExit);
-document.querySelector('[data-nav="feature-demo"]').addEventListener("click", () => { if (appState.active) requestExit(); });
-window.addEventListener("beforeunload", () => { closeStatusSocket(); stopFrameUpdates(); });
-loadModules();
+if (globalThis.__FEATURE_DEMO_TEST__) {
+  globalThis.__featureDemoTestHooks = {
+    appState,
+    renderWorkerDetails,
+    resetRadarState,
+    startRadarResizeTracking,
+    stopRadarResizeTracking,
+    updateCommandControls,
+  };
+} else {
+  document.addEventListener("click", (event) => {
+    const radarConfirm = event.target.closest("[data-radar-confirm]");
+    if (radarConfirm) {
+      appState.radarConfirm = !appState.radarConfirm;
+      radarConfirm.textContent = appState.radarConfirm ? "已确认搬运" : "是否搬运";
+      radarConfirm.classList.toggle("is-confirmed", appState.radarConfirm);
+      showToast(appState.radarConfirm ? "已记录人工搬运确认，未执行机械臂动作。" : "已取消搬运确认。");
+      return;
+    }
+    const localAction = event.target.closest("[data-local-action]")?.dataset.localAction;
+    if (localAction === "save_snapshot") {
+      saveSnapshot();
+      return;
+    }
+    const command = event.target.closest("[data-command]")?.dataset.command;
+    if (command) sendCommand(command, event.target.closest("[data-command]"));
+  });
+  document.querySelector('[data-action="exit-module"]').addEventListener("click", requestExit);
+  document.querySelector('[data-action="continue-module"]').addEventListener("click", () => document.querySelector("[data-exit-dialog]").close());
+  document.querySelector('[data-action="confirm-exit"]').addEventListener("click", confirmExit);
+  document.querySelector('[data-action="error-exit"]').addEventListener("click", confirmExit);
+  document.querySelector('[data-nav="feature-demo"]').addEventListener("click", () => { if (appState.active) requestExit(); });
+  window.addEventListener("beforeunload", () => { closeStatusSocket(); stopFrameUpdates(); stopRadarResizeTracking(); });
+  loadModules();
+}
