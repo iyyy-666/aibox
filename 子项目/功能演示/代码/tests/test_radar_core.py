@@ -99,9 +99,19 @@ def test_confirmation_requires_consecutive_frames_in_each_direction():
 
 
 class FakeSerial:
-    def __init__(self, port=None, *_args, reads=(), **kwargs):
+    def __init__(
+        self,
+        port=None,
+        *_args,
+        reads=(),
+        stale_reads=(),
+        scan_reads=(),
+        **kwargs,
+    ):
         self.writes = []
-        self.reads = list(reads)
+        self.reads = list(stale_reads)
+        self.scan_reads = list(reads) + list(scan_reads)
+        self.events = []
         self.closed = False
         self.is_open = port is not None
         self.port = port
@@ -112,10 +122,15 @@ class FakeSerial:
         self.dsrdtr = kwargs.get("dsrdtr", True)
 
     def reset_input_buffer(self):
-        pass
+        self.events.append("reset_input_buffer")
+        self.reads.clear()
 
     def write(self, payload):
         self.writes.append(payload)
+        self.events.append(("write", payload))
+        if payload == bytes.fromhex("a520"):
+            self.reads.extend(self.scan_reads)
+            self.scan_reads.clear()
 
     def flush(self):
         pass
@@ -134,6 +149,7 @@ class FakeSerial:
     def open(self):
         self.open_dtr = self.dtr
         self.is_open = True
+        self.events.append("open")
 
 
 def test_device_starts_scanning_without_info_query():
@@ -156,6 +172,31 @@ def test_device_starts_scanning_without_info_query():
 
     device.close()
     assert serial.writes[-1] == bytes.fromhex("a525")
+
+
+def test_device_clears_stale_input_before_requesting_scan_descriptor():
+    descriptor = bytes.fromhex("a55a0500004081")
+    payload = node(0.0, 500, start=True) + node(90.0, 600) + node(1.0, 550, start=True)
+    serial = FakeSerial(
+        stale_reads=[bytes.fromhex("deadbeef")],
+        scan_reads=[descriptor + payload],
+    )
+    device = A1M8Device(
+        ports=("/dev/radar",),
+        serial_factory=lambda *_args, **_kwargs: serial,
+        motor_start_delay_s=0,
+    )
+
+    assert device.open() is True
+    frame = next(device.iter_scans(threading.Event()))
+
+    assert serial.events[:3] == [
+        "open",
+        "reset_input_buffer",
+        ("write", bytes.fromhex("a520")),
+    ]
+    assert [point.angle_deg for point in frame] == [0.0, 90.0]
+    assert device.diagnostics["descriptor_valid"] is True
 
 
 def test_device_consumes_split_descriptor_and_yields_only_complete_rotation():
@@ -229,7 +270,7 @@ def test_device_resets_descriptor_valid_when_reopened():
     assert device.diagnostics["descriptor_valid"] is True
 
     device.close()
-    serial.reads = [bytes.fromhex("a55a0500004080")]
+    serial.scan_reads = [bytes.fromhex("a55a0500004080")]
     assert device.open() is True
     assert device.diagnostics["descriptor_valid"] is False
     with pytest.raises(RadarProtocolError, match="扫描响应描述头无效"):

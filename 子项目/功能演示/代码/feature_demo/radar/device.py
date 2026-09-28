@@ -103,6 +103,9 @@ class A1M8Device:
                 candidate.rts = False
                 candidate.port = port
                 candidate.open()
+                reset_input_buffer = getattr(candidate, "reset_input_buffer", None)
+                if callable(reset_input_buffer):
+                    reset_input_buffer()
                 if self._motor_start_delay_s:
                     time.sleep(self._motor_start_delay_s)
                 candidate.write(bytes.fromhex("a520"))
