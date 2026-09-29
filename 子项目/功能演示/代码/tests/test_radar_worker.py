@@ -83,6 +83,38 @@ class FailingDevice(FakeDevice):
         raise OSError("serial disconnected")
 
 
+class RecordingRobotAdapter:
+    def __init__(self):
+        self.commands = []
+        self.connected = False
+        self.stopped = False
+        self.disconnected = False
+        self.generation = 0
+
+    @property
+    def motion_generation(self):
+        return self.generation
+
+    def connect(self):
+        self.connected = True
+
+    def command(self, name, payload):
+        self.commands.append((name, payload))
+        return {
+            "ok": True,
+            "command": name,
+            "result": payload["name"],
+            "message": "机械臂命令已执行。",
+        }
+
+    def stop_motion(self):
+        self.stopped = True
+
+    def disconnect(self):
+        self.connected = False
+        self.disconnected = True
+
+
 def wait_until(predicate, timeout=1.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -132,6 +164,243 @@ def test_worker_starts_without_radar_and_reports_disconnected():
 
     assert events[-1] == {"type": "ready", "connected": False, "message": "雷达未连接"}
     worker.stop()
+
+
+def test_default_detection_region_is_180_to_240_degrees():
+    events = []
+    frame = tuple(ScanPoint(float(angle), 1000.0, 15) for angle in range(180, 241, 3))
+    worker = RadarWorker(
+        device_factory=lambda: FakeDevice([frame]),
+        event_sink=events.append,
+        minimum_frame_points=1,
+        readiness_frames=1,
+        sample_period_s=0,
+    )
+
+    worker.start()
+    try:
+        wait_until(lambda: any(event.get("type") == "scan" for event in events))
+    finally:
+        worker.stop()
+
+    scan = next(event for event in events if event.get("type") == "scan")
+    assert scan["detection_region"] == {
+        "angle_min_deg": 180,
+        "angle_max_deg": 240,
+        "distance_min_mm": 300,
+        "distance_max_mm": 2000,
+    }
+
+
+def test_transfer_runs_existing_robot_transport_sequence_and_stop_cleans_up(monkeypatch):
+    monkeypatch.setattr("feature_demo.workers.radar.time.sleep", lambda _seconds: None)
+    robot = RecordingRobotAdapter()
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+
+    worker.start()
+    result = worker.command("transfer", {})
+    worker.stop()
+
+    assert result == {
+        "ok": True,
+        "command": "sequence",
+        "result": "搬运",
+        "message": "机械臂命令已执行。",
+    }
+    assert robot.commands == [
+        ("sequence", {"name": "搬运", "_motion_generation": 0}),
+        ("pose", {"name": "直立"}),
+    ]
+    assert robot.stopped is True
+    assert robot.disconnected is True
+
+
+def test_successful_transfer_returns_upright_after_two_seconds(monkeypatch):
+    robot = RecordingRobotAdapter()
+    waits = []
+    monkeypatch.setattr("feature_demo.workers.radar.time.sleep", waits.append)
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+
+    worker.start()
+    worker.command("transfer", {})
+    worker.stop()
+
+    assert waits == [2.0]
+    assert [command for command, _payload in robot.commands] == [
+        "sequence",
+        "pose",
+    ]
+    assert robot.commands[1][1] == {"name": "直立"}
+
+
+def test_transfer_does_not_return_upright_after_stop_during_delay(monkeypatch):
+    robot = RecordingRobotAdapter()
+    delay_started = threading.Event()
+    release_wait = threading.Event()
+
+    def wait_for_stop(_seconds):
+        delay_started.set()
+        release_wait.wait(timeout=1)
+
+    monkeypatch.setattr("feature_demo.workers.radar.time.sleep", wait_for_stop)
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+    worker.start()
+    transfer = threading.Thread(target=lambda: worker.command("transfer", {}))
+    transfer.start()
+    assert delay_started.wait(timeout=1)
+    worker.stop(timeout=0.2)
+    release_wait.set()
+    transfer.join(timeout=1)
+
+    assert transfer.is_alive() is False
+    assert [command for command, _payload in robot.commands] == ["sequence"]
+
+
+def test_transfer_is_rejected_after_radar_shutdown_starts():
+    robot = RecordingRobotAdapter()
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+
+    worker.start()
+    worker.stop()
+
+    try:
+        worker.command("transfer", {})
+    except RuntimeError as exc:
+        assert str(exc) == "雷达模块正在停止，无法执行搬运。"
+    else:
+        raise AssertionError("transfer should be rejected after stop")
+    assert robot.commands == []
+
+
+def test_stop_interrupts_an_admitted_transfer_before_disconnect():
+    calls = []
+    command_started = threading.Event()
+    release_command = threading.Event()
+
+    class BlockingRobotAdapter(RecordingRobotAdapter):
+        def connect(self):
+            calls.append("connect")
+            super().connect()
+
+        def command(self, name, payload):
+            calls.append("command")
+            command_started.set()
+            release_command.wait(timeout=1)
+            return {"ok": False, "command": name, "result": payload["name"]}
+
+        def stop_motion(self):
+            calls.append("stop_motion")
+            release_command.set()
+
+        def disconnect(self):
+            calls.append("disconnect")
+            super().disconnect()
+
+    robot = BlockingRobotAdapter()
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+    worker.start()
+    transfer = threading.Thread(target=lambda: worker.command("transfer", {}))
+    transfer.start()
+    assert command_started.wait(timeout=1)
+
+    worker.stop()
+    transfer.join(timeout=1)
+
+    assert transfer.is_alive() is False
+    assert calls.index("stop_motion") < calls.index("disconnect")
+
+
+def test_stop_invalidates_transfer_admitted_before_sequence_entry():
+    command_entered = threading.Event()
+    allow_command = threading.Event()
+    motion_started = False
+
+    class GenerationAwareRobotAdapter(RecordingRobotAdapter):
+        def command(self, name, payload):
+            nonlocal motion_started
+            command_entered.set()
+            allow_command.wait(timeout=1)
+            motion_started = payload["_motion_generation"] == self.generation
+            return {"ok": motion_started, "command": name, "result": payload["name"]}
+
+        def stop_motion(self):
+            self.generation += 1
+            allow_command.set()
+
+    robot = GenerationAwareRobotAdapter()
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+    worker.start()
+    transfer = threading.Thread(target=lambda: worker.command("transfer", {}))
+    transfer.start()
+    assert command_entered.wait(timeout=1)
+
+    worker.stop()
+    transfer.join(timeout=1)
+
+    assert transfer.is_alive() is False
+    assert motion_started is False
+    assert robot.disconnected is True
+
+
+def test_transfer_timeout_still_attempts_robot_disconnect():
+    command_started = threading.Event()
+    release_command = threading.Event()
+
+    class StuckRobotAdapter(RecordingRobotAdapter):
+        def command(self, name, payload):
+            command_started.set()
+            release_command.wait(timeout=1)
+            return {"ok": False, "command": name, "result": payload["name"]}
+
+        def stop_motion(self):
+            raise RuntimeError("emergency stop failed")
+
+    robot = StuckRobotAdapter()
+    worker = RadarWorker(
+        device_factory=lambda: None,
+        robot_adapter=robot,
+        event_sink=lambda _event: None,
+    )
+    worker.start()
+    transfer = threading.Thread(target=lambda: worker.command("transfer", {}))
+    transfer.start()
+    assert command_started.wait(timeout=1)
+
+    try:
+        worker.stop(timeout=0.05)
+    except RuntimeError as exc:
+        assert str(exc) == "emergency stop failed"
+    else:
+        raise AssertionError("stop should surface the emergency stop failure")
+    finally:
+        release_command.set()
+        transfer.join(timeout=1)
+
+    assert robot.disconnected is True
 
 
 def test_worker_reports_disconnected_when_serial_read_fails():
@@ -220,7 +489,7 @@ def test_default_threshold_rejects_zero_only_and_fewer_than_ten_positive_returns
     )
     zero_only = tuple(ScanPoint(float(angle), 0, 15) for angle in range(20))
     undersized = tuple(ScanPoint(float(angle), 1000, 15) for angle in range(9)) + zero_only
-    valid = tuple(ScanPoint(float(angle), 1000, 15) for angle in range(260, 270))
+    valid = tuple(ScanPoint(float(angle), 1000, 15) for angle in range(180, 190))
 
     worker.start()
     try:

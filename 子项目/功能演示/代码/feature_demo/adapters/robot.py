@@ -37,6 +37,16 @@ class RobotAdapter:
     def connected(self) -> bool:
         return bool(self._serial is not None and getattr(self._serial, "connected", False))
 
+    @property
+    def motion_generation(self) -> int:
+        with self._lock:
+            if self._robot is None:
+                raise RuntimeError("机械臂当前未连接。")
+            current_generation = getattr(self._robot, "_current_motion_generation", None)
+            if not callable(current_generation):
+                raise RuntimeError("机械臂驱动不支持安全运动代次。")
+            return int(current_generation())
+
     def connect(self) -> None:
         with self._lock:
             if self.connected:
@@ -77,7 +87,14 @@ class RobotAdapter:
                 label = str(payload.get("name", ""))
                 if not label:
                     raise ValueError("请选择机械臂动作组。")
-                ok = robot.execute_sequence(label)
+                generation = payload.get("_motion_generation")
+                if generation is None:
+                    ok = robot.execute_sequence(label)
+                else:
+                    ok = robot.execute_sequence(
+                        label,
+                        _motion_generation=int(generation),
+                    )
             elif name == "joint_step":
                 servo_id = int(payload.get("servo_id", -1))
                 delta = max(-500, min(500, int(payload.get("delta", 0))))
@@ -130,7 +147,8 @@ class RobotAdapter:
         }
 
     def stop_motion(self) -> None:
-        self._stop_motion_now()
+        if not self._stop_motion_now():
+            raise RuntimeError("机械臂急停命令执行失败。")
 
     def _stop_motion_now(self) -> bool:
         # The legacy robot stop flag must be set while a synchronous sequence is

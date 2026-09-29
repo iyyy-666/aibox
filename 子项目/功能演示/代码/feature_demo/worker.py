@@ -38,6 +38,7 @@ class WorkerProcess:
         self._process_group_id: int | None = None
         self._log_handle = None
         self._last_event: dict = {}
+        self._last_error_event: dict = {}
         self._reader: threading.Thread | None = None
         self._startup_event = threading.Event()
         self._startup_result: dict | None = None
@@ -60,6 +61,7 @@ class WorkerProcess:
         env = os.environ.copy()
         env.update(self._environment)
         self._last_event = {}
+        self._last_error_event = {}
         self._startup_result = None
         self._startup_event.clear()
         self._event_sequence = 0
@@ -117,6 +119,8 @@ class WorkerProcess:
                 request_id = event.get("request_id")
                 with self._state_lock:
                     self._last_event = event
+                    if event_type == "error":
+                        self._last_error_event = dict(event)
                     if event_type == "frame" and event.get("frame_jpeg_base64"):
                         self._latest_frame = {
                             "frame_jpeg_base64": event["frame_jpeg_base64"],
@@ -220,7 +224,9 @@ class WorkerProcess:
         if process is None:
             self._close_log()
             return
-        if process.poll() is None:
+        stop_error: Exception | None = None
+        return_code = process.poll()
+        if return_code is None:
             try:
                 if process.stdin is None:
                     raise RuntimeError("功能进程标准输入不可用。")
@@ -229,8 +235,15 @@ class WorkerProcess:
                         json.dumps({"command": "stop", "payload": {}}) + "\n"
                     )
                     process.stdin.flush()
-                process.wait(timeout=timeout)
-            except (RuntimeError, BrokenPipeError, subprocess.TimeoutExpired):
+                return_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                stop_error = TimeoutError("功能进程停止超时。")
+                self._terminate_process_group()
+            except BrokenPipeError:
+                stop_error = RuntimeError("功能进程停止命令写入失败。")
+                self._terminate_process_group()
+            except RuntimeError as exc:
+                stop_error = exc
                 self._terminate_process_group()
         members = self._process_group_members()
         if members is None or members:
@@ -242,10 +255,20 @@ class WorkerProcess:
             raise RuntimeError("无法核验工作进程组是否已释放。")
         if members:
             raise RuntimeError(f"工作进程组仍有存活进程：{members}")
+        with self._state_lock:
+            last_event = dict(self._last_event)
+            last_error_event = dict(self._last_error_event)
         self._process = None
         self._process_group_id = None
         self._reader = None
         self._close_log()
+        if stop_error is not None:
+            raise stop_error
+        if return_code not in {None, 0}:
+            message = last_error_event.get("message") or last_event.get("message") or (
+                f"功能进程停止失败，退出码为 {return_code}。"
+            )
+            raise RuntimeError(str(message))
 
     def _process_group_members(self) -> tuple[int, ...] | None:
         group_id = self._process_group_id

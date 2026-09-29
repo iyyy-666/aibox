@@ -116,10 +116,10 @@ def test_worker_command_rejects_correlated_error_event():
 
 def test_worker_command_times_out_without_a_correlated_result():
     script = (
-        "import sys,time;"
+        "import sys;"
         "print('{\"type\":\"ready\"}',flush=True);"
         "sys.stdin.readline();"
-        "time.sleep(1)"
+        "sys.stdin.readline()"
     )
     worker = WorkerProcess(
         [sys.executable, "-u", "-c", script],
@@ -135,12 +135,12 @@ def test_worker_command_times_out_without_a_correlated_result():
 
 def test_worker_snapshot_retains_correlatable_events_without_frame_bytes():
     script = (
-        "import json,sys,time;"
+        "import json,sys;"
         "print('{\"type\":\"ready\"}',flush=True);"
         "print(json.dumps({'type':'sorting_result','ok':True,'side':'left'}),flush=True);"
         "print(json.dumps({'type':'frame','frame_jpeg_base64':'large-bytes',"
         "'result':[{'label':'red'}]}),flush=True);"
-        "time.sleep(0.5)"
+        "sys.stdin.readline()"
     )
     worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
     worker.start()
@@ -159,12 +159,12 @@ def test_worker_snapshot_retains_correlatable_events_without_frame_bytes():
 
 def test_worker_snapshot_keeps_latest_frame_when_status_changes():
     script = (
-        "import json,sys,time;"
+        "import json,sys;"
         "print('{\"type\":\"ready\"}',flush=True);"
         "print(json.dumps({'type':'frame','frame_sequence':7,"
         "'frame_jpeg_base64':'amBlZw=='}),flush=True);"
         "print(json.dumps({'type':'camera_reconnecting','message':'retry'}),flush=True);"
-        "time.sleep(0.5)"
+        "sys.stdin.readline()"
     )
     worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
     worker.start()
@@ -207,6 +207,77 @@ def test_worker_stop_cleans_process_group_after_leader_exits(monkeypatch):
     worker.stop(0.1)
 
     assert terminated == [41001]
+    assert worker.pids == ()
+
+
+def test_worker_stop_surfaces_nonzero_graceful_exit_after_cleanup():
+    script = (
+        "import json,sys;"
+        "print('{\"type\":\"ready\"}',flush=True);"
+        "sys.stdin.readline();"
+        "print(json.dumps({'type':'error','message':'机械臂急停命令执行失败。'}),flush=True);"
+        "sys.exit(1)"
+    )
+    worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
+    worker.start()
+
+    with pytest.raises(RuntimeError, match="机械臂急停命令执行失败"):
+        worker.stop(1.0)
+
+    assert worker.pids == ()
+    assert worker.snapshot()["alive"] is False
+
+
+def test_worker_stop_preserves_error_before_final_stopped_event():
+    script = (
+        "import sys;"
+        "print('{\"type\":\"ready\"}',flush=True);"
+        "sys.stdin.readline();"
+        "print('{\"type\":\"error\",\"message\":\"emergency stop failed\"}',flush=True);"
+        "print('{\"type\":\"stopped\",\"message\":\"radar stopped\"}',flush=True);"
+        "sys.exit(1)"
+    )
+    worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
+    worker.start()
+
+    with pytest.raises(RuntimeError, match="emergency stop failed"):
+        worker.stop(1.0)
+
+    assert worker.pids == ()
+
+
+def test_worker_stop_surfaces_nonzero_exit_that_happened_before_stop():
+    script = (
+        "import sys,time;"
+        "print('{\"type\":\"ready\"}',flush=True);"
+        "time.sleep(0.05);"
+        "print('{\"type\":\"error\",\"message\":\"worker crashed\"}',flush=True);"
+        "sys.exit(7)"
+    )
+    worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
+    worker.start()
+    deadline = time.monotonic() + 1.0
+    while worker.snapshot()["alive"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    with pytest.raises(RuntimeError, match="worker crashed"):
+        worker.stop(0.1)
+
+    assert worker.pids == ()
+
+
+def test_worker_stop_surfaces_timeout_after_forced_cleanup():
+    script = (
+        "import time;"
+        "print('{\"type\":\"ready\"}',flush=True);"
+        "time.sleep(5)"
+    )
+    worker = WorkerProcess([sys.executable, "-u", "-c", script], start_timeout=1.0)
+    worker.start()
+
+    with pytest.raises(TimeoutError, match="停止超时"):
+        worker.stop(0.05)
+
     assert worker.pids == ()
 
 

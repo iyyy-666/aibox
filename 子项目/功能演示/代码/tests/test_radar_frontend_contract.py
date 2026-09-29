@@ -80,7 +80,7 @@ def test_radar_module_is_rendered_by_the_existing_command_workspace():
     assert "固定位置存在物块" in app
     assert "固定位置不存在物块" in app
     assert "雷达数据无效" in app
-    assert "是否搬运" in app
+    assert 'button("transfer", "搬运")' in app
 
 
 def test_radar_is_not_rendered_as_a_camera_or_robot_module():
@@ -91,7 +91,7 @@ def test_radar_is_not_rendered_as_a_camera_or_robot_module():
     assert "robot_button" not in radar_block
 
 
-def test_radar_frontend_contract_has_scan_rendering_and_manual_confirmation_only():
+def test_radar_frontend_contract_has_scan_rendering_and_real_transfer_command():
     app = (WEB / "app.js").read_text(encoding="utf-8")
 
     assert "drawRadarScan" in app
@@ -106,10 +106,11 @@ def test_radar_frontend_contract_has_scan_rendering_and_manual_confirmation_only
     assert "data-radar-point-rate" in app
     assert "data-radar-rotation-rate" in app
     assert "data-radar-last-frame" in app
-    assert "data-radar-confirm" in app
+    assert "[data-radar-confirm]" not in app
+    assert " data-radar-confirm>" not in app
     assert "radar-workspace" in app
     assert "radar-mode" in app
-    assert "sequence\"" not in app.split('moduleId === "radar_detection"', 1)[1].split("if (moduleId ===", 1)[0]
+    assert 'button("transfer", "搬运")' in app
 
 
 def test_radar_uses_backend_detection_region_for_render_state():
@@ -194,7 +195,36 @@ def test_radar_commands_are_gated_by_worker_readiness():
     )
 
 
-def test_radar_reentry_resets_manual_confirmation_and_scan_state():
+def test_radar_transfer_sends_one_command_per_click_without_detection_gating():
+    run_radar_javascript(
+        """
+        const requests = [];
+        globalThis.fetch = async (url, options) => {
+          requests.push({ url, options });
+          return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        };
+        const transfer = { dataset: { command: "transfer" }, disabled: false };
+        hooks.appState.active = { module_id: "radar_detection" };
+        hooks.appState.radarDataReady = false;
+        hooks.appState.radarBaselineReady = false;
+
+        (async () => {
+          await hooks.sendCommand("transfer", transfer);
+          await hooks.sendCommand("transfer", transfer);
+
+          assert.equal(requests.length, 2);
+          assert.equal(requests[0].url, "/api/modules/radar_detection/commands/transfer");
+          assert.equal(requests[1].url, "/api/modules/radar_detection/commands/transfer");
+          assert.equal(requests[0].options.body, "{}");
+        })().catch((error) => {
+          console.error(error);
+          process.exitCode = 1;
+        });
+        """
+    )
+
+
+def test_radar_reentry_resets_scan_state_without_manual_confirmation_toggle():
     run_radar_javascript(
         """
         const classList = () => {
@@ -220,17 +250,15 @@ def test_radar_reentry_resets_manual_confirmation_and_scan_state():
         const workspace = node();
         const interactionPanel = node();
         const commandList = node();
-        let confirmButton = null;
         Object.defineProperty(commandList, "innerHTML", {
           set() {
-            confirmButton = node();
-            confirmButton.textContent = "是否搬运";
             commandControls.splice(
               0,
               commandControls.length,
               { dataset: { command: "build_baseline" }, disabled: false },
               { dataset: { command: "start_detection" }, disabled: false },
               { dataset: { command: "stop_detection" }, disabled: false },
+              { dataset: { command: "transfer" }, disabled: false },
             );
           },
         });
@@ -249,18 +277,11 @@ def test_radar_reentry_resets_manual_confirmation_and_scan_state():
           module_id: "radar_detection",
           name: "雷达检测",
           description: "检测固定位置物块",
-          commands: ["build_baseline", "start_detection", "stop_detection"],
+          commands: ["build_baseline", "start_detection", "stop_detection", "transfer"],
         };
         window.requestAnimationFrame = () => {};
 
         hooks.renderCommandWorkspace(radarModule, "#2468d8", "#e6f0ff");
-        hooks.handleDocumentClick({
-          target: { closest(selector) { return selector === "[data-radar-confirm]" ? confirmButton : null; } },
-        });
-
-        assert.equal(hooks.appState.radarConfirm, true);
-        assert.equal(confirmButton.textContent, "已确认搬运");
-        assert.equal(confirmButton.classList.contains("is-confirmed"), true);
         hooks.appState.radarDataReady = true;
         hooks.appState.radarBaselineReady = true;
         hooks.appState.radarScan = { points: [{ angle_deg: 90, distance_mm: 1000 }], valid: true };
@@ -268,9 +289,6 @@ def test_radar_reentry_resets_manual_confirmation_and_scan_state():
         hooks.showHomeView();
         hooks.renderCommandWorkspace(radarModule, "#2468d8", "#e6f0ff");
 
-        assert.equal(hooks.appState.radarConfirm, false);
-        assert.equal(confirmButton.textContent, "是否搬运");
-        assert.equal(confirmButton.classList.contains("is-confirmed"), false);
         assert.equal(hooks.appState.radarDataReady, false);
         assert.equal(hooks.appState.radarBaselineReady, false);
         assert.deepEqual(hooks.appState.radarScan.points, []);

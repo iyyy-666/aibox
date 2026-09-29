@@ -4,6 +4,7 @@ import threading
 
 import feature_demo.workers.robot as robot_workers
 import feature_demo.workers.runtime as runtime
+import pytest
 
 from feature_demo.adapters.robot import RobotAdapter
 from feature_demo.adapters.vision import LegacyVisionAdapter, LegacyVisionSpec
@@ -63,6 +64,12 @@ class StopFailureRobot(FakeRobot):
     def stop(self):
         self.calls.append("stop_motion")
         raise RuntimeError("emergency stop failed")
+
+
+class StopRejectedRobot(FakeRobot):
+    def stop(self):
+        self.calls.append("stop_motion")
+        return False
 
 
 class BlockingTransferRobot(FakeRobot):
@@ -180,6 +187,18 @@ def make_worker(calls, robot_type=FakeRobot):
         ),
         event_sink=lambda event: None,
     )
+
+
+def test_robot_adapter_surfaces_rejected_emergency_stop():
+    calls = []
+    adapter = RobotAdapter(
+        serial_factory=lambda: FakeSerial(calls),
+        robot_factory=lambda serial: StopRejectedRobot(serial, calls),
+    )
+    adapter.connect()
+
+    with pytest.raises(RuntimeError, match="机械臂急停命令执行失败"):
+        adapter.stop_motion()
 
 
 def make_blocking_transfer_worker(calls):

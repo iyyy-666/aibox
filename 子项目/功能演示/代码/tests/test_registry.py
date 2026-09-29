@@ -20,6 +20,7 @@ EXPECTED_MODULE_IDS = [
     "nursery_rhyme",
     "shape_recognition",
     "voice_robot_arm",
+    "radar_detection",
 ]
 
 VISUAL_MODULE_IDS = {
@@ -115,3 +116,17 @@ def test_production_factory_preserves_explicit_gimbal_position_state(monkeypatch
     process = _default_worker_factory(get_module("palm_tracking"))
 
     assert process._environment["AIBOX_GIMBAL_POSITION_STATE"] == selected
+
+
+def test_radar_module_owns_radar_and_robot_resources_for_manual_transfer():
+    module = get_module("radar_detection")
+    worker = create_worker(module.worker, event_sink=lambda _event: None, device_factory=lambda: None)
+
+    assert module.resources == ("radar", "robot")
+    assert module.commands == (
+        "build_baseline",
+        "start_detection",
+        "stop_detection",
+        "transfer",
+    )
+    assert worker.__class__.__name__ == "RadarWorker"

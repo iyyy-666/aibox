@@ -16,6 +16,7 @@ class RadarWorker:
         *,
         event_sink: Callable[[dict], None],
         device_factory: Callable[[], object | None] | None = None,
+        robot_adapter: object | None = None,
         region: DetectionRegion | None = None,
         baseline_frames: int = 12,
         readiness_frames: int = 5,
@@ -27,7 +28,8 @@ class RadarWorker:
     ) -> None:
         self._event_sink = event_sink
         self._device_factory = device_factory or A1M8Device
-        self._region = region or DetectionRegion(225, 315, 300, 2000)
+        self._robot_adapter = robot_adapter
+        self._region = region or DetectionRegion(180, 240, 300, 2000)
         self._baseline_frames = max(1, int(baseline_frames))
         self._readiness_frames = max(1, int(readiness_frames))
         self._minimum_frame_points = max(1, int(minimum_frame_points))
@@ -45,6 +47,9 @@ class RadarWorker:
             maxlen=max(self._baseline_frames, self._readiness_frames)
         )
         self._frames_condition = threading.Condition()
+        self._transfer_condition = threading.Condition()
+        self._active_transfers = 0
+        self._stopping = False
         self._valid_rotations = 0
         self._stop_event = threading.Event()
         self._detect_event = threading.Event()
@@ -91,6 +96,9 @@ class RadarWorker:
             return
         self._stop_event.clear()
         self._detect_event.clear()
+        with self._transfer_condition:
+            self._stopping = False
+            self._active_transfers = 0
         self._reset_baseline_state()
         with self._frames_condition:
             self._frames.clear()
@@ -246,6 +254,32 @@ class RadarWorker:
         return result
 
     def command(self, name: str, payload: dict) -> dict:
+        if name == "transfer":
+            if self._robot_adapter is None:
+                raise RuntimeError("机械臂控制器未配置。")
+            with self._transfer_condition:
+                if self._stopping or self._stop_event.is_set():
+                    raise RuntimeError("雷达模块正在停止，无法执行搬运。")
+                self._robot_adapter.connect()
+                motion_generation = self._robot_adapter.motion_generation
+                self._active_transfers += 1
+            try:
+                result = self._robot_adapter.command(
+                    "sequence",
+                    {"name": "搬运", "_motion_generation": motion_generation},
+                )
+            finally:
+                with self._transfer_condition:
+                    self._active_transfers -= 1
+                    self._transfer_condition.notify_all()
+            if result.get("ok"):
+                time.sleep(2.0)
+                with self._transfer_condition:
+                    should_return_upright = not self._stopping and not self._stop_event.is_set()
+                if should_return_upright:
+                    self._robot_adapter.command("pose", {"name": "直立"})
+            self._emit({"type": "robot_action", **result})
+            return result
         if name == "build_baseline":
             if not self._connected:
                 return {"ok": False, "error": "disconnected", "message": "雷达未连接"}
@@ -305,18 +339,68 @@ class RadarWorker:
         raise ValueError(f"不支持的雷达命令: {name}")
 
     def stop(self, timeout: float = 3.0) -> None:
+        with self._transfer_condition:
+            self._stopping = True
         self._stop_event.set()
         self._detect_event.clear()
+        stop_error = None
+        if self._robot_adapter is not None:
+            try:
+                self._robot_adapter.stop_motion()
+            except Exception as exc:
+                stop_error = exc
         with self._frames_condition:
             self._frames_condition.notify_all()
-        if self._reader is not None:
-            self._reader.join(timeout=timeout)
-            if self._reader.is_alive():
-                raise TimeoutError("雷达读取线程未在限定时间内停止")
-        if self._device is not None:
-            self._device.close()
+        try:
+            if self._reader is not None:
+                self._reader.join(timeout=timeout)
+                if self._reader.is_alive():
+                    raise TimeoutError("雷达读取线程未在限定时间内停止")
+            if self._device is not None:
+                self._device.close()
+        except Exception as exc:
+            stop_error = stop_error or exc
+        finally:
+            if self._robot_adapter is not None:
+                try:
+                    deadline = time.monotonic() + timeout
+                    while True:
+                        with self._transfer_condition:
+                            if self._active_transfers == 0:
+                                break
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError("机械臂搬运动作未在限定时间内停止")
+                        self._robot_adapter.stop_motion()
+                        with self._transfer_condition:
+                            self._transfer_condition.wait(timeout=min(0.05, remaining))
+                except Exception as exc:
+                    stop_error = stop_error or exc
+                disconnect_error = []
+
+                def disconnect_robot() -> None:
+                    try:
+                        self._robot_adapter.disconnect()
+                    except Exception as exc:
+                        disconnect_error.append(exc)
+
+                disconnect_thread = threading.Thread(
+                    target=disconnect_robot,
+                    name="feature-demo-radar-robot-disconnect",
+                    daemon=True,
+                )
+                disconnect_thread.start()
+                disconnect_thread.join(timeout=timeout)
+                if disconnect_thread.is_alive():
+                    stop_error = stop_error or TimeoutError(
+                        "机械臂串口未在限定时间内断开"
+                    )
+                elif disconnect_error:
+                    stop_error = stop_error or disconnect_error[0]
         self._reader = None
         self._connected = False
+        if stop_error is not None:
+            raise stop_error
         self._emit({"type": "stopped", "message": "雷达检测已停止"})
 
     def _emit(self, event: dict) -> None:

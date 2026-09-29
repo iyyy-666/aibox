@@ -19,9 +19,13 @@ class SerialDriver:
         self._port = SERIAL_PORT
         self._baud = SERIAL_BAUD
         self._serial_factory = serial_factory
+        user_id = getattr(os, "getuid", lambda: 0)()
         self._audit_path = Path(
             audit_path
-            or os.getenv("AIBOX_ROBOT_SERIAL_AUDIT", "/tmp/aibox_robot_serial_audit.jsonl")
+            or os.getenv(
+                "AIBOX_ROBOT_SERIAL_AUDIT",
+                f"/tmp/aibox_robot_serial_audit_{user_id}.jsonl",
+            )
         )
 
     def _audit(self, event: str, **details) -> None:

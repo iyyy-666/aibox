@@ -13,6 +13,7 @@ from ..devices import resolve_camera_device
 from ..models import PREEMPTIVE_COMMANDS
 from .assistant import AssistantWorker
 from .robot import ObjectSortingWorker, RobotWorker, SortingController
+from .radar import RadarWorker
 from .vision import VisionWorker
 from .voice import VoiceWorker
 
@@ -84,7 +85,14 @@ def create_worker(
     cv2_module=None,
     adapter_builder: Callable[[str], object] | None = None,
     gimbal=None,
+    device_factory=None,
 ):
+    if module_id == "radar_detection":
+        return RadarWorker(
+            event_sink=event_sink,
+            device_factory=device_factory,
+            robot_adapter=robot_adapter or RobotAdapter(),
+        )
     if module_id == "ai_assistant":
         return AssistantWorker(event_sink=event_sink)
     if module_id in {"voice_input_test", "nursery_rhyme"}:
@@ -200,8 +208,21 @@ def run_worker(module_id: str) -> int:
                 command = str(request.get("command", ""))
                 payload = request.get("payload") or {}
                 if command == "stop":
-                    worker.stop()
-                    return 0
+                    while True:
+                        try:
+                            ordinary_requests.get_nowait()
+                        except queue.Empty:
+                            break
+                    ordinary_requests.put(None)
+                    stop_failed = False
+                    try:
+                        worker.stop()
+                    except Exception as exc:
+                        stop_failed = True
+                        emit({"type": "error", "message": str(exc)})
+                    finally:
+                        ordinary_thread.join()
+                    return 1 if stop_failed else 0
                 command_request = (request_id, command, payload)
                 if command in PREEMPTIVE_COMMANDS:
                     thread = threading.Thread(

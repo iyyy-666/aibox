@@ -253,9 +253,18 @@ class RobotArm:
             time.sleep(min(0.1, end - time.time()))
         return self._moving
 
-    def execute_sequence(self, seq_name: str) -> bool:
+    def execute_sequence(
+        self,
+        seq_name: str,
+        *,
+        _motion_generation: int | None = None,
+    ) -> bool:
         """执行多步动作序列（如抓取=弯曲+闭合+上台）"""
-        generation = self._current_motion_generation()
+        generation = (
+            self._current_motion_generation()
+            if _motion_generation is None
+            else _motion_generation
+        )
         if seq_name not in ACTION_SEQUENCES:
             print(f"[机械臂] 未知序列: {seq_name}")
             return False

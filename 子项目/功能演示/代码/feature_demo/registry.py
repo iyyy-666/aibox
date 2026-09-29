@@ -136,6 +136,15 @@ MODULES = (
         resources=("microphone", "asr", "robot"),
         commands=("start_listening", "stop_listening", "stop_motion"),
     ),
+    ModuleDefinition(
+        module_id="radar_detection",
+        name="雷达检测",
+        description="读取 A1M8 原始扫描数据，比较固定区域的多帧基准并判断物块。",
+        category="传感器实验",
+        worker="radar_detection",
+        resources=("radar", "robot"),
+        commands=("build_baseline", "start_detection", "stop_detection", "transfer"),
+    ),
 )
 
 _MODULES_BY_ID = {module.module_id: module for module in MODULES}

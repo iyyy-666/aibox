@@ -130,6 +130,41 @@ def test_successful_stop_clears_active_module_after_verification(
     assert manager.active_module is None
 
 
+def test_stop_cleanup_error_is_reported_after_resources_are_released(
+    tmp_path, verifier
+):
+    class CleanupFailureWorker(FakeWorker):
+        def stop(self, timeout):
+            super().stop(timeout)
+            raise RuntimeError("机械臂急停命令执行失败。")
+
+        def snapshot(self):
+            return {
+                "alive": not self.stopped,
+                "type": "error" if self.stopped else "ready",
+                "message": "急停失败" if self.stopped else "功能已启动",
+            }
+
+    def factory(module):
+        return CleanupFailureWorker(module.module_id)
+
+    manager = ModuleManager(
+        worker_factory=factory,
+        verifier=verifier,
+        lock_path=tmp_path / "cleanup-error.lock",
+    )
+    manager.start_module("color_recognition")
+
+    result = manager.stop_module("color_recognition")
+
+    assert result.state == ModuleState.CLEANUP_FAILED
+    assert "停止过程中发生错误" in result.message
+    assert result.details["cleanup_error"] == "机械臂急停命令执行失败。"
+    assert result.details["message"] == "急停失败"
+    assert manager.active_module is None
+    assert manager.start_module("shape_recognition").state == ModuleState.RUNNING
+
+
 def test_manager_rejects_unregistered_command(manager):
     manager.start_module("color_recognition")
 

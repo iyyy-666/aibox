@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import threading
+import time
+from collections import deque
 
 import pytest
 
@@ -10,6 +12,30 @@ from feature_demo.adapters.robot import RobotAdapter
 from feature_demo.workers.robot import RobotWorker
 from feature_demo.workers import runtime
 from feature_demo.workers.runtime import create_vision_worker
+
+
+class DeferredQueue:
+    def __init__(self):
+        self.items = deque()
+        self.released = threading.Event()
+        self.lock = threading.Lock()
+
+    def put(self, item):
+        with self.lock:
+            self.items.append(item)
+        if item is None:
+            self.released.set()
+
+    def get(self):
+        self.released.wait(timeout=1)
+        with self.lock:
+            return self.items.popleft()
+
+    def get_nowait(self):
+        with self.lock:
+            if not self.items:
+                raise runtime.queue.Empty
+            return self.items.popleft()
 
 
 class FakeCapture:
@@ -183,6 +209,64 @@ def test_worker_entry_correlates_command_result_and_error(monkeypatch):
         "request_id": "req-fail",
         "message": "physical command failed",
     }
+
+
+def test_worker_stop_discards_ordinary_commands_that_have_not_started(monkeypatch):
+    commands = []
+    deferred_queue = DeferredQueue()
+
+    class CommandWorker:
+        last_event = {"type": "ready"}
+
+        def start(self):
+            return None
+
+        def command(self, name, payload):
+            commands.append((name, payload))
+            return {"ok": True}
+
+        def stop(self):
+            self.last_event = {"type": "stopped"}
+
+    requests = (
+        '{"request_id":"transfer","command":"transfer","payload":{}}\n'
+        '{"command":"stop","payload":{}}\n'
+    )
+    monkeypatch.setattr(runtime, "create_worker", lambda *args, **kwargs: CommandWorker())
+    monkeypatch.setattr(runtime, "emit_json", lambda _event: None)
+    monkeypatch.setattr(runtime.queue, "Queue", lambda: deferred_queue)
+    monkeypatch.setattr(runtime.sys, "stdin", io.StringIO(requests))
+
+    assert runtime.run_worker("radar_detection") == 0
+    deferred_queue.released.set()
+    time.sleep(0.05)
+    deferred_queue.put(None)
+
+    assert commands == []
+
+
+def test_worker_stop_failure_still_terminates_command_thread(monkeypatch):
+    stopped = threading.Event()
+
+    class FailingStopWorker:
+        last_event = {"type": "ready"}
+
+        def start(self):
+            return None
+
+        def command(self, _name, _payload):
+            raise AssertionError("no command should run")
+
+        def stop(self):
+            stopped.set()
+            raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(runtime, "create_worker", lambda *args, **kwargs: FailingStopWorker())
+    monkeypatch.setattr(runtime, "emit_json", lambda _event: None)
+    monkeypatch.setattr(runtime.sys, "stdin", io.StringIO('{"command":"stop"}\n'))
+
+    assert runtime.run_worker("radar_detection") == 1
+    assert stopped.is_set()
 
 
 def test_object_sorting_does_not_emit_component_ready_before_camera_failure(
