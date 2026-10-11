@@ -76,6 +76,16 @@ def _plain_value(value: Any) -> Any:
     return clean
 
 
+def _shape_public_value(value: Any) -> dict[str, Any]:
+    return {
+        "name": str(getattr(value, "name", "")),
+        "name_cn": str(getattr(value, "name_cn", "")),
+        "box": list(getattr(value, "box", ())),
+        "center": list(getattr(value, "center", ())),
+        "confidence": float(getattr(value, "confidence", 0.0)),
+    }
+
+
 class LegacyVisionAdapter:
     def __init__(self, module_id: str, module: ModuleType, instance: object, spec: LegacyVisionSpec) -> None:
         self.module_id = module_id
@@ -203,7 +213,8 @@ class LegacyVisionAdapter:
         else:
             raise RuntimeError(f"未知的视觉适配模式：{mode}")
         annotated = self.instance._annotate(normal, detections)
-        result = {"result": [_plain_value(item) for item in detections]}
+        serializer = _shape_public_value if mode == "shape" else _plain_value
+        result = {"result": [serializer(item) for item in detections]}
         if mode == "fruit":
             result["model_loaded"] = self.instance.model is not None
             result["recognition_status"] = getattr(
@@ -372,6 +383,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         instance._stable_signatures = {}
     if mode == "shape":
         instance._last_raw_count = 0
+        instance._shape_tracks = {}
     elif mode == "fruit":
         instance.model = None
         instance.cls_model = None

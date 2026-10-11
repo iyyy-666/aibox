@@ -98,6 +98,27 @@ def test_sorting_and_face_results_hide_internal_fields():
 
 def test_empty_visual_result_uses_module_specific_chinese_message():
     run_visual_result_javascript("fruit_recognition", "[]", "暂未识别到水果")
+    run_visual_result_javascript("shape_recognition", "[]", "暂未识别到形状")
+
+
+def test_shape_names_use_required_chinese_and_hide_internal_fields():
+    run_visual_result_javascript(
+        "shape_recognition",
+        '[{"name":"Rectangle","name_cn":"长方形","confidence":0.91,'
+        '"box":[1,2,3,4],"vertices":4,"solidity":0.99}]',
+        "长方形（置信度 91%）",
+    )
+    run_visual_result_javascript(
+        "shape_recognition",
+        '[{"name":"Parallelogram","name_cn":"斜平行四边形","confidence":0.87,'
+        '"box":[1,2,3,4],"vertices":4}]',
+        "斜平行四边形（置信度 87%）",
+    )
+    run_visual_result_javascript(
+        "shape_recognition",
+        '[{"name":"Pentagon","name_cn":"正五边形","confidence":0.89}]',
+        "正五边形（置信度 89%）",
+    )
 
 
 def test_visual_result_normalizes_case_and_hides_unknown_english_labels():

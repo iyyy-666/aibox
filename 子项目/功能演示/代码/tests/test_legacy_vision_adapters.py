@@ -81,6 +81,53 @@ def test_sorting_returns_only_annotated_left_eye():
     assert np.all(annotated == 11)
 
 
+def test_shape_adapter_uses_left_eye_and_exposes_only_public_result_fields():
+    left = np.full((4, 6, 3), 11, dtype=np.uint8)
+    right = np.full((4, 6, 3), 222, dtype=np.uint8)
+    stereo = np.concatenate((left, right), axis=1)
+    detection = SimpleNamespace(
+        name="Square",
+        name_cn="正方形",
+        box=(1, 1, 5, 3),
+        center=(3, 2),
+        confidence=0.92,
+        area=8.0,
+        vertices=4,
+        contour=np.array([[[1, 1]], [[5, 1]], [[5, 3]], [[1, 3]]]),
+        signature="Square:1:1:1",
+    )
+    seen = []
+    instance = SimpleNamespace(
+        _normal_frame=lambda frame: frame[:, :6],
+        _detect_shapes=lambda frame: seen.append(frame) or [detection],
+        _stabilize=lambda items: items,
+        _annotate=lambda frame, _detections: frame,
+        _last_raw_count=0,
+    )
+    adapter = LegacyVisionAdapter(
+        "shape_recognition",
+        SimpleNamespace(),
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "shape"),
+    )
+
+    annotated, result = adapter.process(stereo)
+
+    np.testing.assert_array_equal(seen[0], left)
+    np.testing.assert_array_equal(annotated, left)
+    assert result == {
+        "result": [
+            {
+                "name": "Square",
+                "name_cn": "正方形",
+                "box": [1, 1, 5, 3],
+                "center": [3, 2],
+                "confidence": 0.92,
+            }
+        ]
+    }
+
+
 def test_sorting_drops_a_composite_frame_returned_by_legacy_annotation():
     left = np.full((4, 6, 3), 11, dtype=np.uint8)
     right = np.full((4, 6, 3), 222, dtype=np.uint8)

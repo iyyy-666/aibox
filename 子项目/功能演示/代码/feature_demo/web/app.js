@@ -517,8 +517,9 @@ const visualNameMaps = {
     Cyan: "青色", Blue: "蓝色", Purple: "紫色", Pink: "粉色",
   },
   shape_recognition: {
-    Triangle: "三角形", Square: "正方形", Rectangle: "矩形", Circle: "圆形",
-    Ellipse: "椭圆形", Pentagon: "五边形", Hexagon: "六边形", Star: "星形", Polygon: "多边形",
+    Triangle: "三角形", Square: "正方形", Rectangle: "长方形", Parallelogram: "斜平行四边形",
+    Circle: "圆形", Ellipse: "椭圆形", Pentagon: "正五边形", Hexagon: "六边形",
+    Star: "星形", Polygon: "多边形",
   },
 };
 
