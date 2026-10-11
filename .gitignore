@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .playwright-cli/
+.worktrees/
 output/
 plate-raw-left.jpg
 raw-card.jpg
