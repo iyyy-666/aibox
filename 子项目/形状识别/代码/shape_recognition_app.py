@@ -279,6 +279,7 @@ class ShapeRecognitionApp:
             enclosing_fill = self._enclosing_circle_fill(contour, area)
             ellipse_ratio = self._ellipse_ratio(contour)
             radial_variation = self._radial_variation(contour)
+            star_alternation = self._star_alternation_score(approx)
             side_cv, angle_mean, angle_std = self._polygon_regularity(approx)
             name, conf = self._classify_shape(
                 vertices,
@@ -294,6 +295,7 @@ class ShapeRecognitionApp:
                 enclosing_fill=enclosing_fill,
                 ellipse_ratio=ellipse_ratio,
                 radial_variation=radial_variation,
+                star_alternation=star_alternation,
                 side_cv=side_cv,
                 angle_mean=angle_mean,
                 angle_std=angle_std,
@@ -529,6 +531,29 @@ class ShapeRecognitionApp:
         distances = np.linalg.norm(contour.reshape(-1, 2).astype(np.float32) - center, axis=1)
         return float(np.std(distances) / max(float(np.mean(distances)), 1.0))
 
+    def _star_alternation_score(self, approx: np.ndarray) -> float:
+        if len(approx) != 10:
+            return 0.0
+        points = approx.reshape(-1, 2).astype(np.float32)
+        center = np.mean(points, axis=0)
+        radii = np.linalg.norm(points - center, axis=1)
+        even, odd = radii[::2], radii[1::2]
+        outer, inner = (even, odd) if float(np.mean(even)) >= float(np.mean(odd)) else (odd, even)
+        outer_mean = float(np.mean(outer))
+        inner_mean = float(np.mean(inner))
+        if inner_mean <= 0 or outer_mean <= 0:
+            return 0.0
+        outer_cv = float(np.std(outer) / outer_mean)
+        inner_cv = float(np.std(inner) / inner_mean)
+        radius_ratio = inner_mean / outer_mean
+        separation = float(np.min(outer) / max(float(np.max(inner)), 1.0))
+        if radius_ratio > 0.72 or separation < 1.12 or outer_cv > 0.26 or inner_cv > 0.30:
+            return 0.0
+        depth_score = float(np.clip((0.82 - radius_ratio) / 0.30, 0.0, 1.0))
+        separation_score = float(np.clip((separation - 1.0) / 0.45, 0.0, 1.0))
+        consistency_score = float(np.clip(1.0 - max(outer_cv, inner_cv) / 0.35, 0.0, 1.0))
+        return (depth_score + separation_score + consistency_score) / 3.0
+
     def _polygon_regularity(
         self, approx: np.ndarray
     ) -> tuple[float | None, float | None, float | None]:
@@ -571,6 +596,7 @@ class ShapeRecognitionApp:
         enclosing_fill: float | None = None,
         ellipse_ratio: float | None = None,
         radial_variation: float | None = None,
+        star_alternation: float | None = None,
         side_cv: float | None = None,
         angle_mean: float | None = None,
         angle_std: float | None = None,
@@ -580,13 +606,14 @@ class ShapeRecognitionApp:
             return SHAPE_TRIANGLE, 0.90
         if vertices == 4:
             square_aspect = rotated_aspect if rotated_aspect is not None else max(aspect, 1.0 / max(aspect, 0.001))
-            angles_are_rectangular = max_angle_cosine is None or max_angle_cosine <= 0.07
+            angles_are_square = max_angle_cosine is None or max_angle_cosine <= 0.07
+            angles_are_rectangular = max_angle_cosine is None or max_angle_cosine <= 0.18
             sides_are_balanced = side_ratio is None or side_ratio >= 0.78
             opposite_sides_match = opposite_side_ratio is None or opposite_side_ratio >= 0.78
-            both_pairs_parallel = opposite_parallel_error is None or opposite_parallel_error <= 0.14
-            if square_aspect <= 1.16 and angles_are_rectangular and sides_are_balanced and opposite_sides_match:
+            both_pairs_parallel = opposite_parallel_error is None or opposite_parallel_error <= 0.20
+            if square_aspect <= 1.16 and angles_are_square and sides_are_balanced and opposite_sides_match:
                 return SHAPE_SQUARE, max(0.82, 0.94 - abs(1.0 - square_aspect) * 0.5)
-            if angles_are_rectangular and opposite_sides_match and both_pairs_parallel:
+            if square_aspect >= 1.25 and angles_are_rectangular and opposite_sides_match and both_pairs_parallel:
                 ratio_score = min(1.0, max(0.0, (square_aspect - 1.12) / 0.8))
                 return SHAPE_RECTANGLE, 0.82 + 0.10 * ratio_score
             if both_pairs_parallel and opposite_sides_match and max_angle_cosine is not None and max_angle_cosine >= 0.18:
@@ -603,11 +630,12 @@ class ShapeRecognitionApp:
         if vertices == 6:
             return SHAPE_HEXAGON, 0.80
         star_like = (
-            8 <= vertices <= 14
+            vertices == 10
             and solidity <= 0.78
             and (rotated_aspect is None or rotated_aspect <= 1.80)
             and (is_convex is None or not is_convex)
             and (radial_variation is None or radial_variation >= 0.20)
+            and (star_alternation is None or star_alternation >= 0.55)
         )
         if star_like:
             completeness = min(1.0, max(0.0, (vertices - 7) / 3.0))

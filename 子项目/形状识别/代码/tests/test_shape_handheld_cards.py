@@ -52,6 +52,25 @@ def _rotated_box(center: tuple[int, int], size: tuple[int, int], angle: float) -
     return cv2.boxPoints((center, size, angle)).astype(np.int32)
 
 
+def _paper_rectangle_with_person_silhouette() -> np.ndarray:
+    image = np.full((480, 640, 3), 235, dtype=np.uint8)
+    cv2.rectangle(image, (190, 80), (590, 400), (250, 250, 250), -1)
+    cv2.rectangle(image, (280, 180), (500, 270), (180, 80, 30), -1)
+    color = (40, 40, 40)
+    cv2.circle(image, (95, 95), 28, color, -1)
+    person = np.array(
+        [
+            [75, 120], [115, 120], [125, 145], [175, 180], [160, 205],
+            [125, 180], [122, 235], [150, 300], [120, 310], [95, 255],
+            [70, 310], [40, 300], [68, 235], [65, 180], [30, 205],
+            [15, 180], [65, 145],
+        ],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(image, [person], color)
+    return image
+
+
 def _names(image: np.ndarray) -> list[str]:
     app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
     return [item.name for item in app._detect_shapes(image)]
@@ -169,6 +188,20 @@ def test_rotated_rectangle_is_detected_from_image() -> None:
     image = _card_with_polygon(_rotated_box((320, 240), (220, 105), -27))
 
     assert _names(image) == [SHAPE_RECTANGLE]
+
+
+def test_live_left_eye_rectangle_allows_mild_perspective() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    detections = app._detect_shapes(_fixture("rectangle_live_left.jpg"))
+
+    assert [item.name for item in detections] == [SHAPE_RECTANGLE]
+    assert detections[0].box[0] > 150
+    assert detections[0].area > 20_000
+
+
+def test_person_silhouette_is_not_classified_as_star() -> None:
+    assert _names(_paper_rectangle_with_person_silhouette()) == [SHAPE_RECTANGLE]
 
 
 def test_left_slanting_parallelogram_is_detected_from_image() -> None:
