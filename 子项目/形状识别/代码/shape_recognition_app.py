@@ -605,6 +605,7 @@ class ShapeRecognitionApp:
         star_like = (
             8 <= vertices <= 14
             and solidity <= 0.78
+            and (rotated_aspect is None or rotated_aspect <= 1.80)
             and (is_convex is None or not is_convex)
             and (radial_variation is None or radial_variation >= 0.20)
         )
