@@ -1,0 +1,15 @@
+[Unit]
+Description=AIBox Studio local robot arm device service
+After=aibox-arm-prepower-upright.service
+
+[Service]
+Type=simple
+User=root
+Environment=PYTHONPATH=/opt/aibox-studio/src
+Environment=AIBOX_LEGACY_ROOT=/root/robot_arm
+ExecStart=/usr/bin/python3 -m aibox_device.arm_service
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

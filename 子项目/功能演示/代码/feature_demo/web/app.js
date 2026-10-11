@@ -483,6 +483,107 @@ function updateRadarScan(details) {
   if (status) status.textContent = valid ? `${details.points.length} 个有效测距点` : "等待有效扫描数据";
 }
 
+function formatPlateResults(items) {
+  const validItems = items.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  if (!validItems.length) return "暂未识别到车牌";
+  const colorNames = { "Blue Plate": "蓝色", "Green Plate": "绿色", Blue: "蓝色", Green: "绿色" };
+  const vehicleNames = { "Fuel Vehicle": "燃油车", "Electric Vehicle": "新能源车" };
+  return validItems.map((item, index) => {
+    const safeText = (value) => typeof value === "string" ? value.trim() : "";
+    const plate = safeText(item.plate);
+    const color = safeText(item.color);
+    const vehicleType = safeText(item.vehicle_type);
+    const confidence = typeof item.confidence === "number" ? item.confidence : Number.NaN;
+    const confidenceText = Number.isFinite(confidence) && confidence >= 0 && confidence <= 100
+      ? `${Math.round(confidence <= 1 ? confidence * 100 : confidence)}%`
+      : "--";
+    const lines = [
+      `车牌号码：${plate || "未读取"}`,
+      `车牌颜色：${colorNames[color] || color || "未知"}`,
+      `车辆类型：${vehicleNames[vehicleType] || vehicleType || "未知"}`,
+      `置信度：${confidenceText}`,
+    ];
+    return validItems.length > 1 ? `${index + 1}. ${lines.join("\n   ")}` : lines.join("\n");
+  }).join("\n\n");
+}
+
+const visualNameMaps = {
+  fruit_recognition: {
+    apple: "苹果", banana: "香蕉", watermelon: "西瓜", pineapple: "菠萝",
+    strawberry: "草莓", orange: "橙子", grape: "葡萄", pear: "梨", peach: "桃子",
+  },
+  color_recognition: {
+    Red: "红色", Orange: "橙色", Yellow: "黄色", Green: "绿色",
+    Cyan: "青色", Blue: "蓝色", Purple: "紫色", Pink: "粉色",
+  },
+  shape_recognition: {
+    Triangle: "三角形", Square: "正方形", Rectangle: "矩形", Circle: "圆形",
+    Ellipse: "椭圆形", Pentagon: "五边形", Hexagon: "六边形", Star: "星形", Polygon: "多边形",
+  },
+};
+
+const emptyVisualMessages = {
+  object_sorting: "暂未检测到可分拣货物",
+  plate_recognition: "暂未识别到车牌",
+  palm_recognition: "暂未识别到手势",
+  palm_tracking: "暂未检测到手掌",
+  fruit_recognition: "暂未识别到水果",
+  color_recognition: "暂未识别到颜色",
+  face_detection: "暂未检测到人脸",
+  shape_recognition: "暂未识别到形状",
+};
+
+function confidenceSuffix(value) {
+  const confidence = Number(value);
+  if (!Number.isFinite(confidence) || confidence < 0) return "";
+  const percentage = confidence <= 1 ? confidence * 100 : confidence;
+  return `（置信度 ${Math.round(Math.min(100, percentage))}%）`;
+}
+
+function mappedName(moduleId, value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return "";
+  const names = visualNameMaps[moduleId] || {};
+  const normalized = text.toLowerCase();
+  const match = Object.entries(names).find(([key]) => key.toLowerCase() === normalized);
+  return names[text] || match?.[1] || "";
+}
+
+function formatVisualResults(moduleId, result) {
+  if (moduleId === "plate_recognition") return formatPlateResults(Array.isArray(result) ? result : []);
+  const items = Array.isArray(result) ? result.filter(Boolean) : (result ? [result] : []);
+  if (!items.length) return emptyVisualMessages[moduleId] || "暂无识别结果";
+
+  if (moduleId === "object_sorting") {
+    const rawColor = typeof items[0] === "string" ? items[0] : items[0]?.color || items[0]?.name;
+    const color = mappedName("color_recognition", rawColor);
+    return color ? `检测到${color}货物` : "检测到可分拣货物";
+  }
+  if (moduleId === "face_detection") return `检测到 ${items.length} 张人脸`;
+  if (moduleId === "palm_tracking") return "检测到手掌，正在跟踪";
+  if (moduleId === "palm_recognition") {
+    const gestureNames = { rock: "石头", scissors: "剪刀", paper: "布" };
+    return items.map((item) => {
+      const value = typeof item === "string" ? item : item.gesture || item.name || item.label;
+      return gestureNames[value] || value || "检测到手势";
+    }).join("\n");
+  }
+  if (visualNameMaps[moduleId]) {
+    const genericNames = {
+      fruit_recognition: "检测到水果",
+      color_recognition: "检测到颜色",
+      shape_recognition: "检测到形状",
+    };
+    return items.map((item) => {
+      const rawName = typeof item === "string" ? item : item.name_en || item.name || item.name_cn || item.label;
+      const name = mappedName(moduleId, rawName) || genericNames[moduleId] || "已识别";
+      return `${name}${confidenceSuffix(item?.confidence)}`;
+    }).join("\n");
+  }
+  if (typeof result === "string") return result;
+  return `检测到 ${items.length} 个目标`;
+}
+
 function renderWorkerDetails(details) {
   const setDetail = (selector, value) => {
     const target = document.querySelector(selector);
@@ -532,11 +633,19 @@ function renderWorkerDetails(details) {
   if (details.threshold !== undefined) setDetail("[data-radar-threshold]", `${Math.round(Number(details.threshold) * 100)}%`);
   if (details.confirmation !== undefined || details.confirmation_required !== undefined) setDetail("[data-radar-confirmation]", `${details.confirmation || 0} / ${details.confirmation_required || 0}`);
   updateCommandControls();
-  const result = details.result || details.text || details.message;
-  if (result) {
+  const hasResult = Object.prototype.hasOwnProperty.call(details, "result");
+  const result = appState.active?.visual && hasResult
+    ? formatVisualResults(appState.active.module_id, details.result)
+    : details.result || details.text || details.message;
+  if (result !== undefined && result !== null && result !== "") {
     const target = appState.active?.visual ? document.querySelector("[data-result-content]") : document.querySelector("[data-activity-log]");
     target.textContent = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-    target.classList.remove("result-empty", "activity-empty");
+    const emptyVisualResult = appState.active?.visual
+      && hasResult
+      && Array.isArray(details.result)
+      && details.result.length === 0;
+    if (emptyVisualResult) target.classList.add("result-empty");
+    else target.classList.remove("result-empty", "activity-empty");
   }
 }
 
@@ -582,6 +691,11 @@ function startFrameUpdates(moduleId) {
   refreshFrame(moduleId, generation);
 }
 
+function frameRefreshDelay(moduleId) {
+  if (document.hidden) return 500;
+  return moduleId === "fruit_recognition" ? 50 : 80;
+}
+
 async function refreshFrame(moduleId, generation) {
   const image = document.querySelector("[data-camera-frame]");
   const empty = document.querySelector("[data-frame-empty]");
@@ -614,7 +728,7 @@ async function refreshFrame(moduleId, generation) {
     if (generation === appState.frameGeneration && appState.active?.module_id === moduleId) {
       appState.frameTimer = window.setTimeout(
         () => refreshFrame(moduleId, generation),
-        document.hidden ? 500 : 80,
+        frameRefreshDelay(moduleId),
       );
     }
   }

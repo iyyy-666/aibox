@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -16,6 +17,12 @@ from .robot import ObjectSortingWorker, RobotWorker, SortingController
 from .radar import RadarWorker
 from .vision import VisionWorker
 from .voice import VoiceWorker
+
+
+SORTING_GIMBAL_TARGET = (
+    int(os.getenv("SORTING_GIMBAL_YAW", "1200")),
+    int(os.getenv("SORTING_GIMBAL_PITCH", "1110")),
+)
 
 
 def _configured_camera(cv2_module, device: str | None = None):
@@ -131,18 +138,21 @@ def create_worker(
     set_observer = getattr(adapter, "set_sorting_observer", None)
     if callable(set_observer):
         set_observer(controller.observe_color)
+    sorting_gimbal = gimbal if gimbal is not None else GimbalAdapter()
     vision_worker = create_vision_worker(
         module_id,
         cv2_module=cv2_module,
         adapter_builder=lambda _: adapter,
         event_sink=component_event_sink,
-        gimbal=gimbal,
+        gimbal=sorting_gimbal,
     )
     return ObjectSortingWorker(
         vision_worker,
         robot_worker,
         controller,
         event_sink=event_sink,
+        startup_gimbal=sorting_gimbal,
+        gimbal_target=SORTING_GIMBAL_TARGET,
     )
 
 

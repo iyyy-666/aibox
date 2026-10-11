@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AIBox学生编程平台
+Comment=人工智能实验箱学生编程教学平台
+Exec=/usr/local/bin/aibox-studio
+Icon=applications-development
+Terminal=false
+Categories=Education;Development;
+StartupNotify=true

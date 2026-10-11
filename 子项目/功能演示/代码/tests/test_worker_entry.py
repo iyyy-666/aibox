@@ -78,6 +78,11 @@ class FakeAdapter:
         return None
 
 
+class ReadyGimbal:
+    def move_to(self, _yaw, _pitch):
+        return {"ok": True}
+
+
 def test_runtime_keeps_camera_lazy_and_uses_stable_capture_device(monkeypatch):
     monkeypatch.delenv("AIBOX_CAMERA_DEVICE", raising=False)
     monkeypatch.setattr(
@@ -311,6 +316,7 @@ def test_object_sorting_does_not_emit_component_ready_before_camera_failure(
         event_sink=events.append,
         robot_adapter=object(),
         adapter_builder=lambda _module_id: object(),
+        gimbal=ReadyGimbal(),
     )
 
     try:
@@ -368,6 +374,7 @@ def test_object_sorting_emits_one_ready_after_both_components_start(monkeypatch)
         event_sink=events.append,
         robot_adapter=object(),
         adapter_builder=lambda _module_id: object(),
+        gimbal=ReadyGimbal(),
     )
 
     worker.start()

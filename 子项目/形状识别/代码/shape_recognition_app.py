@@ -240,8 +240,20 @@ class ShapeRecognitionApp:
             circularity = 4.0 * np.pi * area / max(peri * peri, 1.0)
             extent = area / max(float(bw * bh), 1.0)
             aspect = bw / max(float(bh), 1.0)
+            rotated_width, rotated_height = cv2.minAreaRect(contour)[1]
+            rotated_aspect = max(rotated_width, rotated_height) / max(1.0, min(rotated_width, rotated_height))
+            side_ratio, max_angle_cosine = self._quadrilateral_quality(approx)
             solidity = self._solidity(contour, area)
-            name, conf = self._classify_shape(vertices, circularity, aspect, extent, solidity)
+            name, conf = self._classify_shape(
+                vertices,
+                circularity,
+                aspect,
+                extent,
+                solidity,
+                rotated_aspect,
+                side_ratio,
+                max_angle_cosine,
+            )
             if conf < 0.66:
                 continue
 
@@ -297,13 +309,45 @@ class ShapeRecognitionApp:
             return 0.0
         return float(area / hull_area)
 
-    def _classify_shape(self, vertices: int, circularity: float, aspect: float, extent: float, solidity: float) -> tuple[str, float]:
+    def _quadrilateral_quality(self, approx: np.ndarray) -> tuple[float | None, float | None]:
+        if len(approx) != 4:
+            return None, None
+        points = approx.reshape(4, 2).astype(np.float32)
+        sides = [float(np.linalg.norm(points[(index + 1) % 4] - points[index])) for index in range(4)]
+        if max(sides) <= 0:
+            return None, None
+        corner_cosines = []
+        for index in range(4):
+            before = points[(index - 1) % 4] - points[index]
+            after = points[(index + 1) % 4] - points[index]
+            denominator = float(np.linalg.norm(before) * np.linalg.norm(after))
+            if denominator <= 0:
+                return None, None
+            corner_cosines.append(abs(float(np.dot(before, after)) / denominator))
+        return min(sides) / max(sides), max(corner_cosines)
+
+    def _classify_shape(
+        self,
+        vertices: int,
+        circularity: float,
+        aspect: float,
+        extent: float,
+        solidity: float,
+        rotated_aspect: float | None = None,
+        side_ratio: float | None = None,
+        max_angle_cosine: float | None = None,
+    ) -> tuple[str, float]:
         if vertices == 3:
             return SHAPE_TRIANGLE, 0.90
         if vertices == 4:
-            if 0.86 <= aspect <= 1.16:
-                return SHAPE_SQUARE, 0.88
-            return SHAPE_RECTANGLE, 0.86
+            square_aspect = rotated_aspect if rotated_aspect is not None else max(aspect, 1.0 / max(aspect, 0.001))
+            angles_are_rectangular = max_angle_cosine is None or max_angle_cosine <= 0.30
+            sides_are_balanced = side_ratio is None or side_ratio >= 0.65
+            if square_aspect <= 1.16 and angles_are_rectangular and sides_are_balanced:
+                return SHAPE_SQUARE, max(0.82, 0.94 - abs(1.0 - square_aspect) * 0.5)
+            if angles_are_rectangular:
+                return SHAPE_RECTANGLE, 0.86
+            return SHAPE_POLYGON, 0.68
         if vertices == 5:
             return SHAPE_PENTAGON, 0.80
         if vertices == 6:
@@ -315,7 +359,7 @@ class ShapeRecognitionApp:
                 return SHAPE_CIRCLE, min(0.95, 0.70 + circularity * 0.25)
             return SHAPE_ELLIPSE, 0.82
         if vertices >= 7:
-            return SHAPE_POLYGON, 0.65
+            return SHAPE_POLYGON, 0.68
         return SHAPE_POLYGON, 0.45
 
     def _annotate(self, image: np.ndarray, detections: list[ShapeDetection]) -> np.ndarray:
@@ -326,7 +370,7 @@ class ShapeRecognitionApp:
             x1, y1, x2, y2 = det.box
             cv2.drawContours(out, [det.contour], -1, color, 3)
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-            label = f"shape {idx + 1} {det.confidence:.2f}"
+            label = f"{det.name} {det.confidence:.2f}"
             size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.68, 2)
             tw, th = size
             y0 = max(0, y1 - th - 16)

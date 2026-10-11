@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ import tkinter as tk
 import cv2
 import numpy as np
 
-from vision_targeting import box_is_target, draw_target_roi, split_stereo, stable_filter
+from vision_targeting import box_is_target, split_stereo, stable_filter
 from gimbal_controls import GimbalControls
 
 CAMERA_DEVICE = os.getenv("FRUIT_CAMERA_DEVICE", "/dev/video41")
@@ -21,13 +22,24 @@ CAMERA_HEIGHT = int(os.getenv("FRUIT_CAMERA_HEIGHT", "480"))
 CAMERA_FPS = int(os.getenv("FRUIT_CAMERA_FPS", "30"))
 DISPLAY_INTERVAL_MS = int(os.getenv("FRUIT_DISPLAY_INTERVAL_MS", "70"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("FRUIT_CAPTURE_INTERVAL_SEC", "0.025"))
-DETECT_INTERVAL_SEC = float(os.getenv("FRUIT_DETECT_INTERVAL_SEC", "0.18"))
-YOLO_MODEL_PATH = os.getenv("FRUIT_YOLO_MODEL", "/root/robot_arm/models/fruit/yolov8n.pt")
+DETECT_INTERVAL_SEC = float(os.getenv("FRUIT_DETECT_INTERVAL_SEC", "0.25"))
+YOLO_MODEL_PATH = os.getenv(
+    "FRUIT_YOLO_MODEL", "/root/robot_arm/models/fruit/fruit_veg_yolov8n.pt"
+)
 YOLO_CLS_MODEL_PATH = os.getenv("FRUIT_YOLO_CLS_MODEL", "/root/robot_arm/models/fruit/yolov8n-cls.pt")
+FRUIT_REFERENCE_DIR = Path(
+    os.getenv("FRUIT_REFERENCE_DIR", "/root/robot_arm/models/fruit/references")
+)
 YOLO_IMG_SIZE = int(os.getenv("FRUIT_YOLO_IMG_SIZE", "640"))
+YOLO_SMALL_TARGET_IMG_SIZE = int(os.getenv("FRUIT_SMALL_TARGET_IMG_SIZE", "960"))
+SMALL_TARGET_INTERVAL_SEC = float(os.getenv("FRUIT_SMALL_TARGET_INTERVAL_SEC", "0.8"))
 CONF_THRESHOLD = float(os.getenv("FRUIT_CONF", "0.20"))
+PICTURE_OVERRIDE_CONFIDENCE = float(os.getenv("FRUIT_PICTURE_OVERRIDE_CONFIDENCE", "0.45"))
 STABLE_HITS = int(os.getenv("FRUIT_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("FRUIT_SNAPSHOT_DIR", "/root/robot_arm/assets/fruit_snapshots"))
+AI_SITE_PACKAGES = Path(
+    os.getenv("FRUIT_AI_SITE_PACKAGES", "/root/.local/lib/python3.10/site-packages")
+)
 
 T_TITLE = "Fruit Recognition"
 T_OPENING = "Opening camera..."
@@ -59,6 +71,10 @@ FRUIT_CN = {
     "lemon": "Lemon",
     "mango": "Mango",
     "kiwi": "Kiwi",
+    "cherry": "Cherry",
+    "coconut": "Coconut",
+    "melon": "Melon",
+    "pomegranate": "Pomegranate",
 }
 FALLBACK_FRUIT_CLASS_IDS = {46, 47, 49}
 FRUIT_CLS_KEYWORDS = {
@@ -152,6 +168,8 @@ class FruitRecognitionApp:
 
     def _load_model(self) -> None:
         try:
+            if AI_SITE_PACKAGES.is_dir() and str(AI_SITE_PACKAGES) not in sys.path:
+                sys.path.insert(0, str(AI_SITE_PACKAGES))
             from ultralytics import YOLO
             self.model = YOLO(YOLO_MODEL_PATH)
             names = getattr(self.model, "names", {}) or {}
@@ -162,15 +180,6 @@ class FruitRecognitionApp:
         except Exception as exc:
             self.model = None
             status = f"{T_NO_MODEL}: {exc}"
-        try:
-            if Path(YOLO_CLS_MODEL_PATH).exists():
-                self.cls_model = YOLO(YOLO_CLS_MODEL_PATH)
-                names = getattr(self.cls_model, "names", {}) or {}
-                self.cls_names = {int(k): str(v) for k, v in names.items()}
-                status += f" + cls: {Path(YOLO_CLS_MODEL_PATH).name}"
-        except Exception as exc:
-            self.cls_model = None
-            status += f"; cls fail: {exc}"
         self._set_status(status)
 
     def _open_camera(self) -> cv2.VideoCapture:
@@ -228,20 +237,6 @@ class FruitRecognitionApp:
                 normal = self._normal_frame(frame)
                 t0 = time.time()
                 detections = self._detect_fruits(normal)
-                if not detections:
-                    fallback = self._classify_picture(normal)
-                    if fallback is None:
-                        fallback = self._color_picture_guess(normal)
-                    if fallback is not None:
-                        detections = [fallback]
-                detections, self._stable_signatures = stable_filter(
-                    self._stable_signatures,
-                    detections,
-                    label_fn=lambda d: d.name_cn,
-                    box_fn=lambda d: d.box,
-                    image_shape=normal.shape,
-                    stable_hits=STABLE_HITS,
-                )
                 dt = time.time() - t0
                 if dt > 0:
                     inst = 1.0 / dt
@@ -253,8 +248,31 @@ class FruitRecognitionApp:
     def _detect_fruits(self, image: np.ndarray) -> list[FruitDetection]:
         if self.model is None:
             return []
+        detections = self._predict_fruits(image, YOLO_IMG_SIZE)
+        now = time.monotonic()
+        next_small_target_at = getattr(self, "_next_small_target_at", 0.0)
+        if (
+            not detections
+            and YOLO_SMALL_TARGET_IMG_SIZE > YOLO_IMG_SIZE
+            and now >= next_small_target_at
+        ):
+            detections = self._predict_fruits(image, YOLO_SMALL_TARGET_IMG_SIZE)
+            self._next_small_target_at = time.monotonic() + SMALL_TARGET_INTERVAL_SEC
+        detections.sort(key=lambda d: d.confidence, reverse=True)
+        return detections[:3]
+
+    def _predict_fruits(
+        self, image: np.ndarray, image_size: int
+    ) -> list[FruitDetection]:
         try:
-            results = self.model.predict(image, imgsz=YOLO_IMG_SIZE, conf=CONF_THRESHOLD, classes=sorted(self.fruit_class_ids), verbose=False, device="cpu")
+            results = self.model.predict(
+                image,
+                imgsz=image_size,
+                conf=CONF_THRESHOLD,
+                classes=sorted(self.fruit_class_ids),
+                verbose=False,
+                device="cpu",
+            )
         except Exception as exc:
             self._set_status(f"YOLO error: {exc}")
             return []
@@ -271,18 +289,29 @@ class FruitRecognitionApp:
                 x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
             except Exception:
                 continue
-            name_en = self.model_names.get(cls_id, str(cls_id)).lower()
+            name_en = self.model_names.get(cls_id, str(cls_id)).lower().replace("_", " ")
+            name_en = name_en.replace("green orange", "orange").replace(" ", "_")
+            name_en = name_en.replace("_", "") if name_en == "water_melon" else name_en
             if name_en not in FRUIT_CN:
                 continue
             x1 = max(0, min(image.shape[1] - 1, x1)); x2 = max(0, min(image.shape[1] - 1, x2))
             y1 = max(0, min(image.shape[0] - 1, y1)); y2 = max(0, min(image.shape[0] - 1, y2))
             if x2 <= x1 or y2 <= y1:
                 continue
-            if not box_is_target(image, (x1, y1, x2, y2), min_area=image.shape[0] * image.shape[1] * 0.006, max_area_ratio=0.62, min_side=28, min_aspect=0.30, max_aspect=3.2):
+            if not box_is_target(
+                image,
+                (x1, y1, x2, y2),
+                min_area=image.shape[0] * image.shape[1] * 0.0015,
+                max_area_ratio=0.62,
+                min_side=18,
+                min_aspect=0.30,
+                max_aspect=3.2,
+                roi_margin_x=0.0,
+                roi_margin_y=0.0,
+            ):
                 continue
             detections.append(FruitDetection(name_en, FRUIT_CN[name_en], (x1, y1, x2, y2), conf, ((x1 + x2) // 2, (y1 + y2) // 2), "detect"))
-        detections.sort(key=lambda d: d.confidence, reverse=True)
-        return detections[:3]
+        return detections
 
     def _largest_picture_region(self, image: np.ndarray) -> tuple[int, int, int, int]:
         h, w = image.shape[:2]
@@ -336,12 +365,27 @@ class FruitRecognitionApp:
         best = None
         best_area = 0.0
         h, w = image.shape[:2]
+        edge_margin = max(6, min(h, w) // 80)
         for c in contours:
             area = cv2.contourArea(c)
             if area < max(2200, w * h * 0.020):
                 continue
             x, y, bw, bh = cv2.boundingRect(c)
             if bw < 35 or bh < 35:
+                continue
+            if (
+                x <= edge_margin
+                or y <= edge_margin
+                or x + bw >= w - edge_margin
+                or y + bh >= h - edge_margin
+            ):
+                continue
+            center_x = x + bw / 2.0
+            center_y = y + bh / 2.0
+            if not (
+                w * 0.16 <= center_x <= w * 0.84
+                and h * 0.16 <= center_y <= h * 0.68
+            ):
                 continue
             if not box_is_target(image, (x, y, x + bw, y + bh), min_area=max(2200, w * h * 0.020), max_area_ratio=0.62, min_side=54, min_aspect=0.35, max_aspect=2.8):
                 continue
@@ -374,12 +418,163 @@ class FruitRecognitionApp:
         elif 125 <= hue <= 165:
             name_en = "grape"
             name_cn = FRUIT_CN.get(name_en, name_cn)
+        if name_en == "fruit":
+            return None
         return FruitDetection(name_en, name_cn, (x, y, x + bw, y + bh), 0.20, (x + bw // 2, y + bh // 2), "color")
+
+    def _classify_detected_fruits(
+        self, image: np.ndarray, detections: list[FruitDetection]
+    ) -> FruitDetection | None:
+        h, w = image.shape[:2]
+        candidates: list[FruitDetection] = []
+        for detection in detections:
+            x1, y1, x2, y2 = detection.box
+            padding = max(12, int(max(x2 - x1, y2 - y1) * 0.18))
+            box = (
+                max(0, x1 - padding),
+                max(0, y1 - padding),
+                min(w, x2 + padding),
+                min(h, y2 + padding),
+            )
+            classified = self._classify_crop(image, box)
+            if classified is not None and classified.confidence >= detection.confidence:
+                candidates.append(classified)
+        return max(candidates, key=lambda item: item.confidence, default=None)
+
+    def _match_reference_fruit(self, image: np.ndarray) -> FruitDetection | None:
+        references = self._load_reference_features()
+        if not references:
+            return None
+        x1, y1, x2, y2 = self._reference_match_region(image)
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+        sift = cv2.SIFT_create(nfeatures=600)
+        _keypoints, descriptors = sift.detectAndCompute(
+            cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), None
+        )
+        if descriptors is None or len(descriptors) < 6:
+            return None
+        matcher = cv2.BFMatcher(cv2.NORM_L2)
+        best_label = None
+        best_matches = 0
+        for label, reference_descriptors in references:
+            pairs = matcher.knnMatch(reference_descriptors, descriptors, k=2)
+            good_matches = [
+                first
+                for pair in pairs
+                if len(pair) == 2
+                for first, second in [pair]
+                if first.distance < 0.72 * second.distance
+            ]
+            if len(good_matches) > best_matches:
+                best_label = label
+                best_matches = len(good_matches)
+        if best_label is None or best_matches < 6:
+            return None
+        confidence = min(0.99, 0.50 + best_matches / 30.0)
+        return FruitDetection(
+            best_label,
+            FRUIT_CN[best_label],
+            (x1, y1, x2, y2),
+            confidence,
+            ((x1 + x2) // 2, (y1 + y2) // 2),
+            "reference",
+        )
+
+    @staticmethod
+    def _reference_match_region(image: np.ndarray) -> tuple[int, int, int, int]:
+        """Limit reference matching to the intended handheld-card area."""
+        h, w = image.shape[:2]
+        return (int(w * 0.20), int(h * 0.35), int(w * 0.85), int(h * 0.93))
+
+    @staticmethod
+    def _reference_object_region(
+        image: np.ndarray,
+    ) -> tuple[int, int, int, int] | None:
+        """Find the colourful fruit drawing, excluding static scene details."""
+        h, w = image.shape[:2]
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        saturated = cv2.inRange(
+            hsv,
+            np.array((0, 65, 40), dtype=np.uint8),
+            np.array((180, 255, 255), dtype=np.uint8),
+        )
+        kernel = np.ones((5, 5), np.uint8)
+        saturated = cv2.morphologyEx(saturated, cv2.MORPH_OPEN, kernel)
+        saturated = cv2.morphologyEx(saturated, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(
+            saturated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        candidate = None
+        best_area = 0.0
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < max(500.0, w * h * 0.002):
+                continue
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if area > w * h * 0.10 or bw > w * 0.55 or bh > h * 0.55:
+                continue
+            cx, cy = x + bw / 2.0, y + bh / 2.0
+            if not (w * 0.16 <= cx <= w * 0.84 and h * 0.16 <= cy <= h * 0.78):
+                continue
+            if area > best_area:
+                candidate = (x, y, bw, bh)
+                best_area = area
+        if candidate is None:
+            return None
+        x, y, bw, bh = candidate
+        padding = max(36, int(max(bw, bh) * 1.70))
+        return (
+            max(0, x - padding),
+            max(0, y - padding),
+            min(w, x + bw + padding),
+            min(h, y + bh + padding),
+        )
+
+    def _load_reference_features(self) -> list[tuple[str, np.ndarray]]:
+        reference_dir = str(FRUIT_REFERENCE_DIR.resolve())
+        if getattr(self, "_reference_feature_dir", None) == reference_dir:
+            return getattr(self, "_reference_features", [])
+        sift = cv2.SIFT_create(nfeatures=600)
+        features: list[tuple[str, np.ndarray]] = []
+        for path in sorted(FRUIT_REFERENCE_DIR.glob("*")):
+            label = next(
+                (
+                    name
+                    for name in FRUIT_CN
+                    if path.stem.lower() == name
+                    or path.stem.lower().startswith(f"{name}_")
+                ),
+                None,
+            )
+            if label is None:
+                continue
+            reference = cv2.imread(str(path))
+            if reference is None:
+                continue
+            x1, y1, x2, y2 = self._reference_match_region(reference)
+            reference = reference[y1:y2, x1:x2]
+            _keypoints, descriptors = sift.detectAndCompute(
+                cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY), None
+            )
+            if descriptors is not None and len(descriptors) >= 6:
+                features.append((label, descriptors))
+        self._reference_feature_dir = reference_dir
+        self._reference_features = features
+        return features
 
     def _classify_picture(self, image: np.ndarray) -> FruitDetection | None:
         if self.cls_model is None:
             return None
-        x1, y1, x2, y2 = self._largest_picture_region(image)
+        if self._reference_object_region(image) is None:
+            return None
+        return self._classify_crop(image, self._largest_picture_region(image))
+
+    def _classify_crop(
+        self, image: np.ndarray, box: tuple[int, int, int, int]
+    ) -> FruitDetection | None:
+        x1, y1, x2, y2 = box
         crop = image[y1:y2, x1:x2]
         if crop.size == 0:
             return None
@@ -407,7 +602,6 @@ class FruitRecognitionApp:
 
     def _annotate(self, image: np.ndarray, detections: list[FruitDetection]) -> np.ndarray:
         out = image.copy()
-        draw_target_roi(out)
         for det in detections:
             x1, y1, x2, y2 = det.box
             color = COLOR_BOX_COLOR if det.source == "color" else (FALLBACK_BOX_COLOR if det.source == "image" else BOX_COLOR)

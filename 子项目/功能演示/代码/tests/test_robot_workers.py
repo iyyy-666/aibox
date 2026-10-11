@@ -146,6 +146,25 @@ class OrderedVisionWorker(FakeVisionWorker):
         super().stop()
 
 
+class StartupOrderedVisionWorker(FakeVisionWorker):
+    def __init__(self, calls):
+        super().__init__()
+        self.calls = calls
+
+    def start(self):
+        self.calls.append("vision_start")
+        super().start()
+
+
+class StartupGimbal:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def move_to(self, yaw, pitch):
+        self.calls.append(("gimbal_target", yaw, pitch))
+        return {"ok": True, "message": "positioned"}
+
+
 class FakeSortingAdapter:
     def __init__(self, stable_hits):
         self.module = type("LegacySortingModule", (), {"STABLE_HITS": stable_hits})
@@ -297,6 +316,24 @@ def test_object_sorting_requires_prepare_then_maps_stable_red_and_blue_to_fixed_
 
     assert ("sorting", "left") in calls
     assert ("sorting", "right") in calls
+    worker.stop()
+
+
+def test_object_sorting_moves_gimbal_to_demo_pose_before_starting_camera():
+    calls = []
+    robot_worker = make_worker(calls)
+    worker = robot_workers.ObjectSortingWorker(
+        StartupOrderedVisionWorker(calls),
+        robot_worker,
+        robot_workers.SortingController(robot_worker, event_sink=lambda event: None),
+        event_sink=lambda event: None,
+        startup_gimbal=StartupGimbal(calls),
+        gimbal_target=(1200, 1110),
+    )
+
+    worker.start()
+
+    assert calls[:2] == [("gimbal_target", 1200, 1110), "vision_start"]
     worker.stop()
 
 

@@ -1,0 +1,2 @@
+"""AIBox Studio student application."""
+

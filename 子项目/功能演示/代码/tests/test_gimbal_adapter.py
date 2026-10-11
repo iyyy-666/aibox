@@ -12,9 +12,19 @@ class FakeGimbalService:
     def __init__(self):
         self.moves = []
         self.closed = False
+        self.yaw = 1500
+        self.pitch = 1500
+
+    @property
+    def position(self):
+        return self.yaw, self.pitch
 
     def move(self, axis, direction, *, step_pwm, time_ms):
         self.moves.append((axis, direction, step_pwm, time_ms))
+        if axis == "yaw":
+            self.yaw += direction * step_pwm
+        else:
+            self.pitch += direction * step_pwm
         return True, f"{axis} moved"
 
     def close(self):
@@ -54,6 +64,34 @@ def test_gimbal_clamps_step_to_existing_safe_range():
     gimbal.step("left", 900)
 
     assert service.moves == [("yaw", -1, 500, 350)]
+
+
+def test_gimbal_moves_to_an_absolute_saved_demo_position():
+    service = FakeGimbalService()
+    gimbal = GimbalAdapter(service=service)
+
+    result = gimbal.move_to(1200, 1110)
+
+    assert result["ok"] is True
+    assert service.position == (1200, 1110)
+    assert service.moves == [
+        ("yaw", -1, 150, 650),
+        ("yaw", -1, 150, 650),
+        ("pitch", -1, 150, 650),
+        ("pitch", -1, 150, 650),
+        ("pitch", -1, 90, 650),
+    ]
+
+
+def test_gimbal_keeps_still_when_already_at_demo_position():
+    service = FakeGimbalService()
+    service.yaw, service.pitch = 1200, 1110
+    gimbal = GimbalAdapter(service=service)
+
+    result = gimbal.move_to(1200, 1110)
+
+    assert result["ok"] is True
+    assert service.moves == []
 
 
 def test_gimbal_close_releases_service():

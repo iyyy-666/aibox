@@ -15,7 +15,7 @@ gimbal_stub = types.ModuleType("gimbal_controls")
 gimbal_stub.GimbalControls = object
 sys.modules.setdefault("gimbal_controls", gimbal_stub)
 
-from shape_recognition_app import SHAPE_TRIANGLE, ShapeRecognitionApp
+from shape_recognition_app import SHAPE_POLYGON, SHAPE_SQUARE, SHAPE_TRIANGLE, ShapeRecognitionApp
 
 
 def _rotated_card_with_triangle() -> np.ndarray:
@@ -60,3 +60,54 @@ def test_small_shape_printed_on_card_is_not_discarded() -> None:
 
     assert detections
     assert detections[0].name == SHAPE_TRIANGLE
+
+
+def test_rotated_square_uses_rotated_bounding_box_ratio() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    name, confidence = app._classify_shape(
+        4,
+        circularity=0.78,
+        aspect=1.42,
+        extent=0.62,
+        solidity=0.99,
+        rotated_aspect=1.03,
+        side_ratio=0.96,
+        max_angle_cosine=0.04,
+    )
+
+    assert name == SHAPE_SQUARE
+    assert confidence >= 0.80
+
+
+def test_polygon_confidence_reaches_detection_threshold() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    name, confidence = app._classify_shape(
+        7,
+        circularity=0.58,
+        aspect=1.20,
+        extent=0.72,
+        solidity=0.94,
+        rotated_aspect=1.18,
+    )
+
+    assert name == SHAPE_POLYGON
+    assert confidence >= 0.66
+
+
+def test_irregular_quadrilateral_is_not_classified_as_square() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    name, _confidence = app._classify_shape(
+        4,
+        circularity=0.70,
+        aspect=1.04,
+        extent=0.72,
+        solidity=0.98,
+        rotated_aspect=1.05,
+        side_ratio=0.58,
+        max_angle_cosine=0.46,
+    )
+
+    assert name != SHAPE_SQUARE

@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+.playwright-cli/
+output/
+plate-raw-left.jpg
+raw-card.jpg
+子项目/功能演示/output/

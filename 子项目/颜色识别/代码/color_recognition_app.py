@@ -55,14 +55,36 @@ def merge_red_ranges(items: list[Detection]) -> list[Detection]:
     others = [d for d in items if d.name != "Red"]
     if len(red) <= 1:
         return items
-    contours = []
-    for d in red:
-        x, y, w, h = d.box
-        contours.append(np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32))
-    x, y, w, h = cv2.boundingRect(np.vstack(contours))
-    area = float(sum(d.area for d in red))
-    merged = Detection("Red", (x, y, w, h), area, (x + w // 2, y + h // 2), (45, 45, 235))
-    return others + [merged]
+
+    def boxes_touch(left: Detection, right: Detection, gap: int = 8) -> bool:
+        lx, ly, lw, lh = left.box
+        rx, ry, rw, rh = right.box
+        return not (
+            lx + lw + gap < rx or rx + rw + gap < lx
+            or ly + lh + gap < ry or ry + rh + gap < ly
+        )
+
+    groups: list[list[Detection]] = []
+    for detection in red:
+        connected = [group for group in groups if any(boxes_touch(detection, item) for item in group)]
+        if not connected:
+            groups.append([detection])
+            continue
+        merged_group = [detection]
+        for group in connected:
+            merged_group.extend(group)
+            groups.remove(group)
+        groups.append(merged_group)
+
+    merged_red: list[Detection] = []
+    for group in groups:
+        x1 = min(item.box[0] for item in group)
+        y1 = min(item.box[1] for item in group)
+        x2 = max(item.box[0] + item.box[2] for item in group)
+        y2 = max(item.box[1] + item.box[3] for item in group)
+        area = float(sum(item.area for item in group))
+        merged_red.append(Detection("Red", (x1, y1, x2 - x1, y2 - y1), area, ((x1 + x2) // 2, (y1 + y2) // 2), (45, 45, 235)))
+    return others + merged_red
 
 
 class ColorRecognitionApp:

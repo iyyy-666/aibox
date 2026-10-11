@@ -1,0 +1,12 @@
+[Unit]
+Description=AIBox robot arm pre-power upright preload
+Wants=systemd-udev-settle.service
+After=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/local/sbin/arm_prepower_upright.py --wait-seconds 20
+
+[Install]
+WantedBy=multi-user.target

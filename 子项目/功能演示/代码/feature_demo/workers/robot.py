@@ -181,11 +181,15 @@ class ObjectSortingWorker:
         controller: SortingController,
         *,
         event_sink: Callable[[dict], None],
+        startup_gimbal: object | None = None,
+        gimbal_target: tuple[int, int] | None = None,
     ) -> None:
         self._vision_worker = vision_worker
         self._robot_worker = robot_worker
         self._controller = controller
         self._event_sink = event_sink
+        self._startup_gimbal = startup_gimbal
+        self._gimbal_target = gimbal_target
         self._last_event: dict = {}
 
     @property
@@ -195,6 +199,10 @@ class ObjectSortingWorker:
     def start(self) -> None:
         self._robot_worker.start()
         try:
+            if self._startup_gimbal is not None and self._gimbal_target is not None:
+                result = self._startup_gimbal.move_to(*self._gimbal_target)
+                if not result.get("ok"):
+                    raise RuntimeError(result.get("message", "云台未能到达物体分拣位置。"))
             self._vision_worker.start()
         except Exception:
             self._robot_worker.stop()

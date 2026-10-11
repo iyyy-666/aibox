@@ -19,6 +19,11 @@ def app_javascript():
     return (WEB_DIR / "app.js").read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def web_styles():
+    return (WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+
 def test_shell_has_only_feature_demo_navigation(web_document):
     navigation = web_document.select_one("nav")
 
@@ -151,8 +156,14 @@ def test_frame_updates_use_abortable_single_request_loop(app_javascript):
     assert "setInterval(refresh, 250)" not in app_javascript
     assert "AbortController" in app_javascript
     assert "frameRequest" in app_javascript
-    assert "document.hidden ? 500 : 80" in app_javascript
+    assert "if (document.hidden) return 500" in app_javascript
     assert "window.setTimeout" in app_javascript
+
+
+def test_fruit_frame_updates_use_a_faster_visible_poll_interval(app_javascript):
+    assert "function frameRefreshDelay(moduleId)" in app_javascript
+    assert 'moduleId === "fruit_recognition" ? 50 : 80' in app_javascript
+    assert "frameRefreshDelay(moduleId)" in app_javascript
 
 
 def test_status_socket_reconnects_only_for_the_active_module(app_javascript):
@@ -168,7 +179,25 @@ def test_sorting_keeps_visual_controls_results_and_gimbal_visible(
     workspace = web_document.select_one("[data-visual-workspace]")
     side = workspace.select_one(".vision-side")
 
+    assert workspace.select(":scope > .gimbal-panel")
     assert side.select_one("[data-visual-actions]")
     assert side.select_one("[data-result-content]")
-    assert side.select_one(".gimbal-panel")
+    assert side.select_one(".gimbal-panel") is None
     assert 'querySelector(".vision-side")' not in app_javascript
+
+
+def test_visual_workspace_places_gimbal_left_of_camera(web_document):
+    workspace = web_document.select_one("[data-visual-workspace]")
+    direct_children = [
+        " ".join(child.get("class", []))
+        for child in workspace.find_all(recursive=False)
+    ]
+
+    assert direct_children == ["gimbal-panel", "camera-frame", "vision-side"]
+
+
+def test_visual_workspace_stacks_before_three_columns_can_overflow(web_styles):
+    responsive = web_styles.split("@media (max-width: 1320px)", 1)[1]
+    responsive = responsive.split("@media (max-width: 1080px)", 1)[0]
+
+    assert ".visual-workspace { grid-template-columns: 1fr; }" in responsive
