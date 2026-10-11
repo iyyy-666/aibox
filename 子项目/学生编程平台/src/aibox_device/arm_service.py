@@ -16,6 +16,24 @@ PWM_MIN = 800
 PWM_MAX = 2200
 
 
+class _CancellableSerial:
+    def __init__(self, serial, state_lock: threading.Lock, can_send: Callable[[], bool]) -> None:
+        self._serial = serial
+        self._state_lock = state_lock
+        self._can_send = can_send
+
+    def send_command(self, command: str) -> bool:
+        if command.strip() == "$DST!":
+            return bool(self._serial.send_command(command))
+        with self._state_lock:
+            if not self._can_send():
+                return False
+            return bool(self._serial.send_command(command))
+
+    def __getattr__(self, name: str):
+        return getattr(self._serial, name)
+
+
 def _legacy_factories():
     legacy_root = Path(os.getenv("AIBOX_LEGACY_ROOT", "/root/robot_arm"))
     if str(legacy_root) not in sys.path:
@@ -38,6 +56,8 @@ class ArmController:
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._active_robot = None
+        self._held_pose: str | None = None
+        self._stop_generation = 0
 
     def execute(self, command: str, payload: dict) -> dict:
         error = self._validate(command, payload)
@@ -47,16 +67,35 @@ class ArmController:
             return self._stop()
 
         with self._operation_lock:
+            with self._state_lock:
+                stop_generation = self._stop_generation
+                if command == "pose":
+                    pose_name = str(payload["name"])
+                    if self._held_pose == pose_name:
+                        return {
+                            "ok": True,
+                            "command": command,
+                            "held": True,
+                            "message": "机械臂已保持该姿态。",
+                        }
             serial = None
             try:
                 serial_class, robot_class = self._factories()
                 serial = serial_class()
                 if not serial.connect():
                     return {"ok": False, "code": "DEVICE_UNAVAILABLE", "message": "无法连接机械臂控制器。"}
-                robot = robot_class(serial)
+                guarded_serial = _CancellableSerial(
+                    serial,
+                    self._state_lock,
+                    lambda: self._stop_generation == stop_generation,
+                )
+                robot = robot_class(guarded_serial)
                 with self._state_lock:
                     self._active_robot = robot
+                    self._invalidate_held_pose(command, payload)
                 ok = self._dispatch(robot, command, payload)
+                if ok:
+                    self._update_held_pose(command, payload, stop_generation)
                 return {
                     "ok": bool(ok),
                     "command": command,
@@ -69,6 +108,19 @@ class ArmController:
                     self._active_robot = None
                 if serial is not None:
                     serial.disconnect()
+
+    def _update_held_pose(self, command: str, payload: dict, stop_generation: int) -> None:
+        with self._state_lock:
+            if self._stop_generation != stop_generation:
+                return
+            if command == "pose":
+                self._held_pose = str(payload["name"])
+
+    def _invalidate_held_pose(self, command: str, payload: dict) -> None:
+        changes_arm_pose = command in {"pose", "sequence", "center"}
+        changes_arm_joint = command in {"servo", "joint_step"} and int(payload["servo_id"]) != 5
+        if changes_arm_pose or changes_arm_joint:
+            self._held_pose = None
 
     def _factories(self):
         if self._serial_factory is None or self._robot_factory is None:
@@ -116,6 +168,8 @@ class ArmController:
     def _stop(self) -> dict:
         with self._state_lock:
             robot = self._active_robot
+            self._held_pose = None
+            self._stop_generation += 1
         ok = True if robot is None else bool(robot.stop())
         return {"ok": ok, "command": "stop", "message": "机械臂已停止。"}
 
