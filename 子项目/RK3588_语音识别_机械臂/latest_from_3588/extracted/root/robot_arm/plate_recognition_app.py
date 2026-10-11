@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import math
 import re
 import threading
 import time
@@ -24,6 +25,9 @@ DISPLAY_INTERVAL_MS = int(os.getenv("PLATE_DISPLAY_INTERVAL_MS", "80"))
 CAPTURE_INTERVAL_SEC = float(os.getenv("PLATE_CAPTURE_INTERVAL_SEC", "0.025"))
 DETECT_INTERVAL_SEC = float(os.getenv("PLATE_DETECT_INTERVAL_SEC", "0.22"))
 MIN_PLATE_AREA = int(os.getenv("PLATE_MIN_AREA", "1600"))
+MIN_LPR_PLATE_AREA = int(os.getenv("PLATE_LPR_MIN_AREA", "400"))
+MIN_LPR_SIDE = int(os.getenv("PLATE_LPR_MIN_SIDE", "12"))
+MIN_LPR_CONFIDENCE = float(os.getenv("PLATE_LPR_MIN_CONFIDENCE", "0.65"))
 STABLE_HITS = int(os.getenv("PLATE_STABLE_HITS", "2"))
 SNAPSHOT_DIR = Path(os.getenv("PLATE_SNAPSHOT_DIR", "/root/robot_arm/assets/plate_snapshots"))
 
@@ -90,6 +94,8 @@ class PlateRecognitionApp:
         self.last_frame_time = 0.0
         self._stable_signatures: dict[str, int] = {}
         self.catcher = None
+        self.fallback_catcher = None
+        self._last_lpr_debug = "not run"
 
         self._build_ui()
         threading.Thread(target=self._load_model, daemon=True).start()
@@ -126,9 +132,11 @@ class PlateRecognitionApp:
         try:
             import hyperlpr3 as lpr3
             self.catcher = lpr3.LicensePlateCatcher(detect_level=lpr3.DETECT_LEVEL_HIGH)
+            self.fallback_catcher = lpr3.LicensePlateCatcher(detect_level=lpr3.DETECT_LEVEL_LOW)
             self._set_status("HyperLPR3 ready")
         except Exception as exc:
             self.catcher = None
+            self.fallback_catcher = None
             self._set_status(f"LPR model load failed: {exc}")
 
     def _open_camera(self) -> cv2.VideoCapture:
@@ -204,18 +212,19 @@ class PlateRecognitionApp:
         if self.catcher is not None:
             for item in self._run_hyperlpr(image):
                 results.append(item)
-        seen = {d.box for d in results}
-        for candidate in self._color_plate_candidates(image):
-            if candidate.box not in seen:
-                results.append(candidate)
+        fallback_catcher = getattr(self, "fallback_catcher", None)
+        if not results and fallback_catcher is not None:
+            results.extend(self._run_hyperlpr(image, fallback_catcher))
         results.sort(key=lambda d: (bool(d.plate), d.confidence), reverse=True)
         return results[:5]
 
-    def _run_hyperlpr(self, image: np.ndarray) -> list[PlateDetection]:
+    def _run_hyperlpr(self, image: np.ndarray, catcher=None) -> list[PlateDetection]:
         detections: list[PlateDetection] = []
         try:
-            raw = self.catcher(image)
+            raw = (catcher or self.catcher)(image)
+            self._last_lpr_debug = f"raw={raw!r}"
         except Exception as exc:
+            self._last_lpr_debug = f"error={exc!r}"
             self._set_status(f"LPR error: {exc}")
             return []
         for item in raw or []:
@@ -226,30 +235,38 @@ class PlateRecognitionApp:
                 box_raw = item[3] if len(item) > 3 else None
             except Exception:
                 continue
-            box = self._parse_lpr_box(box_raw, image.shape[1], image.shape[0])
-            if box is None:
+            plate = self._clean_plate_text(plate)
+            if not math.isfinite(conf) or not MIN_LPR_CONFIDENCE <= conf <= 1.0 or not plate:
+                continue
+            if box_raw is None:
                 box = self._estimate_plate_box(image)
-            if not box_is_target(image, box, min_area=MIN_PLATE_AREA, max_area_ratio=0.36, min_side=28, min_aspect=1.6, max_aspect=7.2):
+            else:
+                box = self._parse_lpr_box(box_raw, image.shape[1], image.shape[0])
+                if box is None:
+                    continue
+            if not box_is_target(image, box, min_area=MIN_LPR_PLATE_AREA, max_area_ratio=0.36, min_side=MIN_LPR_SIDE, min_aspect=1.6, max_aspect=7.2):
                 continue
             color = self._plate_color_name(image, box, code)
             vtype = T_EV if color == T_GREEN else (T_OIL if color == T_BLUE else T_UNKNOWN)
-            plate = self._clean_plate_text(plate)
             detections.append(PlateDetection(plate, color, vtype, box, conf, "HyperLPR3"))
         return detections
 
     def _parse_lpr_box(self, box_raw, w: int, h: int) -> tuple[int, int, int, int] | None:
         if box_raw is None:
             return None
-        arr = np.array(box_raw).reshape(-1)
-        if arr.size < 4:
+        try:
+            arr = np.asarray(box_raw, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
             return None
-        vals = [int(round(float(v))) for v in arr[:4]]
-        x1, y1, x2, y2 = vals
-        if x2 < x1 or y2 < y1:
+        if arr.size < 4 or not np.all(np.isfinite(arr)):
+            return None
+        if arr.size >= 8 and arr.size % 2 == 0:
             xs = arr[0::2]; ys = arr[1::2]
-            if xs.size and ys.size:
-                x1, x2 = int(xs.min()), int(xs.max())
-                y1, y2 = int(ys.min()), int(ys.max())
+            x1, x2 = int(round(float(xs.min()))), int(round(float(xs.max())))
+            y1, y2 = int(round(float(ys.min()))), int(round(float(ys.max())))
+        else:
+            vals = [int(round(float(v))) for v in arr[:4]]
+            x1, y1, x2, y2 = vals
         x1=max(0,min(w-1,x1)); x2=max(0,min(w-1,x2)); y1=max(0,min(h-1,y1)); y2=max(0,min(h-1,y2))
         if x2 <= x1 or y2 <= y1:
             return None
@@ -257,8 +274,8 @@ class PlateRecognitionApp:
 
     def _clean_plate_text(self, text: str) -> str:
         text = text.replace("?", "").replace(".", "").replace("-", "")
-        m = PLATE_RE.search(text)
-        return m.group(0) if m else text
+        m = PLATE_RE.fullmatch(text)
+        return m.group(0) if m else ""
 
     def _plate_color_name(self, image: np.ndarray, box: tuple[int, int, int, int], code: int = -1) -> str:
         x1,y1,x2,y2 = box
@@ -274,7 +291,7 @@ class PlateRecognitionApp:
             return T_GREEN
         if blue_ratio > max(0.12, green_ratio * 1.25):
             return T_BLUE
-        if code in {1, 4, 5, 6, 7}:
+        if code == 3:
             return T_GREEN
         if code == 0:
             return T_BLUE
