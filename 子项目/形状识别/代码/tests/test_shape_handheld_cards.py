@@ -183,6 +183,13 @@ def test_circle_is_detected_from_image() -> None:
     assert _names(image) == [SHAPE_CIRCLE]
 
 
+def test_full_brightness_yellow_circle_is_detected() -> None:
+    image = _card_canvas()
+    cv2.circle(image, (320, 240), 92, (0, 255, 255), -1, cv2.LINE_AA)
+
+    assert _names(image) == [SHAPE_CIRCLE]
+
+
 def test_ellipse_is_not_detected_as_circle() -> None:
     image = _card_canvas()
     cv2.ellipse(image, (320, 240), (125, 66), 24, 0, 360, (30, 70, 215), -1)
@@ -238,6 +245,13 @@ def test_rhombus_is_not_detected_as_square() -> None:
 
 def test_blank_paper_does_not_return_a_shape() -> None:
     assert _names(_card_canvas()) == []
+
+
+def test_underexposed_gray_card_on_bright_background_is_not_a_rectangle() -> None:
+    image = np.full((480, 640, 3), 232, dtype=np.uint8)
+    cv2.rectangle(image, (130, 95), (510, 385), (130, 130, 130), -1)
+
+    assert _names(image) == []
 
 
 def test_small_printed_square_is_detected() -> None:

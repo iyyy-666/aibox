@@ -220,7 +220,7 @@ class ShapeRecognitionApp:
 
         # Phone/paper screens usually have a bright background with dark or saturated shapes.
         dark = cv2.inRange(gray, 0, 178)
-        saturated = cv2.inRange(hsv, np.array((0, 48, 38), dtype=np.uint8), np.array((180, 255, 248), dtype=np.uint8))
+        saturated = cv2.inRange(hsv, np.array((0, 48, 38), dtype=np.uint8), np.array((180, 255, 255), dtype=np.uint8))
         mask = cv2.bitwise_or(dark, saturated)
 
         # Remove the outside border of the phone/paper ROI, otherwise it becomes a false rectangle.
@@ -264,6 +264,12 @@ class ShapeRecognitionApp:
             solidity = self._solidity(contour, area)
             if solidity < 0.32 or extent < 0.20:
                 continue
+            if vertices == 4 and area > roi_w * roi_h * 0.25 and solidity >= 0.94 and extent >= 0.82:
+                contour_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+                mean_saturation = cv2.mean(hsv[:, :, 1], mask=contour_mask)[0]
+                if mean_saturation < 22.0:
+                    continue
             quad = self._quadrilateral_features(approx)
             side_ratio = quad.get("side_ratio")
             max_angle_cosine = quad.get("max_angle_cosine")
