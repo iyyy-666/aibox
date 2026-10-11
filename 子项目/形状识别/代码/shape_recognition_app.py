@@ -24,6 +24,7 @@ CAPTURE_INTERVAL_SEC = float(os.getenv("SHAPE_CAPTURE_INTERVAL_SEC", "0.025"))
 DETECT_INTERVAL_SEC = float(os.getenv("SHAPE_DETECT_INTERVAL_SEC", "0.16"))
 MIN_AREA = int(os.getenv("SHAPE_MIN_AREA", "700"))
 MAX_RESULTS = int(os.getenv("SHAPE_MAX_RESULTS", "3"))
+MIN_SECONDARY_AREA_RATIO = float(os.getenv("SHAPE_MIN_SECONDARY_AREA_RATIO", "0.18"))
 STABLE_HITS = int(os.getenv("SHAPE_STABLE_HITS", "2"))
 STABLE_HOLD_MISSES = int(os.getenv("SHAPE_STABLE_HOLD_MISSES", "2"))
 SNAPSHOT_DIR = Path(os.getenv("SHAPE_SNAPSHOT_DIR", "/root/robot_arm/assets/shape_snapshots"))
@@ -219,7 +220,9 @@ class ShapeRecognitionApp:
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         # Phone/paper screens usually have a bright background with dark or saturated shapes.
-        dark = cv2.inRange(gray, 0, 178)
+        _threshold, dark = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
+        )
         saturated = cv2.inRange(hsv, np.array((0, 48, 38), dtype=np.uint8), np.array((180, 255, 255), dtype=np.uint8))
         mask = cv2.bitwise_or(dark, saturated)
 
@@ -317,6 +320,13 @@ class ShapeRecognitionApp:
                 )
             )
         detections.sort(key=lambda d: d.area, reverse=True)
+        if detections:
+            primary_area = detections[0].area
+            detections = [
+                detection
+                for detection in detections
+                if detection.area >= primary_area * MIN_SECONDARY_AREA_RATIO
+            ]
         return detections[:MAX_RESULTS]
 
     def _find_display_roi(self, image: np.ndarray) -> tuple[int, int, int, int]:
@@ -344,6 +354,47 @@ class ShapeRecognitionApp:
         if best is not None:
             pad = 8
             return (max(0, best[0] + pad), max(0, best[1] + pad), min(w, best[2] - pad), min(h, best[3] - pad))
+        edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+        edges = cv2.morphologyEx(
+            edges,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7)),
+            iterations=2,
+        )
+        edge_contours, _ = cv2.findContours(
+            edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+        )
+        best = None
+        best_score = 0.0
+        for contour in edge_contours:
+            area = cv2.contourArea(contour)
+            if area < w * h * 0.08 or area > w * h * 0.70:
+                continue
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if x <= 2 or y <= 2 or x + bw >= w - 2 or y + bh >= h - 2:
+                continue
+            if bw < w * 0.25 or bh < h * 0.25:
+                continue
+            aspect = bw / max(float(bh), 1.0)
+            extent = area / max(float(bw * bh), 1.0)
+            if not 0.55 <= aspect <= 2.4 or extent < 0.45:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            vertices = len(cv2.approxPolyDP(contour, 0.025 * perimeter, True))
+            if not 4 <= vertices <= 10:
+                continue
+            score = area * extent
+            if score > best_score:
+                best_score = score
+                best = (x, y, x + bw, y + bh)
+        if best is not None:
+            pad = 4
+            return (
+                max(0, best[0] + pad),
+                max(0, best[1] + pad),
+                min(w, best[2] - pad),
+                min(h, best[3] - pad),
+            )
         margin = max(4, min(h, w) // 80)
         return (margin, margin, w - margin, h - margin)
 

@@ -57,6 +57,13 @@ def _names(image: np.ndarray) -> list[str]:
     return [item.name for item in app._detect_shapes(image)]
 
 
+def _fixture(name: str) -> np.ndarray:
+    encoded = np.fromfile(Path(__file__).with_name("fixtures") / name, dtype=np.uint8)
+    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    assert image is not None
+    return image
+
+
 def _rotated_card_with_triangle() -> np.ndarray:
     image = np.full((480, 640, 3), 28, dtype=np.uint8)
     card = np.array([[205, 85], [485, 145], [430, 390], [150, 330]], dtype=np.int32)
@@ -217,6 +224,16 @@ def test_five_point_star_is_detected_from_image() -> None:
         points.append(center + radius * np.array([np.cos(angle), np.sin(angle)]))
 
     assert _names(_card_with_polygon(np.array(points))) == [SHAPE_STAR]
+
+
+def test_live_left_eye_star_ignores_small_colored_distractor() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    detections = app._detect_shapes(_fixture("star_live_left.jpg"))
+
+    assert [item.name for item in detections] == [SHAPE_STAR]
+    assert detections[0].box[0] > 250
+    assert detections[0].area > 8_000
 
 
 def test_regular_pentagon_is_detected_from_image() -> None:
