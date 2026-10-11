@@ -23,6 +23,7 @@ from shape_recognition_app import (
     SHAPE_SQUARE,
     SHAPE_STAR,
     SHAPE_TRIANGLE,
+    ShapeDetection,
     ShapeRecognitionApp,
 )
 
@@ -200,6 +201,31 @@ def test_live_left_eye_rectangle_allows_mild_perspective() -> None:
     assert detections[0].area > 20_000
 
 
+def test_colored_rectangle_is_not_mistaken_for_the_display_roi() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+
+    detections = app._detect_shapes(_fixture("shape_live_missed_raw_left.jpg"))
+
+    assert [item.name for item in detections] == [SHAPE_RECTANGLE]
+
+
+def test_mask_candidate_wins_an_overlapping_edge_classification() -> None:
+    app = ShapeRecognitionApp.__new__(ShapeRecognitionApp)
+    contour = np.array([[[20, 20]], [[180, 20]], [[180, 100]], [[20, 100]]])
+    rectangle = ShapeDetection(
+        SHAPE_RECTANGLE, "长方形", (20, 20, 181, 101), (100, 60), 12_000, 0.82, 4, contour
+    )
+    edge_parallelogram = ShapeDetection(
+        SHAPE_PARALLELOGRAM, "斜平行四边形", (18, 18, 183, 103), (100, 60), 12_500, 0.86, 4, contour
+    )
+
+    detections = app._deduplicate_candidates(
+        [(edge_parallelogram, True), (rectangle, False)]
+    )
+
+    assert [item.name for item in detections] == [SHAPE_RECTANGLE]
+
+
 def test_person_silhouette_is_not_classified_as_star() -> None:
     assert _names(_paper_rectangle_with_person_silhouette()) == [SHAPE_RECTANGLE]
 
@@ -212,6 +238,12 @@ def test_left_slanting_parallelogram_is_detected_from_image() -> None:
 
 def test_right_slanting_parallelogram_is_detected_from_image() -> None:
     points = np.array([[210, 150], [395, 150], [440, 330], [255, 330]])
+
+    assert _names(_card_with_polygon(points)) == [SHAPE_PARALLELOGRAM]
+
+
+def test_mild_slanting_parallelogram_is_not_a_perspective_rectangle() -> None:
+    points = np.array([[200, 150], [450, 150], [412, 330], [162, 330]])
 
     assert _names(_card_with_polygon(points)) == [SHAPE_PARALLELOGRAM]
 
@@ -284,13 +316,13 @@ def test_irregular_pentagon_is_not_detected_as_regular_pentagon() -> None:
 def test_trapezoid_is_not_detected_as_square() -> None:
     points = np.array([[245, 150], [395, 150], [455, 330], [185, 330]])
 
-    assert SHAPE_SQUARE not in _names(_card_with_polygon(points))
+    assert _names(_card_with_polygon(points)) == []
 
 
 def test_rhombus_is_not_detected_as_square() -> None:
     points = np.array([[320, 125], [445, 240], [320, 355], [195, 240]])
 
-    assert SHAPE_SQUARE not in _names(_card_with_polygon(points))
+    assert _names(_card_with_polygon(points)) == []
 
 
 def test_blank_paper_does_not_return_a_shape() -> None:

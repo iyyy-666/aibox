@@ -238,11 +238,29 @@ class ShapeRecognitionApp:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel, iterations=1)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=1)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_found, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours = [(contour, False) for contour in contours_found]
+        edge_mask = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+        edge_mask = cv2.morphologyEx(
+            edge_mask,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+            iterations=1,
+        )
+        edge_mask[:border, :] = 0
+        edge_mask[-border:, :] = 0
+        edge_mask[:, :border] = 0
+        edge_mask[:, -border:] = 0
+        edge_contours, _ = cv2.findContours(
+            edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours.extend((contour, True) for contour in edge_contours)
         roi_h, roi_w = roi.shape[:2]
         full_h, full_w = image.shape[:2]
-        detections: list[ShapeDetection] = []
-        for contour in contours:
+        candidates: list[tuple[ShapeDetection, bool]] = []
+        for contour, edge_only in contours:
             area = cv2.contourArea(contour)
             if area < max(MIN_AREA, roi_w * roi_h * 0.004) or area > roi_w * roi_h * 0.58:
                 continue
@@ -267,6 +285,11 @@ class ShapeRecognitionApp:
             solidity = self._solidity(contour, area)
             if solidity < 0.32 or extent < 0.20:
                 continue
+            if edge_only:
+                interior = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                cv2.drawContours(interior, [contour], -1, 255, -1)
+                if float(cv2.mean(hsv[:, :, 1], mask=interior)[0]) < 48.0:
+                    continue
             if vertices == 4 and area > roi_w * roi_h * 0.25 and solidity >= 0.94 and extent >= 0.82:
                 contour_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                 cv2.drawContours(contour_mask, [contour], -1, 255, -1)
@@ -292,6 +315,7 @@ class ShapeRecognitionApp:
                 max_angle_cosine,
                 opposite_parallel_error=quad.get("opposite_parallel_error"),
                 opposite_side_ratio=quad.get("opposite_side_ratio"),
+                opposite_angle_error=quad.get("opposite_angle_error"),
                 enclosing_fill=enclosing_fill,
                 ellipse_ratio=ellipse_ratio,
                 radial_variation=radial_variation,
@@ -308,8 +332,8 @@ class ShapeRecognitionApp:
             bx1, by1, bx2, by2 = x0 + x, y0 + y, x0 + x + bw, y0 + y + bh
             cx, cy = bx1 + bw // 2, by1 + bh // 2
             sig = f"{name}:{round(cx / max(1, full_w) * 8)}:{round(cy / max(1, full_h) * 6)}:{round(max(bw, bh) / max(1, full_w) * 10)}"
-            detections.append(
-                ShapeDetection(
+            candidates.append(
+                (ShapeDetection(
                     name=name,
                     name_cn=SHAPE_NAMES_CN[name],
                     box=(bx1, by1, bx2, by2),
@@ -319,9 +343,9 @@ class ShapeRecognitionApp:
                     vertices=vertices,
                     contour=contour_full,
                     signature=sig,
-                )
+                ), edge_only)
             )
-        detections.sort(key=lambda d: d.area, reverse=True)
+        detections = self._deduplicate_candidates(candidates)
         if detections:
             primary_area = detections[0].area
             detections = [
@@ -330,6 +354,18 @@ class ShapeRecognitionApp:
                 if detection.area >= primary_area * MIN_SECONDARY_AREA_RATIO
             ]
         return detections[:MAX_RESULTS]
+
+    def _deduplicate_candidates(
+        self, candidates: list[tuple[ShapeDetection, bool]]
+    ) -> list[ShapeDetection]:
+        ordered = sorted(candidates, key=lambda item: (item[1], -item[0].area))
+        unique: list[ShapeDetection] = []
+        for detection, _edge_only in ordered:
+            if any(self._box_iou(detection.box, kept.box) >= 0.72 for kept in unique):
+                continue
+            unique.append(detection)
+        unique.sort(key=lambda detection: detection.area, reverse=True)
+        return unique
 
     def _find_display_roi(self, image: np.ndarray) -> tuple[int, int, int, int]:
         h, w = image.shape[:2]
@@ -349,6 +385,8 @@ class ShapeRecognitionApp:
                 continue
             ratio = bw / max(1.0, float(bh))
             if ratio < 0.45 or ratio > 3.2:
+                continue
+            if not self._is_neutral_display_region(image, (x, y, x + bw, y + bh)):
                 continue
             if area > best_area:
                 best_area = area
@@ -385,6 +423,8 @@ class ShapeRecognitionApp:
             vertices = len(cv2.approxPolyDP(contour, 0.025 * perimeter, True))
             if not 4 <= vertices <= 10:
                 continue
+            if not self._is_neutral_display_region(image, (x, y, x + bw, y + bh)):
+                continue
             score = area * extent
             if score > best_score:
                 best_score = score
@@ -399,6 +439,39 @@ class ShapeRecognitionApp:
             )
         margin = max(4, min(h, w) // 80)
         return (margin, margin, w - margin, h - margin)
+
+    def _is_neutral_display_region(
+        self, image: np.ndarray, box: tuple[int, int, int, int]
+    ) -> bool:
+        x1, y1, x2, y2 = box
+        inset_x = max(2, (x2 - x1) // 12)
+        inset_y = max(2, (y2 - y1) // 12)
+        sample = image[y1 + inset_y : y2 - inset_y, x1 + inset_x : x2 - inset_x]
+        if sample.size == 0:
+            return False
+        saturation = cv2.cvtColor(sample, cv2.COLOR_BGR2HSV)[:, :, 1]
+        patch_h = max(2, saturation.shape[0] // 5)
+        patch_w = max(2, saturation.shape[1] // 5)
+        corners = (
+            saturation[:patch_h, :patch_w],
+            saturation[:patch_h, -patch_w:],
+            saturation[-patch_h:, :patch_w],
+            saturation[-patch_h:, -patch_w:],
+        )
+        neutral_corners = sum(float(np.median(corner)) <= 45.0 for corner in corners)
+        return neutral_corners >= 3
+
+    def _box_iou(
+        self, first: tuple[int, int, int, int], second: tuple[int, int, int, int]
+    ) -> float:
+        x1 = max(first[0], second[0])
+        y1 = max(first[1], second[1])
+        x2 = min(first[2], second[2])
+        y2 = min(first[3], second[3])
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+        second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+        return intersection / max(float(first_area + second_area - intersection), 1.0)
 
     def _stabilize(self, raw: list[ShapeDetection]) -> list[ShapeDetection]:
         tracks = getattr(self, "_shape_tracks", {})
@@ -508,6 +581,10 @@ class ShapeRecognitionApp:
             "max_angle_cosine": max(corner_cosines),
             "opposite_parallel_error": max(parallel_errors),
             "opposite_side_ratio": min(opposite_ratios),
+            "opposite_angle_error": max(
+                abs(corner_cosines[0] - corner_cosines[2]),
+                abs(corner_cosines[1] - corner_cosines[3]),
+            ),
         }
 
     def _enclosing_circle_fill(self, contour: np.ndarray, area: float) -> float:
@@ -593,6 +670,7 @@ class ShapeRecognitionApp:
         *,
         opposite_parallel_error: float | None = None,
         opposite_side_ratio: float | None = None,
+        opposite_angle_error: float | None = None,
         enclosing_fill: float | None = None,
         ellipse_ratio: float | None = None,
         radial_variation: float | None = None,
@@ -607,13 +685,23 @@ class ShapeRecognitionApp:
         if vertices == 4:
             square_aspect = rotated_aspect if rotated_aspect is not None else max(aspect, 1.0 / max(aspect, 0.001))
             angles_are_square = max_angle_cosine is None or max_angle_cosine <= 0.07
-            angles_are_rectangular = max_angle_cosine is None or max_angle_cosine <= 0.18
+            perspective_rectangle = (
+                max_angle_cosine is not None
+                and max_angle_cosine <= 0.24
+                and opposite_angle_error is not None
+                and opposite_angle_error >= 0.10
+            )
+            angles_are_rectangular = (
+                max_angle_cosine is None
+                or max_angle_cosine <= 0.18
+                or perspective_rectangle
+            )
             sides_are_balanced = side_ratio is None or side_ratio >= 0.78
             opposite_sides_match = opposite_side_ratio is None or opposite_side_ratio >= 0.78
-            both_pairs_parallel = opposite_parallel_error is None or opposite_parallel_error <= 0.20
+            both_pairs_parallel = opposite_parallel_error is None or opposite_parallel_error <= 0.24
             if square_aspect <= 1.16 and angles_are_square and sides_are_balanced and opposite_sides_match:
                 return SHAPE_SQUARE, max(0.82, 0.94 - abs(1.0 - square_aspect) * 0.5)
-            if square_aspect >= 1.25 and angles_are_rectangular and opposite_sides_match and both_pairs_parallel:
+            if square_aspect >= 1.18 and angles_are_rectangular and opposite_sides_match and both_pairs_parallel:
                 ratio_score = min(1.0, max(0.0, (square_aspect - 1.12) / 0.8))
                 return SHAPE_RECTANGLE, 0.82 + 0.10 * ratio_score
             if both_pairs_parallel and opposite_sides_match and max_angle_cosine is not None and max_angle_cosine >= 0.18:
