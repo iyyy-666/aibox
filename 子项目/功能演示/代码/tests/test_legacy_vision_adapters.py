@@ -57,7 +57,7 @@ def test_adapter_build_does_not_call_legacy_tk_constructor(monkeypatch):
     assert result["result"] == []
 
 
-def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
+def test_palm_tracking_uses_the_calibrated_axis_directions(monkeypatch):
     class LegacyTrackingApp:
         pass
 
@@ -68,6 +68,10 @@ def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
         def pitch_delta_for(self, center_y, image_height):
             image_offset = center_y - image_height / 2.0
             return image_offset * self.config.pitch_sign
+
+        def yaw_delta_for(self, center_x, image_width):
+            image_offset = center_x - image_width / 2.0
+            return image_offset * self.config.yaw_sign
 
     fake_module = SimpleNamespace(
         PalmTrackingApp=LegacyTrackingApp,
@@ -80,6 +84,7 @@ def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
         CAMERA_WIDTH=1280,
         CAMERA_HEIGHT=480,
     )
+    monkeypatch.delenv("PALM_TRACK_YAW_SIGN", raising=False)
     monkeypatch.delenv("PALM_TRACK_PITCH_SIGN", raising=False)
     monkeypatch.setattr(
         "feature_demo.adapters.vision._load_legacy_module",
@@ -88,10 +93,11 @@ def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
 
     adapter = build_vision_adapter("palm_tracking", legacy_root="unused")
 
+    assert adapter.instance.controller.yaw_delta_for(480, 640) > 0
     assert adapter.instance.controller.pitch_delta_for(360, 480) > 0
-    assert adapter.instance.controller.config.pitch_min_step_pwm == 200
-    assert adapter.instance.controller.config.pitch_max_step_pwm == 200
-    assert adapter.instance.gimbal.min_pitch_move_pwm == 200
+    assert adapter.instance.controller.config.pitch_min_step_pwm == 300
+    assert adapter.instance.controller.config.pitch_max_step_pwm == 300
+    assert adapter.instance.gimbal.min_pitch_move_pwm == 300
 
 
 def test_sorting_returns_only_annotated_left_eye():

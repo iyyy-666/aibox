@@ -410,12 +410,12 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
             max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
             pitch_min_step_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "200")
+                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "300")
             ),
             pitch_max_step_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MAX_STEP_PWM", "200")
+                os.getenv("PALM_TRACK_PITCH_MAX_STEP_PWM", "300")
             ),
-            yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
+            yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "1")),
             pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "1")),
         )
         instance.controller = module.PalmTrackingController(config)
@@ -436,7 +436,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             pwm_max=int(os.getenv("PALM_TRACK_PWM_MAX", "2500")),
             initial_pwm=int(os.getenv("PALM_TRACK_INITIAL_PWM", "1500")),
             min_pitch_move_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "200")
+                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "300")
             ),
         )
         instance.hand_detector = module.HandLandmarkDetector()
