@@ -66,6 +66,31 @@ def test_gimbal_clamps_step_to_existing_safe_range():
     assert service.moves == [("yaw", -1, 500, 350)]
 
 
+@pytest.mark.parametrize(
+    ("direction", "pitch", "message"),
+    [
+        ("up", 500, "云台已到上限。"),
+        ("down", 2500, "云台已到下限。"),
+    ],
+)
+def test_gimbal_reports_pitch_limit_without_repeating_serial_command(
+    direction, pitch, message
+):
+    service = FakeGimbalService()
+    service.pitch = pitch
+    gimbal = GimbalAdapter(service=service)
+
+    result = gimbal.step(direction, 30)
+
+    assert result == {
+        "ok": False,
+        "direction": direction,
+        "amount": 30,
+        "message": message,
+    }
+    assert service.moves == []
+
+
 def test_gimbal_moves_to_an_absolute_saved_demo_position():
     service = FakeGimbalService()
     gimbal = GimbalAdapter(service=service)

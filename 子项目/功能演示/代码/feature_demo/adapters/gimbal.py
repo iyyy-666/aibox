@@ -31,6 +31,9 @@ DIRECTION_MAP = {
     "right": ("yaw", 1),
 }
 
+PITCH_MIN = 500
+PITCH_MAX = 2500
+
 
 def _load_existing_service() -> GimbalServiceProtocol:
     legacy_root = Path(os.getenv("AIBOX_LEGACY_ROOT", "/root/robot_arm"))
@@ -56,6 +59,22 @@ class GimbalAdapter:
         step_pwm = max(1, min(500, int(amount)))
         if self._service is None:
             self._service = _load_existing_service()
+        if axis == "pitch":
+            pitch = int(self._service.position[1])
+            if sign < 0 and pitch <= PITCH_MIN:
+                return {
+                    "ok": False,
+                    "direction": direction,
+                    "amount": step_pwm,
+                    "message": "云台已到上限。",
+                }
+            if sign > 0 and pitch >= PITCH_MAX:
+                return {
+                    "ok": False,
+                    "direction": direction,
+                    "amount": step_pwm,
+                    "message": "云台已到下限。",
+                }
         ok, detail = self._service.move(
             axis,
             sign,
