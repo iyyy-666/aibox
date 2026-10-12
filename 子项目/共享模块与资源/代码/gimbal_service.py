@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
@@ -40,9 +41,25 @@ class GimbalService:
 
     def _save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"yaw": self.yaw, "pitch": self.pitch}), encoding="utf-8")
-        os.replace(tmp, self.state_path)
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.state_path.parent,
+                prefix=f".{self.state_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp_path = Path(tmp.name)
+                json.dump({"yaw": self.yaw, "pitch": self.pitch}, tmp)
+            os.replace(tmp_path, self.state_path)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def move(self, axis: str, direction: int, *, step_pwm: int = 40, time_ms: int = 350) -> tuple[bool, str]:
         if axis not in ("yaw", "pitch") or direction not in (-1, 1):
@@ -67,7 +84,10 @@ class GimbalService:
                             self.yaw = target
                         else:
                             self.pitch = target
-                        self._save()
+                        try:
+                            self._save()
+                        except OSError:
+                            pass
                         return True, f"{axis}={target}"
                     time.sleep(0.01)
                 return False, "gimbal ACK timeout"
