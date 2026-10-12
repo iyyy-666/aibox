@@ -207,19 +207,31 @@ def test_face_adapter_skips_haar_when_opencv_build_omits_cascade(monkeypatch):
     assert adapter.instance.face_detectors == []
 
 
-def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
+def test_manual_gimbal_step_waits_for_automatic_move_and_resumes_tracking():
     automatic_started = threading.Event()
     release_automatic = threading.Event()
     manual_started = threading.Event()
 
     class TargetLock:
+        def __init__(self):
+            self.armed_with = None
+            self.cleared = False
+
         def update(self, boxes):
             return boxes[0]
 
+        def arm(self, boxes, image_size):
+            self.armed_with = (boxes, image_size)
+            return boxes[0]
+
         def clear(self):
-            return None
+            self.cleared = True
 
     class Controller:
+        def __init__(self):
+            self.started_with = None
+            self.stopped = False
+
         def update(self, current_box, image_size, now):
             return SimpleNamespace(
                 state="tracking",
@@ -227,8 +239,11 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
                 pitch_delta_pwm=5,
             )
 
+        def start(self, box, now):
+            self.started_with = box
+
         def stop(self):
-            return None
+            self.stopped = True
 
     class Gimbal:
         def move(self, yaw, pitch, interval):
@@ -276,10 +291,13 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
     result = {}
 
     def run_manual():
+        def step():
+            assert instance.tracking_enabled is False
+            manual_started.set()
+            return {"ok": True}
+
         result.update(
-            adapter.manual_gimbal_step(
-                lambda: manual_started.set() or {"ok": True}
-            )
+            adapter.manual_gimbal_step(step)
         )
 
     manual = threading.Thread(target=run_manual)
@@ -290,6 +308,8 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
     automatic.join(timeout=1)
     manual.join(timeout=1)
 
+    assert not automatic.is_alive()
+    assert not manual.is_alive()
     assert manual_started.is_set()
     assert result == {"ok": True}
     assert automatic_result["tracking_action"] == {
@@ -297,7 +317,55 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_pauses_tracking():
         "yaw_delta_pwm": 4,
         "pitch_delta_pwm": 5,
     }
+    assert instance.tracking_enabled is True
+    assert instance.target_lock.cleared is True
+    assert instance.controller.stopped is True
+    assert instance.target_lock.armed_with == ([(1, 2, 3, 4)], (640, 480))
+    assert instance.controller.started_with == (1, 2, 3, 4)
+
+
+def test_failed_manual_gimbal_step_leaves_automatic_tracking_paused():
+    class TargetLock:
+        def __init__(self):
+            self.arm_calls = 0
+
+        def clear(self):
+            return None
+
+        def arm(self, boxes, image_size):
+            self.arm_calls += 1
+            return boxes[0]
+
+    class Controller:
+        def __init__(self):
+            self.start_calls = 0
+
+        def stop(self):
+            return None
+
+        def start(self, box, now):
+            self.start_calls += 1
+
+    instance = SimpleNamespace(
+        tracking_enabled=True,
+        current_box=(1, 2, 3, 4),
+        image_size=(640, 480),
+        target_lock=TargetLock(),
+        controller=Controller(),
+    )
+    adapter = LegacyVisionAdapter(
+        "palm_tracking",
+        SimpleNamespace(),
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "tracking"),
+    )
+
+    result = adapter.manual_gimbal_step(lambda: {"ok": False})
+
+    assert result == {"ok": False}
     assert instance.tracking_enabled is False
+    assert instance.target_lock.arm_calls == 0
+    assert instance.controller.start_calls == 0
 
 
 def test_tracking_tries_right_eye_after_left_eye_miss():

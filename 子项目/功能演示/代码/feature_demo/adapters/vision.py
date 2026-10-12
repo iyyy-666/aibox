@@ -272,8 +272,21 @@ class LegacyVisionAdapter:
 
     def manual_gimbal_step(self, step: Callable[[], dict]) -> dict:
         with self._tracking_lock:
+            resume_tracking = self.instance.tracking_enabled
             self._pause_tracking_locked()
-            return step()
+            result = step()
+            if resume_tracking and result.get("ok") is True:
+                box = self.instance.current_box
+                if box is not None:
+                    locked = self.instance.target_lock.arm(
+                        [box], self.instance.image_size
+                    )
+                    if locked is not None:
+                        self.instance.current_box = locked
+                        self.instance.controller.start(locked, time.monotonic())
+                        self._tracking_generation += 1
+                        self.instance.tracking_enabled = True
+            return result
 
     @staticmethod
     def _sorting_annotation_frame(normal):
