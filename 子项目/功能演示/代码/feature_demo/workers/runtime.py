@@ -102,7 +102,7 @@ def create_worker(
         )
     if module_id == "ai_assistant":
         return AssistantWorker(event_sink=event_sink)
-    if module_id in {"voice_input_test", "nursery_rhyme"}:
+    if module_id == "nursery_rhyme":
         return VoiceWorker(module_id, event_sink=event_sink)
     if module_id == "voice_robot_arm":
         return VoiceWorker(module_id, event_sink=event_sink, robot_adapter=robot_adapter or RobotAdapter())

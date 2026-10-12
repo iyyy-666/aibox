@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from pathlib import Path
@@ -139,7 +140,7 @@ def test_voice_worker_closes_pcm_before_stopped_event() -> None:
     pcm = FakePCM(calls)
     events: list[dict] = []
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=lambda event: events.append(event),
         engine_factory=FakeEngine,
         pcm_factory=lambda: pcm,
@@ -156,7 +157,7 @@ def test_voice_worker_closes_pcm_before_stopped_event() -> None:
 def test_voice_worker_emits_ready_as_its_final_startup_signal() -> None:
     events: list[dict] = []
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=events.append,
         engine_factory=FakeEngine,
         pcm_factory=lambda: FakePCM([]),
@@ -183,7 +184,7 @@ def test_voice_calibrates_before_listener_reads_pcm() -> None:
             return b""
 
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=lambda _event: None,
         engine_factory=CalibratingEngine,
         pcm_factory=lambda: FakePCM([]),
@@ -207,7 +208,7 @@ def test_voice_restart_calibration_failure_rolls_back_resources() -> None:
 
     engines = [FakeEngine(), FailingCalibrationEngine(), FakeEngine()]
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=lambda _event: None,
         engine_factory=lambda: engines.pop(0),
         pcm_factory=lambda: pcms.pop(0),
@@ -239,7 +240,7 @@ def test_stop_during_voice_calibration_wins_without_ready_event() -> None:
             release_calibration.wait(timeout=1.0)
 
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=events.append,
         engine_factory=BlockingCalibrationEngine,
         pcm_factory=lambda: FakePCM([]),
@@ -325,7 +326,7 @@ def test_audio_returned_after_stop_never_emits_speech() -> None:
             return b"late audio"
 
     worker = VoiceWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=events.append,
         engine_factory=LateAudioEngine,
         pcm_factory=lambda: BlockedPCM([]),
@@ -361,7 +362,7 @@ def test_stop_between_final_check_and_text_acceptance_discards_audio() -> None:
             )
 
     worker = PausingWorker(
-        "voice_input_test",
+        "ai_assistant",
         event_sink=events.append,
         engine_factory=ImmediateAudioEngine,
         pcm_factory=lambda: FakePCM([]),
@@ -383,7 +384,7 @@ def test_stop_between_final_check_and_text_acceptance_discards_audio() -> None:
 
 
 @pytest.mark.parametrize(
-    "module_id", ["voice_input_test", "nursery_rhyme", "ai_assistant"]
+    "module_id", ["nursery_rhyme", "ai_assistant"]
 )
 def test_non_robot_voice_workers_disable_command_grammar(module_id) -> None:
     engine = FakeEngine()
@@ -426,7 +427,6 @@ def test_assistant_system_prompt_is_chinese() -> None:
 
 def test_runtime_dispatches_all_voice_modules_lazily() -> None:
     for module_id, expected_type in {
-        "voice_input_test": VoiceWorker,
         "nursery_rhyme": VoiceWorker,
         "voice_robot_arm": VoiceWorker,
         "ai_assistant": AssistantWorker,
@@ -564,8 +564,176 @@ def test_assistant_discards_stale_reply_and_never_queues_it() -> None:
 
     result = worker.ask("请介绍人工智能")
 
-    assert result == {"ok": False, "interrupted": True}
-    assert worker.last_event == {}
+    assert result == {"ok": True, "interrupted": True}
+    assert worker.last_event == {
+        "type": "assistant_status",
+        "status": "idle",
+        "message": "回答已停止。",
+    }
+
+
+def test_assistant_interrupt_immediately_reports_stopped_while_model_is_blocked() -> None:
+    model_started = threading.Event()
+    release_model = threading.Event()
+    events = []
+
+    class BlockingModel:
+        def __call__(self, *_args, **_kwargs):
+            model_started.set()
+            assert release_model.wait(timeout=2)
+            yield {"choices": [{"text": "过期回答"}]}
+
+    worker = AssistantWorker(event_sink=events.append, llm_factory=BlockingModel)
+    result = {}
+    ask_thread = threading.Thread(target=lambda: result.update(worker.ask("问题")))
+    ask_thread.start()
+    assert model_started.wait(timeout=1)
+
+    assert worker.command("interrupt", {})["ok"] is True
+    assert worker.last_event == {
+        "type": "assistant_status",
+        "status": "idle",
+        "message": "回答已停止。",
+    }
+
+    release_model.set()
+    ask_thread.join(timeout=1)
+    assert result == {"ok": True, "interrupted": True}
+    assert all(event["type"] != "assistant_reply" for event in events)
+
+
+def test_interrupted_assistant_ignores_stale_model_error() -> None:
+    model_started = threading.Event()
+    release_model = threading.Event()
+    events = []
+
+    class FailingModel:
+        def __call__(self, *_args, **_kwargs):
+            model_started.set()
+            assert release_model.wait(timeout=2)
+            raise RuntimeError("stale failure")
+
+    worker = AssistantWorker(event_sink=events.append, llm_factory=FailingModel)
+    result = {}
+    ask_thread = threading.Thread(target=lambda: result.update(worker.ask("问题")))
+    ask_thread.start()
+    assert model_started.wait(timeout=1)
+
+    worker.command("interrupt", {})
+    release_model.set()
+    ask_thread.join(timeout=1)
+
+    assert not ask_thread.is_alive()
+    assert result == {"ok": True, "interrupted": True}
+    assert worker.last_event["status"] == "idle"
+    assert all(event.get("status") != "error" for event in events)
+
+
+def test_assistant_does_not_commit_reply_after_newer_turn() -> None:
+    events = []
+    worker = AssistantWorker(event_sink=events.append)
+    old_turn = worker.interrupt(emit_status=False)
+    worker.interrupt()
+
+    committed = worker._commit_reply(old_turn, "旧问题", "旧回答")
+
+    assert committed is None
+    assert worker.last_event["status"] == "idle"
+    assert all(event["type"] != "assistant_reply" for event in events)
+
+
+def test_assistant_turn_change_waits_for_previous_status_publication() -> None:
+    idle_publication_started = threading.Event()
+    release_idle_publication = threading.Event()
+    newer_turn_finished = threading.Event()
+
+    def sink(event):
+        if event.get("status") == "idle" and not idle_publication_started.is_set():
+            idle_publication_started.set()
+            assert release_idle_publication.wait(timeout=2)
+
+    worker = AssistantWorker(event_sink=sink)
+    idle_thread = threading.Thread(target=worker.interrupt)
+    idle_thread.start()
+    assert idle_publication_started.wait(timeout=1)
+
+    newer_thread = threading.Thread(
+        target=lambda: (
+            worker.interrupt(emit_status=False),
+            newer_turn_finished.set(),
+        )
+    )
+    newer_thread.start()
+    assert not newer_turn_finished.wait(timeout=0.05)
+
+    release_idle_publication.set()
+    idle_thread.join(timeout=1)
+    newer_thread.join(timeout=1)
+    assert newer_turn_finished.is_set()
+
+
+def test_stale_tts_cannot_replace_newer_turn_queue() -> None:
+    class ExistingThread:
+        @staticmethod
+        def is_alive():
+            return True
+
+    worker = AssistantWorker(event_sink=lambda _event: None)
+    worker._tts_thread = ExistingThread()
+    old_turn = worker.interrupt(emit_status=False)
+    new_turn = worker.interrupt(emit_status=False)
+
+    worker._queue_tts_latest(new_turn, "新回答")
+    worker._queue_tts_latest(old_turn, "旧回答")
+
+    assert worker._tts_queue.get_nowait() == (new_turn, "新回答")
+    with pytest.raises(queue.Empty):
+        worker._tts_queue.get_nowait()
+
+
+def test_assistant_emits_generating_status_before_reply() -> None:
+    events = []
+
+    class ReplyModel:
+        def __call__(self, *_args, **_kwargs):
+            yield {"choices": [{"text": "回答"}]}
+
+    worker = AssistantWorker(event_sink=events.append, llm_factory=ReplyModel)
+
+    result = worker.ask("问题")
+
+    assert result["ok"] is True
+    assert events[-2] == {
+        "type": "assistant_status",
+        "status": "generating",
+        "message": "模型正在生成…",
+    }
+    assert events[-1]["type"] == "assistant_reply"
+
+
+def test_assistant_reports_voice_input_status_after_listener_starts() -> None:
+    events = []
+
+    class Voice:
+        def start_listening(self):
+            return {"ok": True, "listening": True}
+
+        def stop_listening(self):
+            return {"ok": True, "listening": False}
+
+    worker = AssistantWorker(
+        event_sink=events.append,
+        voice_factory=lambda _on_text: Voice(),
+    )
+
+    assert worker.start_listening() == {"ok": True, "listening": True}
+    assert events[-1] == {
+        "type": "assistant_status",
+        "status": "listening",
+        "message": "正在语音输入…",
+    }
+    assert worker.stop_listening() == {"ok": True, "listening": False}
+    assert events[-1]["status"] == "idle"
 
 
 def test_assistant_lazily_synthesizes_latest_reply_for_tracked_playback(tmp_path: Path) -> None:
@@ -596,7 +764,7 @@ def test_assistant_lazily_synthesizes_latest_reply_for_tracked_playback(tmp_path
     worker.stop()
 
 
-def test_assistant_stop_invalidates_blocked_tts_before_playback(tmp_path: Path) -> None:
+def test_assistant_stop_does_not_fail_while_daemon_tts_finishes(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
     playback = FakePlayback()
@@ -621,15 +789,146 @@ def test_assistant_stop_invalidates_blocked_tts_before_playback(tmp_path: Path) 
     )
     worker.ask("测试关闭")
     assert started.wait(timeout=1.0)
+    tts_thread = worker._tts_thread
+    assert tts_thread is not None
 
-    with pytest.raises(TimeoutError, match="AI 语音播报停止超时"):
-        worker.stop()
-
-    assert worker._tts_thread is not None and worker._tts_thread.is_alive()
-    assert playback.paths == []
-    assert worker.last_event["type"] != "stopped"
-    release.set()
-    worker._tts_thread.join(timeout=1.0)
     worker.stop()
+
+    assert tts_thread.is_alive()
+    assert playback.paths == []
+    assert worker.last_event["type"] == "stopped"
+    release.set()
+    tts_thread.join(timeout=1.0)
     assert playback.paths == []
     assert not wav.exists()
+
+
+def test_assistant_interrupt_serializes_with_playback_start(tmp_path: Path) -> None:
+    play_entered = threading.Event()
+    release_play = threading.Event()
+    interrupt_finished = threading.Event()
+    wav = tmp_path / "race.wav"
+    wav.write_bytes(b"wav")
+
+    class GatedPlayback(FakePlayback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.active = False
+
+        def play(self, path: str, **_kwargs) -> None:
+            play_entered.set()
+            assert release_play.wait(timeout=1.0)
+            self.paths.append(path)
+            self.active = True
+
+        def stop(self) -> None:
+            super().stop()
+            self.active = False
+
+    class ReplyModel:
+        def __call__(self, *_args, **_kwargs):
+            yield {"choices": [{"text": "旧回答"}]}
+
+    playback = GatedPlayback()
+    worker = AssistantWorker(
+        event_sink=lambda _event: None,
+        llm_factory=ReplyModel,
+        tts_factory=lambda _text: str(wav),
+        playback=playback,
+    )
+
+    worker.ask("测试中断竞态")
+    assert play_entered.wait(timeout=1.0)
+    interrupt_thread = threading.Thread(
+        target=lambda: (worker.interrupt(), interrupt_finished.set()),
+    )
+    interrupt_thread.start()
+
+    assert not interrupt_finished.wait(timeout=0.05)
+    release_play.set()
+    interrupt_thread.join(timeout=1.0)
+    assert interrupt_finished.is_set()
+    assert playback.active is False
+    assert worker.last_event["status"] == "idle"
+    worker.stop()
+
+
+def test_assistant_interrupt_serializes_with_tts_error_publication() -> None:
+    error_entered = threading.Event()
+    release_error = threading.Event()
+    interrupt_finished = threading.Event()
+
+    def emit(event: dict) -> None:
+        if event.get("type") == "error":
+            error_entered.set()
+            assert release_error.wait(timeout=1.0)
+
+    class ReplyModel:
+        def __call__(self, *_args, **_kwargs):
+            yield {"choices": [{"text": "回答"}]}
+
+    worker = AssistantWorker(
+        event_sink=emit,
+        llm_factory=ReplyModel,
+        tts_factory=lambda _text: (_ for _ in ()).throw(RuntimeError("tts failed")),
+        playback=FakePlayback(),
+    )
+    worker.ask("测试语音错误")
+    assert error_entered.wait(timeout=1.0)
+    interrupt_thread = threading.Thread(
+        target=lambda: (worker.interrupt(), interrupt_finished.set()),
+    )
+    interrupt_thread.start()
+
+    assert not interrupt_finished.wait(timeout=0.05)
+    release_error.set()
+    interrupt_thread.join(timeout=1.0)
+    assert interrupt_finished.is_set()
+    assert worker.last_event["status"] == "idle"
+    worker.stop()
+
+
+@pytest.mark.parametrize("operation", ["start", "stop"])
+def test_assistant_listening_result_does_not_overwrite_newer_turn(operation: str) -> None:
+    operation_entered = threading.Event()
+    release_operation = threading.Event()
+
+    class Voice:
+        def start_listening(self):
+            operation_entered.set()
+            assert release_operation.wait(timeout=1.0)
+            return {"ok": True, "listening": True}
+
+        def stop_listening(self):
+            operation_entered.set()
+            assert release_operation.wait(timeout=1.0)
+            return {"ok": True, "listening": False}
+
+        def stop(self):
+            return None
+
+    voice = Voice()
+    worker = AssistantWorker(
+        event_sink=lambda _event: None,
+        voice_factory=lambda _on_text: voice,
+        playback=FakePlayback(),
+    )
+    if operation == "stop":
+        worker._voice = voice
+    listening_thread = threading.Thread(
+        target=worker.start_listening if operation == "start" else worker.stop_listening,
+    )
+    listening_thread.start()
+    assert operation_entered.wait(timeout=1.0)
+
+    newer_turn = worker.interrupt(status="generating")
+    release_operation.set()
+    listening_thread.join(timeout=1.0)
+    assert not listening_thread.is_alive()
+    assert worker.last_event == {
+        "type": "assistant_status",
+        "status": "generating",
+        "message": "模型正在生成…",
+    }
+    assert worker._current_turn() == newer_turn
+    worker.stop()

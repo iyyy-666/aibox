@@ -70,16 +70,6 @@ MODULES = (
         "palm_tracking",
         commands=("start_tracking", "stop_tracking"),
     ),
-    ModuleDefinition(
-        module_id="voice_input_test",
-        name="语音输入测试",
-        description="查看麦克风采集、原始识别文本与规范化结果。",
-        category="语音交互",
-        worker="voice_input_test",
-        resources=("microphone", "asr"),
-        commands=("start_listening", "stop_listening"),
-        startup_timeout=60.0,
-    ),
     _visual(
         "fruit_recognition",
         "水果识别",

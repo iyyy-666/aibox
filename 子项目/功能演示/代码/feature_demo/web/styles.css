@@ -218,6 +218,18 @@ main { min-width: 0; }
 .nonvisual-controls textarea { box-sizing: border-box; width: 100%; margin-top: 6px; padding: 9px; color: var(--ink); background: #f8fafc; border: 1px solid var(--line); border-radius: 5px; font: inherit; resize: vertical; }
 .nonvisual-controls textarea:focus { outline: 3px solid #b9daf5; border-color: var(--blue); }
 .control-hint { margin: 6px 0 10px; }
+.assistant-status {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid #4378a5;
+  background: #edf5fb;
+  color: #173b56;
+  font-size: 14px;
+  font-weight: 700;
+}
+.assistant-status[data-state="listening"] { border-color: #278761; background: #edf8f3; color: #175d43; }
+.assistant-status[data-state="generating"] { border-color: #c76a24; background: #fff5e9; color: #7d4218; }
+.assistant-status[data-state="error"] { border-color: #b94444; background: #fff0f0; color: #7c2d2d; }
 .command-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 10px; }
 .command-row .command-button { flex: 0 1 auto; }
 .control-section + .control-section, .worker-output { margin-top: 15px; }

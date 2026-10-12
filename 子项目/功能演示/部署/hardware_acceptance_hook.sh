@@ -232,13 +232,6 @@ verify_running_module() {
       EVIDENCE_BEHAVIOR="assistant_reply"
       EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "$expected" "$baseline") || return
       ;;
-    voice_input_test)
-      wait_for_device_owner "$MIC_DEVICE" || return
-      baseline=$(current_event_sequence "$module_id") || return
-      printf '请对麦克风说一句中文测试短语。\n' >/dev/tty 2>/dev/null || true
-      EVIDENCE_BEHAVIOR="speech_result"
-      EVIDENCE_CORRELATION=$(wait_for_behavior_event "$module_id" "$EVIDENCE_BEHAVIOR" "" "$baseline") || return
-      ;;
     robot_button)
       wait_for_device_owner "$ROBOT_DEVICE" || return
       baseline=$(current_event_sequence "$module_id") || return

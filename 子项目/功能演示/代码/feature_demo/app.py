@@ -32,14 +32,23 @@ def _default_worker_factory(
         "AIBOX_GIMBAL_POSITION_STATE",
         f"/tmp/aibox_gimbal_position_{runtime_uid}.json",
     )
+    environment = {
+        "PYTHONUNBUFFERED": "1",
+        CAMERA_DEVICE_ENV: selected_camera,
+        "AIBOX_GIMBAL_POSITION_STATE": gimbal_position_state,
+    }
+    if module.module_id == "ai_assistant":
+        environment.update(
+            {
+                "VOICE_BACKEND": "sherpa",
+                "VOICE_SENSEVOICE_FALLBACK": "0",
+            }
+        )
     return WorkerProcess(
         [sys.executable, "-m", "feature_demo.workers", module.worker],
-        environment={
-            "PYTHONUNBUFFERED": "1",
-            CAMERA_DEVICE_ENV: selected_camera,
-            "AIBOX_GIMBAL_POSITION_STATE": gimbal_position_state,
-        },
+        environment=environment,
         start_timeout=module.startup_timeout,
+        command_timeout=90.0 if module.module_id == "ai_assistant" else 15.0,
     )
 
 

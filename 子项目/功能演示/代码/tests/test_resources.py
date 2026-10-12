@@ -165,7 +165,7 @@ def test_resource_verifier_returns_clean_report():
         device_in_use=lambda path: False,
     )
 
-    report = verifier.verify(get_module("voice_input_test"), ())
+    report = verifier.verify(get_module("ai_assistant"), ())
 
     assert report.ok
     assert report.busy_resources == ()

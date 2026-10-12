@@ -83,6 +83,14 @@ def test_color_and_shape_results_are_concise_chinese():
     )
 
 
+def test_shape_result_uses_specialized_chinese_names():
+    run_visual_result_javascript(
+        "shape_recognition",
+        '[{"name":"Rectangle"},{"name":"Parallelogram"},{"name":"Pentagon"}]',
+        "长方形\n斜平行四边形\n正五边形",
+    )
+
+
 def test_sorting_and_face_results_hide_internal_fields():
     run_visual_result_javascript(
         "object_sorting",

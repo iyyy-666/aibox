@@ -46,7 +46,7 @@ def test_home_listing_does_not_start_a_module(client, manager):
     response = client.get("/api/modules")
 
     assert response.status_code == 200
-    assert len(response.json()["modules"]) == 14
+    assert len(response.json()["modules"]) == 13
     assert manager.active_module is None
 
 

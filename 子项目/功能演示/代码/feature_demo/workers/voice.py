@@ -110,7 +110,7 @@ class VoiceWorker:
         song_matcher: Callable[[str], str | None] | None = None,
         join_timeout: float = 1.0,
     ) -> None:
-        if module_id not in {"voice_input_test", "nursery_rhyme", "voice_robot_arm", "ai_assistant"}:
+        if module_id not in {"nursery_rhyme", "voice_robot_arm", "ai_assistant"}:
             raise ValueError(f"未知语音模块: {module_id}")
         self.module_id = module_id
         self._event_sink = event_sink

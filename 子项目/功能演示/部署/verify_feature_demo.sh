@@ -2,7 +2,7 @@
 set -euo pipefail
 
 API_URL="${FEATURE_DEMO_URL:-http://127.0.0.1:8000}"
-MODULE_IDS=(ai_assistant object_sorting plate_recognition palm_recognition palm_tracking voice_input_test fruit_recognition color_recognition face_detection robot_button nursery_rhyme shape_recognition voice_robot_arm)
+MODULE_IDS=(ai_assistant object_sorting plate_recognition palm_recognition palm_tracking fruit_recognition color_recognition face_detection robot_button nursery_rhyme shape_recognition voice_robot_arm)
 STABLE_CAMERA_DEVICE="/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0"
 LEGACY_CAMERA_DEVICE="/dev/video41"
 
@@ -57,7 +57,7 @@ VERIFIER_PATH="${FEATURE_DEMO_VERIFIER_PATH:-$0}"
 APP_PACKAGE_ROOT="${FEATURE_DEMO_APP_ROOT:-/root/robot_arm/feature_demo}"
 DESKTOP_DIR="/home/ztl/Desktop"
 STAGED_DESKTOP_ENTRY="/usr/local/share/feature-demo/功能演示.desktop"
-WINDOW_CLOSE_MODULE="${FEATURE_DEMO_WINDOW_CLOSE_MODULE:-voice_input_test}"
+WINDOW_CLOSE_MODULE="${FEATURE_DEMO_WINDOW_CLOSE_MODULE:-ai_assistant}"
 FULL_ACCEPTANCE=false
 RETIRE_LEGACY=false
 ACTIVE_MODULE=""
@@ -173,7 +173,6 @@ module_evidence_spec() {
     object_sorting) printf 'sorting_result event yes\n' ;;
     plate_recognition|palm_recognition|fruit_recognition|color_recognition|face_detection|shape_recognition) printf 'recognition_result event no\n' ;;
     palm_tracking) printf 'tracking_motion event yes\n' ;;
-    voice_input_test) printf 'speech_result event no\n' ;;
     robot_button|voice_robot_arm) printf 'robot_action event yes\n' ;;
     nursery_rhyme) printf 'playback_started event yes\n' ;;
     *) return 1 ;;

@@ -64,8 +64,9 @@ def test_home_has_no_start_request_on_load(app_javascript):
 
 
 def test_nonvisual_modules_render_real_payload_controls(app_javascript):
-    for module_id in ("ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm"):
+    for module_id in ("ai_assistant", "nursery_rhyme", "robot_button", "voice_robot_arm"):
         assert module_id in app_javascript
+    assert "voice_input_test" not in app_javascript
     assert "song_id: \"twinkle\"" in app_javascript
     assert "song_id: \"two_tigers\"" in app_javascript
     assert "servo_id" in app_javascript
@@ -88,9 +89,9 @@ def test_nonvisual_controls_are_grouped_labeled_and_responsive(app_javascript):
 
 
 def test_nonvisual_worker_details_have_dedicated_outputs(app_javascript):
-    for field in ("details.raw", "details.normalized", "details.dialogue", "details.song", "details.lyrics", "details.voice_result"):
+    for field in ("details.dialogue", "details.song", "details.lyrics", "details.voice_result"):
         assert field in app_javascript
-    for target in ("[data-raw]", "[data-normalized]", "[data-dialogue]", "[data-current-song]", "[data-lyrics]", "[data-voice-result]"):
+    for target in ("[data-dialogue]", "[data-current-song]", "[data-lyrics]", "[data-voice-result]"):
         assert target in app_javascript
     assert 'details.lyrics.join("\\n")' in app_javascript
 
@@ -101,6 +102,19 @@ def test_assistant_rejects_empty_questions_and_commands_disable_in_flight(app_ja
     assert "appState.commandRequestPending" in app_javascript
     assert "updateCommandControls" in app_javascript
     assert "finally" in app_javascript
+
+
+def test_assistant_has_clear_voice_and_generation_statuses(app_javascript, web_styles):
+    assert "data-assistant-status" in app_javascript
+    assert "正在语音输入…" in app_javascript
+    assert "模型正在生成…" in app_javascript
+    assert "assistant_status" in app_javascript
+    assert "details.recent_events" in app_javascript
+    assert "renderWorkerEvent" in app_javascript
+    assert "workerEventSequence" in app_javascript
+    assert "sequence <= appState.workerEventSequence" in app_javascript
+    assert "appState.workerEventSequence = 0" in app_javascript
+    assert ".assistant-status" in web_styles
 
 
 def test_command_request_locks_ordinary_commands_without_overriding_lifecycle_lock(app_javascript):
