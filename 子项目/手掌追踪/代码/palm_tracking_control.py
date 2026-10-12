@@ -31,6 +31,8 @@ class TrackingConfig:
     pwm_per_degree: float = 11.11
     min_step_pwm: int = 4
     max_step_pwm: int = 22
+    pitch_min_step_pwm: int | None = None
+    pitch_max_step_pwm: int | None = None
     pwm_min: int = 500
     pwm_max: int = 2500
     yaw_sign: int = 1
@@ -112,8 +114,16 @@ class PalmTrackingController:
         offset_x = (center_x - width / 2.0) / max(1.0, width / 2.0)
         offset_y = (center_y - height / 2.0) / max(1.0, height / 2.0)
         alpha = min(1.0, max(0.0, self.config.smoothing_alpha))
-        self._smooth_x = alpha * offset_x + (1.0 - alpha) * self._smooth_x
-        self._smooth_y = alpha * offset_y + (1.0 - alpha) * self._smooth_y
+        self._smooth_x = (
+            0.0
+            if abs(offset_x) <= self.config.deadband_ratio
+            else alpha * offset_x + (1.0 - alpha) * self._smooth_x
+        )
+        self._smooth_y = (
+            0.0
+            if abs(offset_y) <= self.config.deadband_ratio
+            else alpha * offset_y + (1.0 - alpha) * self._smooth_y
+        )
 
         last_command_at = self._last_command_at if self._last_command_at is not None else now
         elapsed = max(0.0, now - last_command_at)
@@ -121,7 +131,13 @@ class PalmTrackingController:
             return TrackingDecision(state="waiting", offset_x=self._smooth_x, offset_y=self._smooth_y)
 
         yaw = self._axis_delta(self._smooth_x, elapsed, self.yaw_sign)
-        pitch = self._axis_delta(self._smooth_y, elapsed, self.pitch_sign)
+        pitch = self._axis_delta(
+            self._smooth_y,
+            elapsed,
+            self.pitch_sign,
+            min_step_pwm=self.config.pitch_min_step_pwm,
+            max_step_pwm=self.config.pitch_max_step_pwm,
+        )
         self._last_command_at = now
         if yaw == 0 and pitch == 0:
             return TrackingDecision(state="centered", offset_x=self._smooth_x, offset_y=self._smooth_y)
@@ -131,13 +147,23 @@ class PalmTrackingController:
         del offset_x, offset_y
         return False, False
 
-    def _axis_delta(self, offset: float, elapsed: float, sign: int) -> int:
+    def _axis_delta(
+        self,
+        offset: float,
+        elapsed: float,
+        sign: int,
+        *,
+        min_step_pwm: int | None = None,
+        max_step_pwm: int | None = None,
+    ) -> int:
         if abs(offset) <= self.config.deadband_ratio:
             return 0
-        proportional = round(abs(offset) * self.config.max_step_pwm)
-        step = max(self.config.min_step_pwm, proportional)
+        minimum = self.config.min_step_pwm if min_step_pwm is None else min_step_pwm
+        maximum = self.config.max_step_pwm if max_step_pwm is None else max_step_pwm
+        proportional = round(abs(offset) * maximum)
+        step = max(minimum, proportional)
         permitted = int(self.config.max_degrees_per_second * self.config.pwm_per_degree * elapsed)
-        limit = min(self.config.max_step_pwm, max(0, permitted))
+        limit = min(maximum, max(minimum, permitted))
         step = min(step, limit)
         if step == 0:
             return 0

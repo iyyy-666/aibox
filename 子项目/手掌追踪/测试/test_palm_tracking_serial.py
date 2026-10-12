@@ -27,7 +27,9 @@ class FakeSerial:
         self.is_open = False
 
 
-def make_client(fake: FakeSerial) -> SerialGimbalClient:
+def make_client(
+    fake: FakeSerial, *, min_pitch_move_pwm: int = 0
+) -> SerialGimbalClient:
     return SerialGimbalClient(
         port="fake",
         baud=115200,
@@ -35,6 +37,7 @@ def make_client(fake: FakeSerial) -> SerialGimbalClient:
         pitch_id=2,
         pwm_min=500,
         pwm_max=2500,
+        min_pitch_move_pwm=min_pitch_move_pwm,
         serial_factory=lambda *_args, **_kwargs: fake,
     )
 
@@ -109,3 +112,28 @@ def test_client_restores_the_last_confirmed_position(monkeypatch, tmp_path) -> N
 
     assert client.yaw_pwm == 2227
     assert client.pitch_pwm == 2470
+
+
+def test_move_does_not_repeat_a_clamped_pitch_target() -> None:
+    fake = FakeSerial(b"")
+    client = make_client(fake)
+    client.pitch_pwm = 2500
+
+    ok, detail = client.move(0, 200)
+
+    assert ok
+    assert detail == "no movement requested"
+    assert fake.writes == []
+
+
+def test_move_does_not_record_an_ineffective_pitch_remainder() -> None:
+    fake = FakeSerial(b"")
+    client = make_client(fake, min_pitch_move_pwm=200)
+    client.pitch_pwm = 2400
+
+    ok, detail = client.move(0, 200)
+
+    assert ok
+    assert detail == "no movement requested"
+    assert client.pitch_pwm == 2400
+    assert fake.writes == []

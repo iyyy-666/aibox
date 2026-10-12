@@ -25,6 +25,36 @@ def test_deadband_emits_no_pwm_command() -> None:
     assert decision.pitch_delta_pwm == 0
 
 
+def test_entering_deadband_stops_immediately_after_a_large_offset() -> None:
+    controller = PalmTrackingController(
+        TrackingConfig(smoothing_alpha=0.35, pitch_min_step_pwm=200)
+    )
+    controller.start((300, 420, 40, 40), now=0.0)
+    assert controller.update(
+        (300, 420, 40, 40), (640, 480), now=0.1
+    ).pitch_delta_pwm != 0
+
+    decision = controller.update((300, 220, 40, 40), (640, 480), now=0.2)
+
+    assert decision.state == "centered"
+    assert decision.pitch_delta_pwm == 0
+
+
+def test_pitch_uses_its_axis_specific_minimum_step() -> None:
+    controller = PalmTrackingController(
+        TrackingConfig(
+            smoothing_alpha=1.0,
+            pitch_min_step_pwm=200,
+            pitch_max_step_pwm=200,
+        )
+    )
+    controller.start((300, 420, 40, 40), now=0.0)
+
+    decision = controller.update((300, 420, 40, 40), (640, 480), now=0.1)
+
+    assert decision.pitch_delta_pwm == 200
+
+
 def test_rate_limit_caps_a_tenth_second_to_twenty_two_pwm() -> None:
     controller = PalmTrackingController(TrackingConfig(max_step_pwm=100, smoothing_alpha=1.0))
     controller.start((300, 220, 40, 40), now=0.0)

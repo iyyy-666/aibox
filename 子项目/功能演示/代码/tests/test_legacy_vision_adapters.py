@@ -74,7 +74,7 @@ def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
         TrackingConfig=lambda **values: SimpleNamespace(**values),
         PalmTrackingController=Controller,
         PalmTargetLock=lambda: SimpleNamespace(),
-        SerialGimbalClient=lambda **_values: SimpleNamespace(),
+        SerialGimbalClient=lambda **values: SimpleNamespace(**values),
         HandLandmarkDetector=lambda: SimpleNamespace(),
         CONTROL_INTERVAL_MS=100,
         CAMERA_WIDTH=1280,
@@ -89,6 +89,9 @@ def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
     adapter = build_vision_adapter("palm_tracking", legacy_root="unused")
 
     assert adapter.instance.controller.pitch_delta_for(360, 480) > 0
+    assert adapter.instance.controller.config.pitch_min_step_pwm == 200
+    assert adapter.instance.controller.config.pitch_max_step_pwm == 200
+    assert adapter.instance.gimbal.min_pitch_move_pwm == 200
 
 
 def test_sorting_returns_only_annotated_left_eye():
