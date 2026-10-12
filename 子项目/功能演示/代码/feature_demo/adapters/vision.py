@@ -274,7 +274,14 @@ class LegacyVisionAdapter:
         with self._tracking_lock:
             resume_tracking = self.instance.tracking_enabled
             self._pause_tracking_locked()
+            self.instance.gimbal.disconnect()
             result = step()
+            if result.get("ok") is True:
+                if not self.instance.gimbal.reload_position():
+                    return {
+                        "ok": False,
+                        "message": "云台已移动，但位置同步失败，请重新开始跟踪。",
+                    }
             if resume_tracking and result.get("ok") is True:
                 box = self.instance.current_box
                 if box is not None:
@@ -429,7 +436,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
                 os.getenv("PALM_TRACK_PITCH_MAX_STEP_PWM", "300")
             ),
             yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "1")),
-            pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "1")),
+            pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
         )
         instance.controller = module.PalmTrackingController(config)
         instance.target_lock = module.PalmTargetLock()

@@ -204,11 +204,20 @@ class VisionWorker:
         if name.startswith("gimbal_"):
             if self._gimbal is None:
                 raise RuntimeError("云台服务未配置。")
+            if self._manual_gimbal_step is not None:
+                def step():
+                    try:
+                        return self._gimbal.step(
+                            name.removeprefix("gimbal_"),
+                            payload.get("amount", 30),
+                        )
+                    finally:
+                        self._gimbal.close()
+
+                return self._manual_gimbal_step(step)
             step = lambda: self._gimbal.step(
                 name.removeprefix("gimbal_"), payload.get("amount", 30)
             )
-            if self._manual_gimbal_step is not None:
-                return self._manual_gimbal_step(step)
             if self._pause_tracking is not None:
                 self._pause_tracking()
             return step()

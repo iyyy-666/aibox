@@ -114,6 +114,22 @@ def test_client_restores_the_last_confirmed_position(monkeypatch, tmp_path) -> N
     assert client.pitch_pwm == 2470
 
 
+def test_client_reloads_position_after_manual_gimbal_move(monkeypatch, tmp_path) -> None:
+    state_path = tmp_path / "gimbal-position.json"
+    state_path.write_text(
+        json.dumps({"yaw": 1500, "pitch": 1500}), encoding="utf-8"
+    )
+    monkeypatch.setattr(palm_tracking_serial, "POSITION_STATE", str(state_path))
+    client = make_client(FakeSerial(b""))
+    state_path.write_text(
+        json.dumps({"yaw": 1470, "pitch": 1800}), encoding="utf-8"
+    )
+
+    assert client.reload_position() is True
+    assert client.yaw_pwm == 1470
+    assert client.pitch_pwm == 1800
+
+
 def test_move_does_not_repeat_a_clamped_pitch_target() -> None:
     fake = FakeSerial(b"")
     client = make_client(fake)

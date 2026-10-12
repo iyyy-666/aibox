@@ -93,8 +93,8 @@ def test_palm_tracking_uses_the_calibrated_axis_directions(monkeypatch):
 
     adapter = build_vision_adapter("palm_tracking", legacy_root="unused")
 
-    assert adapter.instance.controller.yaw_delta_for(480, 640) > 0
-    assert adapter.instance.controller.pitch_delta_for(360, 480) > 0
+    assert adapter.instance.controller.yaw_delta_for(160, 640) < 0
+    assert adapter.instance.controller.pitch_delta_for(120, 480) > 0
     assert adapter.instance.controller.config.pitch_min_step_pwm == 300
     assert adapter.instance.controller.config.pitch_max_step_pwm == 300
     assert adapter.instance.gimbal.min_pitch_move_pwm == 300
@@ -246,13 +246,21 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_resumes_tracking():
             self.stopped = True
 
     class Gimbal:
+        def __init__(self):
+            self.disconnected = False
+            self.reloaded = False
+
         def move(self, yaw, pitch, interval):
             automatic_started.set()
             release_automatic.wait(timeout=2)
             return True, "ok"
 
         def disconnect(self):
-            return None
+            self.disconnected = True
+
+        def reload_position(self):
+            self.reloaded = True
+            return True
 
     frame = SimpleNamespace(shape=(480, 640, 3))
     module = SimpleNamespace(
@@ -293,6 +301,7 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_resumes_tracking():
     def run_manual():
         def step():
             assert instance.tracking_enabled is False
+            assert instance.gimbal.disconnected is True
             manual_started.set()
             return {"ok": True}
 
@@ -320,6 +329,7 @@ def test_manual_gimbal_step_waits_for_automatic_move_and_resumes_tracking():
     assert instance.tracking_enabled is True
     assert instance.target_lock.cleared is True
     assert instance.controller.stopped is True
+    assert instance.gimbal.reloaded is True
     assert instance.target_lock.armed_with == ([(1, 2, 3, 4)], (640, 480))
     assert instance.controller.started_with == (1, 2, 3, 4)
 
@@ -352,6 +362,7 @@ def test_failed_manual_gimbal_step_leaves_automatic_tracking_paused():
         image_size=(640, 480),
         target_lock=TargetLock(),
         controller=Controller(),
+        gimbal=SimpleNamespace(disconnect=lambda: None),
     )
     adapter = LegacyVisionAdapter(
         "palm_tracking",
@@ -366,6 +377,34 @@ def test_failed_manual_gimbal_step_leaves_automatic_tracking_paused():
     assert instance.tracking_enabled is False
     assert instance.target_lock.arm_calls == 0
     assert instance.controller.start_calls == 0
+
+
+def test_successful_manual_step_syncs_position_before_later_tracking():
+    calls = []
+    instance = SimpleNamespace(
+        tracking_enabled=False,
+        current_box=None,
+        image_size=(640, 480),
+        target_lock=SimpleNamespace(clear=lambda: None),
+        controller=SimpleNamespace(stop=lambda: None),
+        gimbal=SimpleNamespace(
+            disconnect=lambda: calls.append("disconnect"),
+            reload_position=lambda: calls.append("reload") or True,
+        ),
+    )
+    adapter = LegacyVisionAdapter(
+        "palm_tracking",
+        SimpleNamespace(),
+        instance,
+        LegacyVisionSpec("unused.py", "Unused", "tracking"),
+    )
+
+    result = adapter.manual_gimbal_step(
+        lambda: calls.append("step") or {"ok": True}
+    )
+
+    assert result == {"ok": True}
+    assert calls == ["disconnect", "step", "reload"]
 
 
 def test_tracking_tries_right_eye_after_left_eye_miss():

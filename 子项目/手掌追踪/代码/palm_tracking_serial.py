@@ -34,19 +34,22 @@ class SerialGimbalClient:
         self.min_pitch_move_pwm = max(0, int(min_pitch_move_pwm))
         self.yaw_pwm = initial_pwm
         self.pitch_pwm = initial_pwm
+        self.reload_position()
+        self.last_error = ""
+        self._serial_factory = serial_factory
+        self._serial: serial.Serial | None = None
+
+    def reload_position(self) -> bool:
         try:
             with open(POSITION_STATE, encoding="utf-8") as fh:
                 saved_position = json.load(fh)
             saved_yaw = self._clamp(int(saved_position["yaw"]))
             saved_pitch = self._clamp(int(saved_position["pitch"]))
         except (OSError, KeyError, TypeError, ValueError):
-            pass
-        else:
-            self.yaw_pwm = saved_yaw
-            self.pitch_pwm = saved_pitch
-        self.last_error = ""
-        self._serial_factory = serial_factory
-        self._serial: serial.Serial | None = None
+            return False
+        self.yaw_pwm = saved_yaw
+        self.pitch_pwm = saved_pitch
+        return True
 
     def connect(self) -> tuple[bool, str]:
         if self._serial is not None and self._serial.is_open:

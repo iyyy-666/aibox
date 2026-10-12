@@ -273,10 +273,14 @@ class VoiceWorker:
         self.stop_listening()
         self.stop_playback()
         if self.module_id == "voice_robot_arm" and self._robot is not None:
-            try:
-                self._robot.stop_motion()
-            finally:
-                self._robot.disconnect()
+            shutdown = getattr(self._robot, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            else:
+                try:
+                    self._robot.stop_motion()
+                finally:
+                    self._robot.disconnect()
         self._started = False
         self._emit({"type": "stopped", "module": self.module_id, "message": "语音功能已停止并释放资源。"})
 
@@ -416,13 +420,11 @@ class VoiceWorker:
             return
         command, payload = ROBOT_COMMANDS[text]
         if command == "center":
-            self._robot.connect()
             result = self._robot.command("center", {})
         elif command == "stop_motion":
             self._stop_robot_now()
             result = {"ok": True, "command": command}
         else:
-            self._robot.connect()
             result = self._robot.command(command, payload)
         self._emit(
             {

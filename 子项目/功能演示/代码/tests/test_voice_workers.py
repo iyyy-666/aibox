@@ -435,7 +435,7 @@ def test_runtime_dispatches_all_voice_modules_lazily() -> None:
         assert isinstance(worker, expected_type)
 
 
-def test_voice_robot_arm_stops_microphone_before_robot_shutdown() -> None:
+def test_voice_robot_arm_closes_microphone_then_preserves_upright_on_shutdown() -> None:
     calls: list[str] = []
     pcm = FakePCM(calls)
     adapter = RobotAdapter(
@@ -451,16 +451,19 @@ def test_voice_robot_arm_stops_microphone_before_robot_shutdown() -> None:
     )
 
     worker.start()
-    worker._dispatch_robot(
-        next(
-            label
-            for label, (command, _payload) in voice_workers.ROBOT_COMMANDS.items()
-            if command != "stop_motion"
-        )
+    upright_label = next(
+        label
+        for label, (command, payload) in voice_workers.ROBOT_COMMANDS.items()
+        if command == "pose" and payload.get("name") == "直立"
     )
+    worker._dispatch_robot(upright_label)
+    worker._dispatch_robot(upright_label)
     worker.stop()
 
-    assert calls.index("pcm_close") < calls.index("stop_motion") < calls.index("disconnect")
+    assert "stop_motion" not in calls
+    assert calls.count("connect") == 1
+    assert calls.count("disconnect") == 1
+    assert "pcm_close" in calls
 
 
 def test_two_tigers_song_id_is_trimmed_and_normalized_before_playback(tmp_path: Path) -> None:
