@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 Box = tuple[int, int, int, int]
@@ -67,7 +68,19 @@ class PalmTargetLock:
             return None
         matched = [box for box in boxes if _iou(self.box, box) >= self.iou_threshold]
         if not matched:
-            return None
+            if len(boxes) != 1:
+                return None
+            previous_center = _center(self.box)
+            candidate_center = _center(boxes[0])
+            center_distance = math.hypot(
+                candidate_center[0] - previous_center[0],
+                candidate_center[1] - previous_center[1],
+            )
+            motion_limit = 1.25 * max(*self.box[2:], *boxes[0][2:])
+            if center_distance > motion_limit:
+                return None
+            self.box = boxes[0]
+            return self.box
         self.box = max(matched, key=lambda box: _iou(self.box or box, box))
         return self.box
 

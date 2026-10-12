@@ -14,6 +14,15 @@ def test_lock_rejects_distant_replacement_box() -> None:
     assert lock.update([(20, 20, 80, 80)]) is None
 
 
+def test_lock_keeps_a_single_hand_after_moderate_vertical_motion() -> None:
+    lock = PalmTargetLock()
+    lock.arm([(280, 180, 80, 100)], (640, 480))
+
+    moved = lock.update([(280, 265, 80, 100)])
+
+    assert moved == (280, 265, 80, 100)
+
+
 def test_deadband_emits_no_pwm_command() -> None:
     controller = PalmTrackingController(TrackingConfig())
     controller.start((290, 220, 60, 60), now=0.0)
