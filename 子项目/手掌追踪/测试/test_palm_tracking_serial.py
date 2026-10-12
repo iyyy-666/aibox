@@ -1,3 +1,6 @@
+import json
+
+import palm_tracking_serial
 from palm_tracking_serial import SerialGimbalClient
 
 
@@ -93,3 +96,16 @@ def test_move_waits_for_each_axis_ack_before_writing_next_axis() -> None:
 
     assert client.move(10, -10, time_ms=100)[0]
     assert fake.events[:4] == ["write:001", "read", "write:002", "read"]
+
+
+def test_client_restores_the_last_confirmed_position(monkeypatch, tmp_path) -> None:
+    state_path = tmp_path / "gimbal-position.json"
+    state_path.write_text(
+        json.dumps({"yaw": 2227, "pitch": 2470}), encoding="utf-8"
+    )
+    monkeypatch.setattr(palm_tracking_serial, "POSITION_STATE", str(state_path))
+
+    client = make_client(FakeSerial(b""))
+
+    assert client.yaw_pwm == 2227
+    assert client.pitch_pwm == 2470

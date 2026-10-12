@@ -410,7 +410,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
             max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
             yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
-            pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
+            pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "1")),
         )
         instance.controller = module.PalmTrackingController(config)
         instance.target_lock = module.PalmTargetLock()

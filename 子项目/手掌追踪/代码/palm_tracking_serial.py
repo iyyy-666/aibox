@@ -32,6 +32,16 @@ class SerialGimbalClient:
         self.pwm_max = pwm_max
         self.yaw_pwm = initial_pwm
         self.pitch_pwm = initial_pwm
+        try:
+            with open(POSITION_STATE, encoding="utf-8") as fh:
+                saved_position = json.load(fh)
+            saved_yaw = self._clamp(int(saved_position["yaw"]))
+            saved_pitch = self._clamp(int(saved_position["pitch"]))
+        except (OSError, KeyError, TypeError, ValueError):
+            pass
+        else:
+            self.yaw_pwm = saved_yaw
+            self.pitch_pwm = saved_pitch
         self.last_error = ""
         self._serial_factory = serial_factory
         self._serial: serial.Serial | None = None

@@ -57,6 +57,40 @@ def test_adapter_build_does_not_call_legacy_tk_constructor(monkeypatch):
     assert result["result"] == []
 
 
+def test_palm_tracking_defaults_to_moving_down_for_a_low_hand(monkeypatch):
+    class LegacyTrackingApp:
+        pass
+
+    class Controller:
+        def __init__(self, config):
+            self.config = config
+
+        def pitch_delta_for(self, center_y, image_height):
+            image_offset = center_y - image_height / 2.0
+            return image_offset * self.config.pitch_sign
+
+    fake_module = SimpleNamespace(
+        PalmTrackingApp=LegacyTrackingApp,
+        TrackingConfig=lambda **values: SimpleNamespace(**values),
+        PalmTrackingController=Controller,
+        PalmTargetLock=lambda: SimpleNamespace(),
+        SerialGimbalClient=lambda **_values: SimpleNamespace(),
+        HandLandmarkDetector=lambda: SimpleNamespace(),
+        CONTROL_INTERVAL_MS=100,
+        CAMERA_WIDTH=1280,
+        CAMERA_HEIGHT=480,
+    )
+    monkeypatch.delenv("PALM_TRACK_PITCH_SIGN", raising=False)
+    monkeypatch.setattr(
+        "feature_demo.adapters.vision._load_legacy_module",
+        lambda _spec, _legacy_root: fake_module,
+    )
+
+    adapter = build_vision_adapter("palm_tracking", legacy_root="unused")
+
+    assert adapter.instance.controller.pitch_delta_for(360, 480) > 0
+
+
 def test_sorting_returns_only_annotated_left_eye():
     left = np.full((4, 6, 3), 11, dtype=np.uint8)
     right = np.full((4, 6, 3), 222, dtype=np.uint8)
