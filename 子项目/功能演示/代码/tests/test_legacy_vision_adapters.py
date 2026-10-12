@@ -93,11 +93,19 @@ def test_palm_tracking_uses_the_calibrated_axis_directions(monkeypatch):
 
     adapter = build_vision_adapter("palm_tracking", legacy_root="unused")
 
-    assert adapter.instance.controller.yaw_delta_for(160, 640) < 0
+    assert adapter.instance.controller.yaw_delta_for(160, 640) > 0
     assert adapter.instance.controller.pitch_delta_for(120, 480) > 0
-    assert adapter.instance.controller.config.pitch_min_step_pwm == 300
-    assert adapter.instance.controller.config.pitch_max_step_pwm == 300
-    assert adapter.instance.gimbal.min_pitch_move_pwm == 300
+    assert (
+        adapter.instance.controller.config.pitch_min_step_pwm
+        == adapter.instance.controller.config.min_step_pwm
+        == 4
+    )
+    assert (
+        adapter.instance.controller.config.pitch_max_step_pwm
+        == adapter.instance.controller.config.max_step_pwm
+        == 22
+    )
+    assert adapter.instance.gimbal.min_pitch_move_pwm == 4
 
 
 def test_sorting_returns_only_annotated_left_eye():

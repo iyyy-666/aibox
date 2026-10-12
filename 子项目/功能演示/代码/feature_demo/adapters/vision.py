@@ -420,6 +420,8 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         instance._tracker = module.BoxTracker(hold_misses=module.HOLD_MISSES)
         instance._voter = module.TemporalGestureVote(confirm_hits=module.STABLE_HITS, hold_misses=module.HOLD_MISSES)
     elif mode == "tracking":
+        min_step_pwm = int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4"))
+        max_step_pwm = int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22"))
         config = module.TrackingConfig(
             deadband_ratio=float(os.getenv("PALM_TRACK_DEADBAND_RATIO", "0.07")),
             smoothing_alpha=float(os.getenv("PALM_TRACK_SMOOTHING_ALPHA", "0.35")),
@@ -427,15 +429,11 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             lost_timeout_sec=float(os.getenv("PALM_TRACK_LOST_TIMEOUT_SEC", "0.5")),
             max_degrees_per_second=float(os.getenv("PALM_TRACK_MAX_DEGREES_PER_SECOND", "80")),
             pwm_per_degree=float(os.getenv("PALM_TRACK_PWM_PER_DEGREE", "11.11")),
-            min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
-            max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
-            pitch_min_step_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "300")
-            ),
-            pitch_max_step_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MAX_STEP_PWM", "300")
-            ),
-            yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "1")),
+            min_step_pwm=min_step_pwm,
+            max_step_pwm=max_step_pwm,
+            pitch_min_step_pwm=min_step_pwm,
+            pitch_max_step_pwm=max_step_pwm,
+            yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
             pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
         )
         instance.controller = module.PalmTrackingController(config)
@@ -455,9 +453,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             pwm_min=int(os.getenv("PALM_TRACK_PWM_MIN", "500")),
             pwm_max=int(os.getenv("PALM_TRACK_PWM_MAX", "2500")),
             initial_pwm=int(os.getenv("PALM_TRACK_INITIAL_PWM", "1500")),
-            min_pitch_move_pwm=int(
-                os.getenv("PALM_TRACK_PITCH_MIN_STEP_PWM", "300")
-            ),
+            min_pitch_move_pwm=min_step_pwm,
         )
         instance.hand_detector = module.HandLandmarkDetector()
         instance.right_hand_detector = module.HandLandmarkDetector()
