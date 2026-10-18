@@ -24,7 +24,9 @@ CAPTURE_INTERVAL_SEC = float(os.getenv("SHAPE_CAPTURE_INTERVAL_SEC", "0.025"))
 DETECT_INTERVAL_SEC = float(os.getenv("SHAPE_DETECT_INTERVAL_SEC", "0.16"))
 MIN_AREA = int(os.getenv("SHAPE_MIN_AREA", "700"))
 MAX_RESULTS = int(os.getenv("SHAPE_MAX_RESULTS", "3"))
+MIN_SECONDARY_AREA_RATIO = float(os.getenv("SHAPE_MIN_SECONDARY_AREA_RATIO", "0.18"))
 STABLE_HITS = int(os.getenv("SHAPE_STABLE_HITS", "2"))
+STABLE_HOLD_MISSES = int(os.getenv("SHAPE_STABLE_HOLD_MISSES", "2"))
 SNAPSHOT_DIR = Path(os.getenv("SHAPE_SNAPSHOT_DIR", "/root/robot_arm/assets/shape_snapshots"))
 
 T_TITLE = "Shape Recognition"
@@ -34,7 +36,7 @@ T_RESULT = "Detection Results"
 T_SAVE = "Save Snapshot"
 T_EXIT = "Exit"
 T_WAIT_DETECT = "Waiting for detection"
-T_NO_SHAPE = "No shape detected"
+T_NO_SHAPE = "暂未识别到形状"
 T_SAVED = "Saved"
 T_NO_SAVE = "No frame available to save"
 T_CAMERA_FAIL = "Failed to open camera"
@@ -49,12 +51,24 @@ T_AREA = "Area"
 SHAPE_TRIANGLE = "Triangle"
 SHAPE_SQUARE = "Square"
 SHAPE_RECTANGLE = "Rectangle"
+SHAPE_PARALLELOGRAM = "Parallelogram"
 SHAPE_CIRCLE = "Circle"
 SHAPE_ELLIPSE = "Ellipse"
 SHAPE_PENTAGON = "Pentagon"
 SHAPE_HEXAGON = "Hexagon"
 SHAPE_STAR = "Star"
 SHAPE_POLYGON = "Polygon"
+
+SHAPE_NAMES_CN = {
+    SHAPE_SQUARE: "正方形",
+    SHAPE_PARALLELOGRAM: "斜平行四边形",
+    SHAPE_CIRCLE: "圆形",
+    SHAPE_STAR: "星形",
+    SHAPE_RECTANGLE: "长方形",
+    SHAPE_PENTAGON: "正五边形",
+    SHAPE_TRIANGLE: "三角形",
+}
+DETECTABLE_SHAPES = frozenset(SHAPE_NAMES_CN)
 
 COLORS = [
     (80, 220, 245),
@@ -68,6 +82,7 @@ COLORS = [
 @dataclass
 class ShapeDetection:
     name: str
+    name_cn: str
     box: tuple[int, int, int, int]
     center: tuple[int, int]
     area: float
@@ -99,6 +114,7 @@ class ShapeRecognitionApp:
         self.det_fps = 0.0
         self.last_frame_time = 0.0
         self._stable_signatures: dict[str, int] = {}
+        self._shape_tracks: dict[str, dict[str, object]] = {}
         self._last_raw_count = 0
 
         self._build_ui()
@@ -204,8 +220,10 @@ class ShapeRecognitionApp:
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         # Phone/paper screens usually have a bright background with dark or saturated shapes.
-        dark = cv2.inRange(gray, 0, 185)
-        saturated = cv2.inRange(hsv, np.array((0, 38, 35), dtype=np.uint8), np.array((180, 255, 245), dtype=np.uint8))
+        _threshold, dark = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
+        )
+        saturated = cv2.inRange(hsv, np.array((0, 48, 38), dtype=np.uint8), np.array((180, 255, 255), dtype=np.uint8))
         mask = cv2.bitwise_or(dark, saturated)
 
         # Remove the outside border of the phone/paper ROI, otherwise it becomes a false rectangle.
@@ -215,15 +233,34 @@ class ShapeRecognitionApp:
         mask[:, :border] = 0
         mask[:, -border:] = 0
 
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        open_kernel = np.ones((3, 3), np.uint8)
+        close_kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=1)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_found, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours = [(contour, False) for contour in contours_found]
+        edge_mask = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+        edge_mask = cv2.morphologyEx(
+            edge_mask,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+            iterations=1,
+        )
+        edge_mask[:border, :] = 0
+        edge_mask[-border:, :] = 0
+        edge_mask[:, :border] = 0
+        edge_mask[:, -border:] = 0
+        edge_contours, _ = cv2.findContours(
+            edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours.extend((contour, True) for contour in edge_contours)
         roi_h, roi_w = roi.shape[:2]
         full_h, full_w = image.shape[:2]
-        detections: list[ShapeDetection] = []
-        for contour in contours:
+        candidates: list[tuple[ShapeDetection, bool]] = []
+        for contour, edge_only in contours:
             area = cv2.contourArea(contour)
             if area < max(MIN_AREA, roi_w * roi_h * 0.004) or area > roi_w * roi_h * 0.58:
                 continue
@@ -232,26 +269,103 @@ class ShapeRecognitionApp:
                 continue
             if bw > roi_w * 0.92 or bh > roi_h * 0.92:
                 continue
+            edge_margin = max(2, min(roi_w, roi_h) // 100)
+            if x <= edge_margin or y <= edge_margin or x + bw >= roi_w - edge_margin or y + bh >= roi_h - edge_margin:
+                continue
             peri = cv2.arcLength(contour, True)
             if peri <= 0:
                 continue
-            approx = cv2.approxPolyDP(contour, 0.030 * peri, True)
+            approx = cv2.approxPolyDP(contour, 0.018 * peri, True)
             vertices = len(approx)
             circularity = 4.0 * np.pi * area / max(peri * peri, 1.0)
             extent = area / max(float(bw * bh), 1.0)
             aspect = bw / max(float(bh), 1.0)
+            rotated_width, rotated_height = cv2.minAreaRect(contour)[1]
+            rotated_aspect = max(rotated_width, rotated_height) / max(1.0, min(rotated_width, rotated_height))
             solidity = self._solidity(contour, area)
-            name, conf = self._classify_shape(vertices, circularity, aspect, extent, solidity)
-            if conf < 0.66:
+            if solidity < 0.32 or extent < 0.20:
+                continue
+            if edge_only:
+                interior = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                cv2.drawContours(interior, [contour], -1, 255, -1)
+                if float(cv2.mean(hsv[:, :, 1], mask=interior)[0]) < 48.0:
+                    continue
+            if vertices == 4 and area > roi_w * roi_h * 0.25 and solidity >= 0.94 and extent >= 0.82:
+                contour_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+                mean_saturation = cv2.mean(hsv[:, :, 1], mask=contour_mask)[0]
+                if mean_saturation < 22.0:
+                    continue
+            quad = self._quadrilateral_features(approx)
+            side_ratio = quad.get("side_ratio")
+            max_angle_cosine = quad.get("max_angle_cosine")
+            enclosing_fill = self._enclosing_circle_fill(contour, area)
+            ellipse_ratio = self._ellipse_ratio(contour)
+            radial_variation = self._radial_variation(contour)
+            star_alternation = self._star_alternation_score(approx)
+            side_cv, angle_mean, angle_std = self._polygon_regularity(approx)
+            name, conf = self._classify_shape(
+                vertices,
+                circularity,
+                aspect,
+                extent,
+                solidity,
+                rotated_aspect,
+                side_ratio,
+                max_angle_cosine,
+                opposite_parallel_error=quad.get("opposite_parallel_error"),
+                opposite_side_ratio=quad.get("opposite_side_ratio"),
+                opposite_angle_error=quad.get("opposite_angle_error"),
+                enclosing_fill=enclosing_fill,
+                ellipse_ratio=ellipse_ratio,
+                radial_variation=radial_variation,
+                star_alternation=star_alternation,
+                side_cv=side_cv,
+                angle_mean=angle_mean,
+                angle_std=angle_std,
+                is_convex=bool(cv2.isContourConvex(approx)),
+            )
+            if name not in DETECTABLE_SHAPES or conf < 0.66:
                 continue
 
             contour_full = contour + np.array([[[x0, y0]]], dtype=contour.dtype)
             bx1, by1, bx2, by2 = x0 + x, y0 + y, x0 + x + bw, y0 + y + bh
             cx, cy = bx1 + bw // 2, by1 + bh // 2
             sig = f"{name}:{round(cx / max(1, full_w) * 8)}:{round(cy / max(1, full_h) * 6)}:{round(max(bw, bh) / max(1, full_w) * 10)}"
-            detections.append(ShapeDetection(name, (bx1, by1, bx2, by2), (cx, cy), area, conf, vertices, contour_full, sig))
-        detections.sort(key=lambda d: d.area, reverse=True)
+            candidates.append(
+                (ShapeDetection(
+                    name=name,
+                    name_cn=SHAPE_NAMES_CN[name],
+                    box=(bx1, by1, bx2, by2),
+                    center=(cx, cy),
+                    area=area,
+                    confidence=conf,
+                    vertices=vertices,
+                    contour=contour_full,
+                    signature=sig,
+                ), edge_only)
+            )
+        detections = self._deduplicate_candidates(candidates)
+        if detections:
+            primary_area = detections[0].area
+            detections = [
+                detection
+                for detection in detections
+                if detection.area >= primary_area * MIN_SECONDARY_AREA_RATIO
+            ]
         return detections[:MAX_RESULTS]
+
+    def _deduplicate_candidates(
+        self, candidates: list[tuple[ShapeDetection, bool]]
+    ) -> list[ShapeDetection]:
+        ordered = sorted(candidates, key=lambda item: (item[1], -item[0].area))
+        unique: list[ShapeDetection] = []
+        for detection, _edge_only in ordered:
+            if any(self._box_iou(detection.box, kept.box) >= 0.72 for kept in unique):
+                continue
+            unique.append(detection)
+        unique.sort(key=lambda detection: detection.area, reverse=True)
+        return unique
 
     def _find_display_roi(self, image: np.ndarray) -> tuple[int, int, int, int]:
         h, w = image.shape[:2]
@@ -272,23 +386,155 @@ class ShapeRecognitionApp:
             ratio = bw / max(1.0, float(bh))
             if ratio < 0.45 or ratio > 3.2:
                 continue
+            if not self._is_neutral_display_region(image, (x, y, x + bw, y + bh)):
+                continue
             if area > best_area:
                 best_area = area
                 best = (x, y, x + bw, y + bh)
         if best is not None:
             pad = 8
             return (max(0, best[0] + pad), max(0, best[1] + pad), min(w, best[2] - pad), min(h, best[3] - pad))
-        roi = target_roi(image, margin_x=0.16, margin_y=0.12)
-        return (roi.x1, roi.y1, roi.x2, roi.y2)
+        edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+        edges = cv2.morphologyEx(
+            edges,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7)),
+            iterations=2,
+        )
+        edge_contours, _ = cv2.findContours(
+            edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
+        )
+        best = None
+        best_score = 0.0
+        for contour in edge_contours:
+            area = cv2.contourArea(contour)
+            if area < w * h * 0.08 or area > w * h * 0.70:
+                continue
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if x <= 2 or y <= 2 or x + bw >= w - 2 or y + bh >= h - 2:
+                continue
+            if bw < w * 0.25 or bh < h * 0.25:
+                continue
+            aspect = bw / max(float(bh), 1.0)
+            extent = area / max(float(bw * bh), 1.0)
+            if not 0.55 <= aspect <= 2.4 or extent < 0.45:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            vertices = len(cv2.approxPolyDP(contour, 0.025 * perimeter, True))
+            if not 4 <= vertices <= 10:
+                continue
+            if not self._is_neutral_display_region(image, (x, y, x + bw, y + bh)):
+                continue
+            score = area * extent
+            if score > best_score:
+                best_score = score
+                best = (x, y, x + bw, y + bh)
+        if best is not None:
+            pad = 4
+            return (
+                max(0, best[0] + pad),
+                max(0, best[1] + pad),
+                min(w, best[2] - pad),
+                min(h, best[3] - pad),
+            )
+        margin = max(4, min(h, w) // 80)
+        return (margin, margin, w - margin, h - margin)
+
+    def _is_neutral_display_region(
+        self, image: np.ndarray, box: tuple[int, int, int, int]
+    ) -> bool:
+        x1, y1, x2, y2 = box
+        inset_x = max(2, (x2 - x1) // 12)
+        inset_y = max(2, (y2 - y1) // 12)
+        sample = image[y1 + inset_y : y2 - inset_y, x1 + inset_x : x2 - inset_x]
+        if sample.size == 0:
+            return False
+        saturation = cv2.cvtColor(sample, cv2.COLOR_BGR2HSV)[:, :, 1]
+        patch_h = max(2, saturation.shape[0] // 5)
+        patch_w = max(2, saturation.shape[1] // 5)
+        corners = (
+            saturation[:patch_h, :patch_w],
+            saturation[:patch_h, -patch_w:],
+            saturation[-patch_h:, :patch_w],
+            saturation[-patch_h:, -patch_w:],
+        )
+        neutral_corners = sum(float(np.median(corner)) <= 45.0 for corner in corners)
+        return neutral_corners >= 3
+
+    def _box_iou(
+        self, first: tuple[int, int, int, int], second: tuple[int, int, int, int]
+    ) -> float:
+        x1 = max(first[0], second[0])
+        y1 = max(first[1], second[1])
+        x2 = min(first[2], second[2])
+        y2 = min(first[3], second[3])
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+        second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+        return intersection / max(float(first_area + second_area - intersection), 1.0)
 
     def _stabilize(self, raw: list[ShapeDetection]) -> list[ShapeDetection]:
-        current = {d.signature for d in raw if d.signature}
-        next_counts: dict[str, int] = {}
-        for sig in current:
-            next_counts[sig] = min(STABLE_HITS + 1, self._stable_signatures.get(sig, 0) + 1)
-        self._stable_signatures = next_counts
-        stable = [d for d in raw if self._stable_signatures.get(d.signature, 0) >= STABLE_HITS]
-        return stable
+        tracks = getattr(self, "_shape_tracks", {})
+        next_tracks: dict[str, dict[str, object]] = {}
+        used_tracks: set[str] = set()
+
+        for detection in raw:
+            track_key = detection.signature
+            if track_key not in tracks:
+                track_key = self._matching_track(detection, tracks, used_tracks) or detection.signature
+            previous = tracks.get(track_key, {})
+            hits = min(STABLE_HITS + 1, int(previous.get("hits", 0)) + 1)
+            next_tracks[detection.signature] = {
+                "hits": hits,
+                "misses": 0,
+                "detection": detection,
+            }
+            used_tracks.add(track_key)
+
+        for track_key, track in tracks.items():
+            if track_key in used_tracks:
+                continue
+            hits = int(track.get("hits", 0))
+            misses = int(track.get("misses", 0)) + 1
+            if hits >= STABLE_HITS and misses <= STABLE_HOLD_MISSES:
+                next_tracks[track_key] = {**track, "misses": misses}
+
+        self._shape_tracks = next_tracks
+        self._stable_signatures = {
+            key: int(track["hits"]) for key, track in next_tracks.items()
+        }
+        stable = [
+            track["detection"]
+            for track in next_tracks.values()
+            if int(track["hits"]) >= STABLE_HITS
+        ]
+        stable.sort(key=lambda item: item.area, reverse=True)
+        return stable[:MAX_RESULTS]
+
+    def _matching_track(
+        self,
+        detection: ShapeDetection,
+        tracks: dict[str, dict[str, object]],
+        used_tracks: set[str],
+    ) -> str | None:
+        best_key = None
+        best_distance = float("inf")
+        for key, track in tracks.items():
+            if key in used_tracks:
+                continue
+            previous = track.get("detection")
+            if not isinstance(previous, ShapeDetection) or previous.name != detection.name:
+                continue
+            size = max(
+                detection.box[2] - detection.box[0],
+                detection.box[3] - detection.box[1],
+                previous.box[2] - previous.box[0],
+                previous.box[3] - previous.box[1],
+            )
+            distance = float(np.linalg.norm(np.subtract(detection.center, previous.center)))
+            if distance <= max(24.0, size * 0.35) and distance < best_distance:
+                best_key, best_distance = key, distance
+        return best_key
 
     def _solidity(self, contour: np.ndarray, area: float) -> float:
         hull = cv2.convexHull(contour)
@@ -297,25 +543,205 @@ class ShapeRecognitionApp:
             return 0.0
         return float(area / hull_area)
 
-    def _classify_shape(self, vertices: int, circularity: float, aspect: float, extent: float, solidity: float) -> tuple[str, float]:
+    def _quadrilateral_quality(self, approx: np.ndarray) -> tuple[float | None, float | None]:
+        features = self._quadrilateral_features(approx)
+        return features.get("side_ratio"), features.get("max_angle_cosine")
+
+    def _quadrilateral_features(self, approx: np.ndarray) -> dict[str, float | None]:
+        if len(approx) != 4:
+            return {}
+        points = approx.reshape(4, 2).astype(np.float32)
+        vectors = [points[(index + 1) % 4] - points[index] for index in range(4)]
+        sides = [float(np.linalg.norm(vector)) for vector in vectors]
+        if max(sides) <= 0:
+            return {}
+        corner_cosines = []
+        for index in range(4):
+            before = points[(index - 1) % 4] - points[index]
+            after = points[(index + 1) % 4] - points[index]
+            denominator = float(np.linalg.norm(before) * np.linalg.norm(after))
+            if denominator <= 0:
+                return {}
+            corner_cosines.append(abs(float(np.dot(before, after)) / denominator))
+
+        parallel_errors = []
+        for first, second in ((0, 2), (1, 3)):
+            denominator = sides[first] * sides[second]
+            cross = float(
+                vectors[first][0] * vectors[second][1]
+                - vectors[first][1] * vectors[second][0]
+            )
+            parallel_errors.append(abs(cross) / max(denominator, 1.0))
+        opposite_ratios = [
+            min(sides[first], sides[second]) / max(sides[first], sides[second])
+            for first, second in ((0, 2), (1, 3))
+        ]
+        return {
+            "side_ratio": min(sides) / max(sides),
+            "max_angle_cosine": max(corner_cosines),
+            "opposite_parallel_error": max(parallel_errors),
+            "opposite_side_ratio": min(opposite_ratios),
+            "opposite_angle_error": max(
+                abs(corner_cosines[0] - corner_cosines[2]),
+                abs(corner_cosines[1] - corner_cosines[3]),
+            ),
+        }
+
+    def _enclosing_circle_fill(self, contour: np.ndarray, area: float) -> float:
+        _center, radius = cv2.minEnclosingCircle(contour)
+        return float(area / max(np.pi * radius * radius, 1.0))
+
+    def _ellipse_ratio(self, contour: np.ndarray) -> float | None:
+        if len(contour) < 5:
+            return None
+        _center, axes, _angle = cv2.fitEllipse(contour)
+        return min(axes) / max(max(axes), 1.0)
+
+    def _radial_variation(self, contour: np.ndarray) -> float:
+        moments = cv2.moments(contour)
+        if abs(moments["m00"]) < 1e-6:
+            return 0.0
+        center = np.array(
+            [moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]],
+            dtype=np.float32,
+        )
+        distances = np.linalg.norm(contour.reshape(-1, 2).astype(np.float32) - center, axis=1)
+        return float(np.std(distances) / max(float(np.mean(distances)), 1.0))
+
+    def _star_alternation_score(self, approx: np.ndarray) -> float:
+        if len(approx) != 10:
+            return 0.0
+        points = approx.reshape(-1, 2).astype(np.float32)
+        center = np.mean(points, axis=0)
+        radii = np.linalg.norm(points - center, axis=1)
+        even, odd = radii[::2], radii[1::2]
+        outer, inner = (even, odd) if float(np.mean(even)) >= float(np.mean(odd)) else (odd, even)
+        outer_mean = float(np.mean(outer))
+        inner_mean = float(np.mean(inner))
+        if inner_mean <= 0 or outer_mean <= 0:
+            return 0.0
+        outer_cv = float(np.std(outer) / outer_mean)
+        inner_cv = float(np.std(inner) / inner_mean)
+        radius_ratio = inner_mean / outer_mean
+        separation = float(np.min(outer) / max(float(np.max(inner)), 1.0))
+        if radius_ratio > 0.72 or separation < 1.12 or outer_cv > 0.26 or inner_cv > 0.30:
+            return 0.0
+        depth_score = float(np.clip((0.82 - radius_ratio) / 0.30, 0.0, 1.0))
+        separation_score = float(np.clip((separation - 1.0) / 0.45, 0.0, 1.0))
+        consistency_score = float(np.clip(1.0 - max(outer_cv, inner_cv) / 0.35, 0.0, 1.0))
+        return (depth_score + separation_score + consistency_score) / 3.0
+
+    def _polygon_regularity(
+        self, approx: np.ndarray
+    ) -> tuple[float | None, float | None, float | None]:
+        if len(approx) < 3:
+            return None, None, None
+        points = approx.reshape(-1, 2).astype(np.float32)
+        sides = np.array(
+            [np.linalg.norm(points[(index + 1) % len(points)] - points[index]) for index in range(len(points))]
+        )
+        if float(np.mean(sides)) <= 0:
+            return None, None, None
+        angles = []
+        for index in range(len(points)):
+            before = points[(index - 1) % len(points)] - points[index]
+            after = points[(index + 1) % len(points)] - points[index]
+            denominator = float(np.linalg.norm(before) * np.linalg.norm(after))
+            if denominator <= 0:
+                return None, None, None
+            cosine = float(np.clip(np.dot(before, after) / denominator, -1.0, 1.0))
+            angles.append(float(np.degrees(np.arccos(cosine))))
+        return (
+            float(np.std(sides) / np.mean(sides)),
+            float(np.mean(angles)),
+            float(np.std(angles)),
+        )
+
+    def _classify_shape(
+        self,
+        vertices: int,
+        circularity: float,
+        aspect: float,
+        extent: float,
+        solidity: float,
+        rotated_aspect: float | None = None,
+        side_ratio: float | None = None,
+        max_angle_cosine: float | None = None,
+        *,
+        opposite_parallel_error: float | None = None,
+        opposite_side_ratio: float | None = None,
+        opposite_angle_error: float | None = None,
+        enclosing_fill: float | None = None,
+        ellipse_ratio: float | None = None,
+        radial_variation: float | None = None,
+        star_alternation: float | None = None,
+        side_cv: float | None = None,
+        angle_mean: float | None = None,
+        angle_std: float | None = None,
+        is_convex: bool | None = None,
+    ) -> tuple[str, float]:
         if vertices == 3:
             return SHAPE_TRIANGLE, 0.90
         if vertices == 4:
-            if 0.86 <= aspect <= 1.16:
-                return SHAPE_SQUARE, 0.88
-            return SHAPE_RECTANGLE, 0.86
+            square_aspect = rotated_aspect if rotated_aspect is not None else max(aspect, 1.0 / max(aspect, 0.001))
+            angles_are_square = max_angle_cosine is None or max_angle_cosine <= 0.07
+            perspective_rectangle = (
+                max_angle_cosine is not None
+                and max_angle_cosine <= 0.24
+                and opposite_angle_error is not None
+                and opposite_angle_error >= 0.10
+            )
+            angles_are_rectangular = (
+                max_angle_cosine is None
+                or max_angle_cosine <= 0.18
+                or perspective_rectangle
+            )
+            sides_are_balanced = side_ratio is None or side_ratio >= 0.78
+            opposite_sides_match = opposite_side_ratio is None or opposite_side_ratio >= 0.78
+            both_pairs_parallel = opposite_parallel_error is None or opposite_parallel_error <= 0.24
+            if square_aspect <= 1.16 and angles_are_square and sides_are_balanced and opposite_sides_match:
+                return SHAPE_SQUARE, max(0.82, 0.94 - abs(1.0 - square_aspect) * 0.5)
+            if square_aspect >= 1.18 and angles_are_rectangular and opposite_sides_match and both_pairs_parallel:
+                ratio_score = min(1.0, max(0.0, (square_aspect - 1.12) / 0.8))
+                return SHAPE_RECTANGLE, 0.82 + 0.10 * ratio_score
+            if both_pairs_parallel and opposite_sides_match and max_angle_cosine is not None and max_angle_cosine >= 0.18:
+                return SHAPE_PARALLELOGRAM, min(0.94, 0.76 + max_angle_cosine * 0.45)
+            return SHAPE_POLYGON, 0.68
         if vertices == 5:
-            return SHAPE_PENTAGON, 0.80
+            regular = (
+                (is_convex is None or is_convex)
+                and (side_cv is None or side_cv <= 0.18)
+                and (angle_mean is None or 96.0 <= angle_mean <= 120.0)
+                and (angle_std is None or angle_std <= 13.0)
+            )
+            return (SHAPE_PENTAGON, 0.88) if regular else (SHAPE_POLYGON, 0.52)
         if vertices == 6:
             return SHAPE_HEXAGON, 0.80
-        if solidity < 0.78 and vertices >= 8:
-            return SHAPE_STAR, 0.76
-        if circularity >= 0.74:
-            if 0.82 <= aspect <= 1.22:
-                return SHAPE_CIRCLE, min(0.95, 0.70 + circularity * 0.25)
+        star_like = (
+            vertices == 10
+            and solidity <= 0.78
+            and (rotated_aspect is None or rotated_aspect <= 1.80)
+            and (is_convex is None or not is_convex)
+            and (radial_variation is None or radial_variation >= 0.20)
+            and (star_alternation is None or star_alternation >= 0.55)
+        )
+        if star_like:
+            completeness = min(1.0, max(0.0, (vertices - 7) / 3.0))
+            return SHAPE_STAR, 0.72 + completeness * 0.16
+        circle_like = (
+            circularity >= 0.76
+            and solidity >= 0.94
+            and extent <= 0.86
+            and (enclosing_fill is None or enclosing_fill >= 0.76)
+            and (ellipse_ratio is None or ellipse_ratio >= 0.80)
+            and (radial_variation is None or radial_variation <= 0.14)
+        )
+        if circle_like:
+            if 0.76 <= aspect <= 1.32:
+                return SHAPE_CIRCLE, min(0.95, 0.72 + circularity * 0.24)
             return SHAPE_ELLIPSE, 0.82
         if vertices >= 7:
-            return SHAPE_POLYGON, 0.65
+            return SHAPE_POLYGON, 0.68
         return SHAPE_POLYGON, 0.45
 
     def _annotate(self, image: np.ndarray, detections: list[ShapeDetection]) -> np.ndarray:
@@ -326,7 +752,7 @@ class ShapeRecognitionApp:
             x1, y1, x2, y2 = det.box
             cv2.drawContours(out, [det.contour], -1, color, 3)
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-            label = f"shape {idx + 1} {det.confidence:.2f}"
+            label = f"{det.name} {det.confidence:.2f}"
             size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.68, 2)
             tw, th = size
             y0 = max(0, y1 - th - 16)
@@ -337,10 +763,8 @@ class ShapeRecognitionApp:
 
     def _set_results(self, detections: list[ShapeDetection]) -> None:
         if detections:
-            lines = []
-            for idx, d in enumerate(detections, 1):
-                lines.append(f"{idx}. {T_NAME}: {d.name}\n   {T_CENTER}: ({d.center[0]}, {d.center[1]})\n   {T_CONF}: {d.confidence:.2f}\n   {T_AREA}: {int(d.area)}")
-            text = "\n\n".join(lines)
+            lines = [f"{d.name_cn}（置信度 {round(d.confidence * 100)}%）" for d in detections]
+            text = "\n".join(lines)
         else:
             text = T_NO_SHAPE
         self.result_box.configure(state=tk.NORMAL)

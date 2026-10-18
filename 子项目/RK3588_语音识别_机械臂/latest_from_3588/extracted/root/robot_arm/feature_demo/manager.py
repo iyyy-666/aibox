@@ -175,12 +175,28 @@ class ModuleManager:
                 raise ModuleConflictError("请求停止的功能不是当前活动功能。")
             module = get_module(module_id)
             worker = self._worker
+            if module_id == "voice_transport" and worker is not None and self._state == ModuleState.RUNNING:
+                # Atomically close speech acceptance before process shutdown.
+                # A busy trajectory retains its process and all resource leases.
+                try:
+                    result = worker.command("prepare_exit", {})
+                except RuntimeError as error:
+                    # WorkerProcess raises on ok=False. A controlled refusal
+                    # preserves the running worker rather than producing HTTP500.
+                    return LifecycleResult(module_id, ModuleState.RUNNING,
+                        str(error), details=worker.snapshot())
+                if result.get("ok") is not True:
+                    return LifecycleResult(module_id, ModuleState.RUNNING,
+                        str(result.get("message") or "请等待机械臂安全结束后退出。"),
+                        details=worker.snapshot())
             self._state = ModuleState.STOPPING
+            cleanup_error = ""
             if worker is not None:
                 try:
                     worker.stop(self._stop_timeout)
                 except Exception as exc:
-                    self._last_error = str(exc)
+                    cleanup_error = str(exc)
+                    self._last_error = cleanup_error
             worker_pids = worker.pids if worker is not None else ()
             report = self._verifier.verify(module, worker_pids)
             if not report.ok:
@@ -192,10 +208,19 @@ class ModuleManager:
                     busy_resources=report.busy_resources,
                     details=worker.snapshot() if worker is not None else {},
                 )
+            details = worker.snapshot() if worker is not None else {}
             self._active_module = None
             self._worker = None
-            self._state = ModuleState.IDLE
             self._process_lock.release()
+            if cleanup_error:
+                self._state = ModuleState.CLEANUP_FAILED
+                return LifecycleResult(
+                    module_id,
+                    self._state,
+                    "功能停止过程中发生错误，但设备资源已释放。",
+                    details={**details, "cleanup_error": cleanup_error},
+                )
+            self._state = ModuleState.IDLE
             return LifecycleResult(module_id, ModuleState.IDLE, "功能已停止。")
 
     def snapshot(self) -> LifecycleResult:

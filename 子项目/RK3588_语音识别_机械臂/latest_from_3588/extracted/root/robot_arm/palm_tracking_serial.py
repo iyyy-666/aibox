@@ -22,6 +22,7 @@ class SerialGimbalClient:
         pwm_min: int,
         pwm_max: int,
         initial_pwm: int = 1500,
+        min_pitch_move_pwm: int = 0,
         serial_factory: Callable[..., serial.Serial] = serial.Serial,
     ) -> None:
         self.port = port
@@ -30,11 +31,25 @@ class SerialGimbalClient:
         self.pitch_id = pitch_id
         self.pwm_min = pwm_min
         self.pwm_max = pwm_max
+        self.min_pitch_move_pwm = max(0, int(min_pitch_move_pwm))
         self.yaw_pwm = initial_pwm
         self.pitch_pwm = initial_pwm
+        self.reload_position()
         self.last_error = ""
         self._serial_factory = serial_factory
         self._serial: serial.Serial | None = None
+
+    def reload_position(self) -> bool:
+        try:
+            with open(POSITION_STATE, encoding="utf-8") as fh:
+                saved_position = json.load(fh)
+            saved_yaw = self._clamp(int(saved_position["yaw"]))
+            saved_pitch = self._clamp(int(saved_position["pitch"]))
+        except (OSError, KeyError, TypeError, ValueError):
+            return False
+        self.yaw_pwm = saved_yaw
+        self.pitch_pwm = saved_pitch
+        return True
 
     def connect(self) -> tuple[bool, str]:
         if self._serial is not None and self._serial.is_open:
@@ -58,9 +73,15 @@ class SerialGimbalClient:
     def move(self, yaw_delta_pwm: int, pitch_delta_pwm: int, time_ms: int = 100) -> tuple[bool, str]:
         targets: list[tuple[int, int]] = []
         if yaw_delta_pwm:
-            targets.append((self.yaw_id, self._clamp(self.yaw_pwm + yaw_delta_pwm)))
+            yaw_target = self._clamp(self.yaw_pwm + yaw_delta_pwm)
+            if yaw_target != self.yaw_pwm:
+                targets.append((self.yaw_id, yaw_target))
         if pitch_delta_pwm:
-            targets.append((self.pitch_id, self._clamp(self.pitch_pwm + pitch_delta_pwm)))
+            pitch_target = self._clamp(self.pitch_pwm + pitch_delta_pwm)
+            if abs(pitch_target - self.pitch_pwm) >= self.min_pitch_move_pwm and (
+                pitch_target != self.pitch_pwm
+            ):
+                targets.append((self.pitch_id, pitch_target))
         if not targets:
             return True, "no movement requested"
 

@@ -256,8 +256,8 @@ class FruitRecognitionApp:
             and YOLO_SMALL_TARGET_IMG_SIZE > YOLO_IMG_SIZE
             and now >= next_small_target_at
         ):
-            self._next_small_target_at = now + SMALL_TARGET_INTERVAL_SEC
             detections = self._predict_fruits(image, YOLO_SMALL_TARGET_IMG_SIZE)
+            self._next_small_target_at = time.monotonic() + SMALL_TARGET_INTERVAL_SEC
         detections.sort(key=lambda d: d.confidence, reverse=True)
         return detections[:3]
 

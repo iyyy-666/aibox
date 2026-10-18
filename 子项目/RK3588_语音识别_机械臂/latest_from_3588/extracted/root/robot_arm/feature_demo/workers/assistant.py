@@ -70,33 +70,90 @@ class AssistantWorker:
         question = text.strip()
         if not question:
             raise ValueError("请输入问题")
-        turn = self.interrupt()
-        reply = self._generate(turn, question)
-        if turn != self._current_turn():
-            return {"ok": False, "interrupted": True}
-        with self._lock:
-            self._history.extend((("user", question), ("assistant", reply)))
-            self._history = self._history[-12:]
-        result = {"ok": True, "turn": turn, "text": reply}
-        self._emit({"type": "assistant_reply", **result})
+        turn = self.interrupt(status="generating")
+        try:
+            reply = self._generate(turn, question)
+        except Exception:
+            with self._lock:
+                if turn != self._turn:
+                    return {"ok": True, "interrupted": True}
+                self._emit(
+                    {
+                        "type": "assistant_status",
+                        "status": "error",
+                        "message": "生成失败，请重试。",
+                    }
+                )
+            raise
+        result = self._commit_reply(turn, question, reply)
+        if result is None:
+            return {"ok": True, "interrupted": True}
         self._queue_tts_latest(turn, reply)
         return result
 
+    def _commit_reply(self, turn: int, question: str, reply: str) -> dict | None:
+        with self._lock:
+            if turn != self._turn:
+                return None
+            self._history.extend((("user", question), ("assistant", reply)))
+            self._history = self._history[-12:]
+            result = {"ok": True, "turn": turn, "text": reply}
+            self._emit({"type": "assistant_reply", **result})
+            return result
+
     def start_listening(self) -> dict:
-        if self._voice is None:
-            self._voice = self._voice_factory(self.ask)
-        return self._voice.start_listening()
+        with self._lock:
+            turn = self._turn
+            if self._voice is None:
+                self._voice = self._voice_factory(self.ask)
+            voice = self._voice
+        result = voice.start_listening()
+        with self._lock:
+            if turn == self._turn and result.get("listening"):
+                self._emit(
+                    {
+                        "type": "assistant_status",
+                        "status": "listening",
+                        "message": "正在语音输入…",
+                    }
+                )
+        return result
 
     def stop_listening(self) -> dict:
-        return self._voice.stop_listening() if self._voice is not None else {"ok": True, "listening": False}
+        with self._lock:
+            turn = self._turn
+            voice = self._voice
+        result = voice.stop_listening() if voice is not None else {"ok": True, "listening": False}
+        with self._lock:
+            if turn == self._turn:
+                self._emit(
+                    {
+                        "type": "assistant_status",
+                        "status": "idle",
+                        "message": "语音输入已停止。",
+                    }
+                )
+        return result
 
-    def interrupt(self) -> int:
+    def interrupt(self, *, emit_status: bool = True, status: str = "idle") -> int:
         with self._lock:
             self._turn += 1
             turn = self._turn
-        self._clear_tts_queue()
-        self._playback.stop()
-        return turn
+            self._clear_tts_queue()
+            self._playback.stop()
+            if emit_status:
+                messages = {
+                    "generating": "模型正在生成…",
+                    "idle": "回答已停止。",
+                }
+                self._emit(
+                    {
+                        "type": "assistant_status",
+                        "status": status,
+                        "message": messages.get(status, "状态已更新。"),
+                    }
+                )
+            return turn
 
     def command(self, name: str, payload: dict) -> dict:
         if name == "ask":
@@ -118,8 +175,6 @@ class AssistantWorker:
         if self._tts_thread is not None:
             self._tts_queue.put(None)
             self._tts_thread.join(timeout=self._tts_join_timeout)
-            if self._tts_thread.is_alive():
-                raise TimeoutError("AI 语音播报停止超时。")
             self._tts_thread = None
         self._emit({"type": "stopped", "message": "中文 AI 助手已停止并释放资源。"})
 
@@ -191,11 +246,14 @@ class AssistantWorker:
         return "".join(pieces).strip() or "抱歉，我暂时无法生成回答。"
 
     def _queue_tts_latest(self, turn: int, text: str) -> None:
-        self._clear_tts_queue()
-        self._tts_queue.put((turn, text))
-        if self._tts_thread is None or not self._tts_thread.is_alive():
-            self._tts_thread = threading.Thread(target=self._tts_loop, daemon=True)
-            self._tts_thread.start()
+        with self._lock:
+            if turn != self._turn:
+                return
+            self._clear_tts_queue()
+            self._tts_queue.put((turn, text))
+            if self._tts_thread is None or not self._tts_thread.is_alive():
+                self._tts_thread = threading.Thread(target=self._tts_loop, daemon=True)
+                self._tts_thread.start()
 
     def _clear_tts_queue(self) -> None:
         while True:
@@ -214,14 +272,16 @@ class AssistantWorker:
                 continue
             try:
                 wav_path = self._tts_factory(text)
-                if turn != self._current_turn():
-                    Path(wav_path).unlink(missing_ok=True)
-                    continue
-                self._playback.play(wav_path, cleanup=True)
-                self._emit({"type": "speaking", "turn": turn, "message": "正在播报回答。"})
+                with self._lock:
+                    if turn != self._turn:
+                        Path(wav_path).unlink(missing_ok=True)
+                        continue
+                    self._playback.play(wav_path, cleanup=True)
+                    self._emit({"type": "speaking", "turn": turn, "message": "正在播报回答。"})
             except Exception as exc:
-                if turn == self._current_turn():
-                    self._emit({"type": "error", "message": str(exc)})
+                with self._lock:
+                    if turn == self._turn:
+                        self._emit({"type": "error", "message": str(exc)})
 
     def _emit(self, event: dict) -> None:
         self._last_event = dict(event)

@@ -109,6 +109,31 @@ def test_manual_gimbal_step_pauses_tracking_first():
     assert calls[0] == "tracking.pause"
 
 
+def test_palm_manual_gimbal_step_releases_button_service_after_command():
+    calls = []
+    gimbal = FakeGimbal(calls)
+
+    def manual_step(step):
+        result = step()
+        assert gimbal.closed is True
+        return result
+
+    worker = VisionWorker(
+        adapter=FakeVisionAdapter(calls),
+        camera_factory=lambda: FakeCamera(calls),
+        encode_frame=lambda frame: b"jpeg",
+        event_sink=lambda event: None,
+        gimbal=gimbal,
+        manual_gimbal_step=manual_step,
+    )
+    worker.start()
+
+    result = worker.command("gimbal_down", {"amount": 30})
+    worker.stop()
+
+    assert result["ok"] is True
+
+
 def test_capture_keeps_only_latest_frame_for_slow_processing():
     processed = []
     first_processing = threading.Event()

@@ -346,7 +346,13 @@ class RadarWorker:
         stop_error = None
         if self._robot_adapter is not None:
             try:
-                self._robot_adapter.stop_motion()
+                stop_for_shutdown = getattr(
+                    self._robot_adapter, "stop_motion_for_shutdown", None
+                )
+                if callable(stop_for_shutdown):
+                    stop_for_shutdown()
+                else:
+                    self._robot_adapter.stop_motion()
             except Exception as exc:
                 stop_error = exc
         with self._frames_condition:
@@ -380,7 +386,11 @@ class RadarWorker:
 
                 def disconnect_robot() -> None:
                     try:
-                        self._robot_adapter.disconnect()
+                        shutdown = getattr(self._robot_adapter, "shutdown", None)
+                        if callable(shutdown):
+                            shutdown()
+                        else:
+                            self._robot_adapter.disconnect()
                     except Exception as exc:
                         disconnect_error.append(exc)
 

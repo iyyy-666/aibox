@@ -32,9 +32,11 @@ class RobotWorker:
 
     def stop(self) -> None:
         try:
-            self.stop_motion()
+            self._adapter.shutdown()
         finally:
-            self.disconnect()
+            if self._started:
+                self._started = False
+                self._emit({"type": "stopped", "message": "机械臂已停止并断开连接。"})
 
     def stop_motion(self) -> None:
         if self._started:

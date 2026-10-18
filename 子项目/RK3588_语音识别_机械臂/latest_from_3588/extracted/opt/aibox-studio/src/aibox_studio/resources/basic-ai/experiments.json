@@ -1,0 +1,135 @@
+{
+  "parts": [
+    {
+      "id": "intro",
+      "title": "第一篇 实验箱入门",
+      "order": 1,
+      "chapters": [
+        {
+          "id": "intro.box",
+          "title": "第一章 认识AI智能试验箱",
+          "order": 1,
+          "experiments": [
+            {"id":"intro.box.01","number":1,"title":"认识AI智能试验箱","description":"认识实验箱主要模块，并让机械臂回到安全初始状态。","template":"templates/arm_reset.py","allowed_imports":["aibox"],"capabilities":["arm.reset"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+            {"id":"intro.software.01","number":2,"title":"认识实验箱软件","description":"熟悉课程导航、代码编辑区、效果区和运行结果区。","template":"templates/arm_reset.py","allowed_imports":["aibox"],"capabilities":["arm.reset"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+            {"id":"intro.first-run.01","number":3,"title":"启动第一个实验","description":"运行第一段 aibox 程序。","template":"templates/arm_reset.py","allowed_imports":["aibox"],"capabilities":["arm.reset"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vision",
+      "title": "第二篇 AI视觉实验",
+      "order": 2,
+      "chapters": [
+        {"id":"vision.color","title":"第二章 颜色识别","order":2,"experiments":[
+          {"id":"vision.color.01","number":4,"title":"体验颜色识别","description":"调用颜色识别并观察实时画面。","template":"templates/vision_color.py","allowed_imports":["aibox"],"capabilities":["vision.color"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.color.02","number":5,"title":"调用颜色识别函数","description":"学习 Vision.color() 的调用方法。","template":"templates/vision_color.py","allowed_imports":["aibox"],"capabilities":["vision.color"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.color.03","number":6,"title":"更换颜色进行识别","description":"更换物块颜色并比较识别结果。","template":"templates/vision_color.py","allowed_imports":["aibox"],"capabilities":["vision.color"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]},
+        {"id":"vision.fruit","title":"第三章 水果识别","order":3,"experiments":[
+          {"id":"vision.fruit.01","number":7,"title":"体验水果识别","description":"调用水果识别并观察结果。","template":"templates/vision_fruit.py","allowed_imports":["aibox"],"capabilities":["vision.fruit"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.fruit.02","number":8,"title":"调用水果识别函数","description":"学习 Vision.fruit() 的调用方法。","template":"templates/vision_fruit.py","allowed_imports":["aibox"],"capabilities":["vision.fruit"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.fruit.03","number":9,"title":"更换水果进行识别","description":"更换水果并比较识别结果。","template":"templates/vision_fruit.py","allowed_imports":["aibox"],"capabilities":["vision.fruit"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]},
+        {"id":"vision.classify","title":"第四章 物体分类","order":4,"experiments":[
+          {"id":"vision.classify.01","number":10,"title":"体验物体分类","description":"调用物体分类并观察类别。","template":"templates/vision_classify.py","allowed_imports":["aibox"],"capabilities":["vision.classify"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.classify.02","number":11,"title":"调用物体分类函数","description":"学习 Vision.classify() 的调用方法。","template":"templates/vision_classify.py","allowed_imports":["aibox"],"capabilities":["vision.classify"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.classify.03","number":12,"title":"更换物体进行分类","description":"更换物体并比较分类结果。","template":"templates/vision_classify.py","allowed_imports":["aibox"],"capabilities":["vision.classify"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]},
+        {"id":"vision.shape","title":"第五章 形状识别","order":5,"experiments":[
+          {"id":"vision.shape.01","number":13,"title":"体验形状识别","description":"调用形状识别并观察轮廓。","template":"templates/vision_shape.py","allowed_imports":["aibox"],"capabilities":["vision.shape"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.shape.02","number":14,"title":"调用形状识别函数","description":"学习 Vision.shape() 的调用方法。","template":"templates/vision_shape.py","allowed_imports":["aibox"],"capabilities":["vision.shape"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"vision.shape.03","number":15,"title":"更换形状进行识别","description":"更换教具形状并比较识别结果。","template":"templates/vision_shape.py","allowed_imports":["aibox"],"capabilities":["vision.shape"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"human-vision","title":"第三篇 人体视觉交互实验","order":3,"chapters":[
+        {"id":"face.detect","title":"第六章 人脸检测","order":6,"experiments":[
+          {"id":"face.detect.01","number":16,"title":"体验人脸检测","description":"观察摄像头中的人脸检测框。","template":"templates/face_detect.py","allowed_imports":["aibox"],"capabilities":["face.detect"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"face.detect.02","number":17,"title":"调用人脸检测函数","description":"学习 Face.detect() 的调用方法。","template":"templates/face_detect.py","allowed_imports":["aibox"],"capabilities":["face.detect"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"face.detect.03","number":18,"title":"改变人数进行检测","description":"改变画面人数并比较检测数量。","template":"templates/face_detect.py","allowed_imports":["aibox"],"capabilities":["face.detect"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]},
+        {"id":"hand.gesture","title":"第七章 手掌与手势识别","order":7,"experiments":[
+          {"id":"hand.gesture.01","number":19,"title":"体验手势识别","description":"识别石头、剪刀、布等手势。","template":"templates/hand_gesture.py","allowed_imports":["aibox"],"capabilities":["hand.gesture"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"hand.gesture.02","number":20,"title":"调用手势识别函数","description":"学习 Hand.gesture() 的调用方法。","template":"templates/hand_gesture.py","allowed_imports":["aibox"],"capabilities":["hand.gesture"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"hand.gesture.03","number":21,"title":"尝试不同手势","description":"更换手势并观察识别文字。","template":"templates/hand_gesture.py","allowed_imports":["aibox"],"capabilities":["hand.gesture"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536}
+        ]},
+        {"id":"hand.track","title":"第八章 手掌跟踪","order":8,"experiments":[
+          {"id":"hand.track.01","number":22,"title":"体验手掌跟踪","description":"启动手掌跟踪并观察云台。","template":"templates/hand_track.py","allowed_imports":["aibox"],"capabilities":["hand.track"],"resources":["camera","gimbal","npu"],"panel":"camera","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"hand.track.02","number":23,"title":"调用手掌跟踪函数","description":"学习 Hand.track() 的调用方法。","template":"templates/hand_track.py","allowed_imports":["aibox"],"capabilities":["hand.track"],"resources":["camera","gimbal","npu"],"panel":"camera","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"hand.track.03","number":24,"title":"移动手掌观察结果","description":"移动手掌并观察云台跟踪。","template":"templates/hand_track.py","allowed_imports":["aibox"],"capabilities":["hand.track"],"resources":["camera","gimbal","npu"],"panel":"camera","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"voice-ai","title":"第四篇 语音AI实验","order":4,"chapters":[
+        {"id":"voice.listen","title":"第九章 语音输入","order":9,"experiments":[
+          {"id":"voice.listen.01","number":25,"title":"体验语音输入","description":"通过麦克风识别中文语音。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice.listen.02","number":26,"title":"调用语音输入函数","description":"学习 Voice.listen() 的调用方法。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice.listen.03","number":27,"title":"改变说话内容","description":"说出不同中文内容并观察文字。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+        ]},
+        {"id":"ai.chat","title":"第十章 AI对话助手","order":10,"experiments":[
+          {"id":"ai.chat.01","number":28,"title":"体验AI对话","description":"向本地离线 AI 提出问题。","template":"templates/ai_chat.py","allowed_imports":["aibox"],"capabilities":["ai.chat"],"resources":["llm","npu"],"panel":"assistant","run_mode":"oneshot","timeout_seconds":90,"output_limit_bytes":65536},
+          {"id":"ai.chat.02","number":29,"title":"调用AI对话函数","description":"学习 AI.chat() 的调用方法。","template":"templates/ai_chat.py","allowed_imports":["aibox"],"capabilities":["ai.chat"],"resources":["llm","npu"],"panel":"assistant","run_mode":"oneshot","timeout_seconds":90,"output_limit_bytes":65536},
+          {"id":"ai.chat.03","number":30,"title":"修改AI提问内容","description":"修改问题并观察本地 AI 回答。","template":"templates/ai_chat.py","allowed_imports":["aibox"],"capabilities":["ai.chat"],"resources":["llm","npu"],"panel":"assistant","run_mode":"oneshot","timeout_seconds":90,"output_limit_bytes":65536}
+        ]},
+        {"id":"voice.speak","title":"第十一章 语音AI播放","order":11,"experiments":[
+          {"id":"voice.speak.01","number":31,"title":"体验语音AI播放","description":"让实验箱通过声卡朗读文字。","template":"templates/voice_speak.py","allowed_imports":["aibox"],"capabilities":["voice.speak"],"resources":["speaker","tts"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice.speak.02","number":32,"title":"调用语音播放函数","description":"学习 Voice.speak() 的调用方法。","template":"templates/voice_speak.py","allowed_imports":["aibox"],"capabilities":["voice.speak"],"resources":["speaker","tts"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice.speak.03","number":33,"title":"选择不同播放内容","description":"修改代码中的文字并再次播放。","template":"templates/voice_speak.py","allowed_imports":["aibox"],"capabilities":["voice.speak"],"resources":["speaker","tts"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"arm","title":"第五篇 机械臂控制实验","order":5,"chapters":[
+        {"id":"arm.buttons","title":"第十二章 按钮控制机械臂","order":12,"experiments":[
+          {"id":"arm.experience.01","number":34,"title":"体验机械臂","description":"让机械臂复位并进入直立姿态。","template":"templates/arm_experience.py","allowed_imports":["aibox"],"capabilities":["arm.reset","arm.pose"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.actions.01","number":35,"title":"认识机械臂动作","description":"体验预设姿态、动作组和夹爪动作。","template":"templates/arm_actions.py","allowed_imports":["aibox"],"capabilities":["arm.pose","arm.action","arm.open","arm.half_open","arm.close"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.call.01","number":36,"title":"调用机械臂函数","description":"调用 pose() 让机械臂直立。","template":"templates/arm_pose.py","allowed_imports":["aibox"],"capabilities":["arm.pose"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+        ]},
+        {"id":"arm.programming","title":"第十三章 机械臂简单编程","order":13,"experiments":[
+          {"id":"arm.open.01","number":37,"title":"让机械臂打开","description":"调用 open() 张开夹爪。","template":"templates/arm_open.py","allowed_imports":["aibox"],"capabilities":["arm.open"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.close.01","number":38,"title":"让机械臂闭合","description":"调用 close() 闭合夹爪。","template":"templates/arm_close.py","allowed_imports":["aibox"],"capabilities":["arm.close"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.pick.01","number":39,"title":"让机械臂抓取","description":"调用抓取动作组。","template":"templates/arm_pick.py","allowed_imports":["aibox"],"capabilities":["arm.action"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.move.01","number":40,"title":"让机械臂移动","description":"在安全范围内微调 6 个舵机。","template":"templates/arm_servo.py","allowed_imports":["aibox"],"capabilities":["arm.adjust","arm.servo"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.sequence.02","number":41,"title":"连续执行两个动作","description":"按顺序执行直立和张开。","template":"templates/arm_sequence_two.py","allowed_imports":["aibox"],"capabilities":["arm.pose","arm.open"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"arm.sequence.03","number":42,"title":"连续执行三个动作","description":"按顺序执行直立、张开和抓取。","template":"templates/arm_sequence_three.py","allowed_imports":["aibox"],"capabilities":["arm.pose","arm.open","arm.action"],"resources":["robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"voice-arm","title":"第六篇 语音控制实验","order":6,"chapters":[
+        {"id":"voice-arm.control","title":"第十四章 语音控制机械臂","order":14,"experiments":[
+          {"id":"voice-arm.experience.01","number":43,"title":"体验语音控制机械臂","description":"识别功能演示已有命令并控制机械臂。","template":"templates/voice_arm.py","allowed_imports":["aibox"],"capabilities":["voice.listen","arm.command"],"resources":["microphone","asr","robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice-arm.command.01","number":44,"title":"认识语音控制指令","description":"识别并显示机械臂语音指令。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice-arm.call.01","number":45,"title":"调用语音函数","description":"调用 listen() 获取语音文字。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"voice-arm.control.01","number":46,"title":"语音控制机械臂动作","description":"将识别文字交给机械臂固定命令表。","template":"templates/voice_arm.py","allowed_imports":["aibox"],"capabilities":["voice.listen","arm.command"],"resources":["microphone","asr","robot"],"panel":"arm","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"lidar","title":"第七篇 雷达模块实验","order":7,"chapters":[
+        {"id":"lidar.detect","title":"第十五章 雷达检测","order":15,"experiments":[
+          {"id":"lidar.show.01","number":47,"title":"体验雷达检测","description":"调用雷达扫描并读取距离。","template":"templates/lidar_show.py","allowed_imports":["aibox"],"capabilities":["lidar.show","lidar.get_distance"],"resources":["lidar"],"panel":"radar","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"lidar.show.02","number":48,"title":"调用雷达检测函数","description":"学习 Lidar 的简单调用方法。","template":"templates/lidar_show.py","allowed_imports":["aibox"],"capabilities":["lidar.show","lidar.get_distance"],"resources":["lidar"],"panel":"radar","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"lidar.show.03","number":49,"title":"观察雷达检测结果","description":"观察扫描图与毫米距离。","template":"templates/lidar_show.py","allowed_imports":["aibox"],"capabilities":["lidar.show","lidar.get_distance"],"resources":["lidar"],"panel":"radar","run_mode":"observe","timeout_seconds":60,"output_limit_bytes":65536}
+        ]}
+      ]
+    },
+    {
+      "id":"fun","title":"第八篇 趣味AI实验","order":8,"chapters":[
+        {"id":"fun.apps","title":"第十六章 AI趣味应用","order":16,"experiments":[
+          {"id":"fun.ai-sentence.01","number":50,"title":"让AI说一句话","description":"修改文字，让实验箱通过声卡朗读。","template":"templates/fun_speak.py","allowed_imports":["aibox"],"capabilities":["voice.speak"],"resources":["speaker","tts"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"fun.arm-open-speak.01","number":51,"title":"机械臂打开后说话","description":"组合机械臂和离线语音播放。","template":"templates/arm_open_speak.py","allowed_imports":["aibox"],"capabilities":["arm.open","voice.speak"],"resources":["robot","speaker","tts"],"panel":"arm","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"fun.arm-close-speak.01","number":52,"title":"机械臂闭合后说话","description":"机械臂闭合后由声卡播报。","template":"templates/arm_close_speak.py","allowed_imports":["aibox"],"capabilities":["arm.close","voice.speak"],"resources":["robot","speaker","tts"],"panel":"arm","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"fun.color-print.01","number":53,"title":"识别颜色并显示结果","description":"识别颜色并用 print() 显示。","template":"templates/vision_color.py","allowed_imports":["aibox"],"capabilities":["vision.color"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"fun.fruit-print.01","number":54,"title":"识别水果并显示结果","description":"识别水果并用 print() 显示。","template":"templates/vision_fruit.py","allowed_imports":["aibox"],"capabilities":["vision.fruit"],"resources":["camera","npu"],"panel":"camera","run_mode":"oneshot","timeout_seconds":60,"output_limit_bytes":65536},
+          {"id":"fun.voice-print.01","number":55,"title":"语音输入并显示文字","description":"识别语音并打印文字。","template":"templates/voice_listen.py","allowed_imports":["aibox"],"capabilities":["voice.listen"],"resources":["microphone","asr"],"panel":"voice","run_mode":"oneshot","timeout_seconds":30,"output_limit_bytes":65536},
+          {"id":"fun.ai-answer.01","number":56,"title":"让AI回答一个简单问题","description":"调用本地 AI 并打印回答。","template":"templates/ai_chat.py","allowed_imports":["aibox"],"capabilities":["ai.chat"],"resources":["llm","npu"],"panel":"assistant","run_mode":"oneshot","timeout_seconds":90,"output_limit_bytes":65536}
+        ]}
+      ]
+    }
+  ]
+}

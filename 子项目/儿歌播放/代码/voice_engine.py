@@ -794,6 +794,8 @@ class VoiceEngine:
                 trigger_frames = 0
             else:
                 trigger_frames = 0
+
+            if speaking:
                 fast_done = (
                     captured_samples >= min_samples
                     and captured_samples <= short_utterance_samples

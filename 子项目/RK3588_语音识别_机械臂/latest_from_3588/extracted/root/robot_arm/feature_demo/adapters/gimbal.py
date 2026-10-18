@@ -11,6 +11,9 @@ class UnsupportedCommand(ValueError):
 
 
 class GimbalServiceProtocol(Protocol):
+    @property
+    def position(self) -> tuple[int, int]: ...
+
     def move(
         self,
         axis: str,
@@ -27,6 +30,9 @@ DIRECTION_MAP = {
     "left": ("yaw", -1),
     "right": ("yaw", 1),
 }
+
+PITCH_MIN = 500
+PITCH_MAX = 2500
 
 
 def _load_existing_service() -> GimbalServiceProtocol:
@@ -53,6 +59,22 @@ class GimbalAdapter:
         step_pwm = max(1, min(500, int(amount)))
         if self._service is None:
             self._service = _load_existing_service()
+        if axis == "pitch":
+            pitch = int(self._service.position[1])
+            if sign < 0 and pitch <= PITCH_MIN:
+                return {
+                    "ok": False,
+                    "direction": direction,
+                    "amount": step_pwm,
+                    "message": "云台已到上限。",
+                }
+            if sign > 0 and pitch >= PITCH_MAX:
+                return {
+                    "ok": False,
+                    "direction": direction,
+                    "amount": step_pwm,
+                    "message": "云台已到下限。",
+                }
         ok, detail = self._service.move(
             axis,
             sign,
@@ -64,6 +86,36 @@ class GimbalAdapter:
             "direction": direction,
             "amount": step_pwm,
             "message": "云台已步进。" if ok else f"云台通信失败：{detail}",
+        }
+
+    def move_to(self, yaw: int, pitch: int) -> dict:
+        targets = (int(yaw), int(pitch))
+        if any(target < 500 or target > 2500 for target in targets):
+            return {"ok": False, "message": "云台目标位置超出安全范围。"}
+        if self._service is None:
+            self._service = _load_existing_service()
+        for index, (axis, target) in enumerate(zip(("yaw", "pitch"), targets)):
+            while True:
+                current = int(self._service.position[index])
+                if current == target:
+                    break
+                direction = 1 if target > current else -1
+                step_pwm = min(150, abs(target - current))
+                ok, detail = self._service.move(
+                    axis,
+                    direction,
+                    step_pwm=step_pwm,
+                    time_ms=650,
+                )
+                if not ok:
+                    return {"ok": False, "message": f"云台通信失败：{detail}"}
+                if int(self._service.position[index]) == current:
+                    return {"ok": False, "message": "云台位置未更新。"}
+        return {
+            "ok": True,
+            "yaw": targets[0],
+            "pitch": targets[1],
+            "message": "云台已到达物体分拣位置。",
         }
 
     def close(self) -> None:

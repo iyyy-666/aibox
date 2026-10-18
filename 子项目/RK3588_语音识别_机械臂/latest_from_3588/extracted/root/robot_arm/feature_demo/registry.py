@@ -70,16 +70,6 @@ MODULES = (
         "palm_tracking",
         commands=("start_tracking", "stop_tracking"),
     ),
-    ModuleDefinition(
-        module_id="voice_input_test",
-        name="语音输入测试",
-        description="查看麦克风采集、原始识别文本与规范化结果。",
-        category="语音交互",
-        worker="voice_input_test",
-        resources=("microphone", "asr"),
-        commands=("start_listening", "stop_listening"),
-        startup_timeout=60.0,
-    ),
     _visual(
         "fruit_recognition",
         "水果识别",
@@ -135,6 +125,26 @@ MODULES = (
         worker="voice_robot_arm",
         resources=("microphone", "asr", "robot"),
         commands=("start_listening", "stop_listening", "stop_motion"),
+    ),
+    ModuleDefinition(
+        module_id="radar_detection",
+        name="雷达检测",
+        description="读取 A1M8 原始扫描数据，比较固定区域的多帧基准并判断物块。",
+        category="传感器实验",
+        worker="radar_detection",
+        resources=("radar", "robot"),
+        commands=("build_baseline", "start_detection", "stop_detection", "transfer"),
+    ),
+    ModuleDefinition(
+        module_id="voice_transport",
+        name="语音控制搬运物块",
+        description="说出目标颜色，确认固定区域物块后执行一次既有搬运动作。",
+        category="机械臂",
+        worker="voice_transport",
+        resources=("camera", "gimbal", "robot", "microphone", "asr"),
+        commands=("start_listening", "stop_listening"),
+        visual=True,
+        startup_timeout=60.0,
     ),
 )
 

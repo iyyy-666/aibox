@@ -17,10 +17,12 @@ const appState = {
   toastTimer: null,
   commandRequestPending: false,
   lifecycleControlsDisabled: false,
+  workerEventSequence: 0,
   radarScan: { points: [], valid: false, latestAngle: null, region: RADAR_DETECTION_REGION },
   radarDataReady: false,
   radarBaselineReady: false,
   radarError: null,
+  transportStatus: null,
 };
 
 let radarResizeObserver = null;
@@ -34,7 +36,6 @@ const iconByModule = {
   plate_recognition: "scan",
   palm_recognition: "hand",
   palm_tracking: "target",
-  voice_input_test: "mic",
   fruit_recognition: "fruit",
   color_recognition: "palette",
   face_detection: "face",
@@ -43,6 +44,7 @@ const iconByModule = {
   shape_recognition: "shapes",
   voice_robot_arm: "audio",
   radar_detection: "scan",
+  voice_transport: "audio",
 };
 
 const accentByCategory = {
@@ -130,6 +132,7 @@ async function openModule(moduleId) {
   const module = appState.modules.find((item) => item.module_id === moduleId);
   if (!module || appState.active) return;
   appState.active = module;
+  appState.workerEventSequence = 0;
   renderModuleShell(module);
   showModuleView();
   updateLifecycle({ state: "starting", message: "正在加载模型并连接所需设备…" });
@@ -202,6 +205,10 @@ function renderModuleShell(module) {
 
   const visual = document.querySelector("[data-visual-workspace]");
   const commands = document.querySelector("[data-command-workspace]");
+  const transport = module.module_id === "voice_transport";
+  appState.transportStatus = null;
+  visual.classList.toggle("transport-workspace", transport);
+  document.querySelector(".gimbal-panel").hidden = transport;
   visual.hidden = !module.visual;
   commands.hidden = module.visual;
   if (module.visual) renderVisualActions(module);
@@ -211,6 +218,18 @@ function renderModuleShell(module) {
 
 function renderVisualActions(module) {
   const list = document.querySelector("[data-visual-actions]");
+  if (module.module_id === "voice_transport") {
+    list.innerHTML = `<button type="button" class="command-button" data-command="start_listening">开启监听</button>
+      <button type="button" class="command-button is-secondary" data-command="stop_listening">停止监听</button>
+      <div class="transport-status" role="status" aria-live="polite"><strong data-transport-listening>未监听</strong><p data-transport-flow>等待初始化。</p></div>
+      <dl class="transport-details"><div><dt>语音原文</dt><dd data-transport-raw>等待语音输入。</dd></div>
+      <div><dt>目标颜色</dt><dd data-transport-color>未指定</dd></div>
+      <div><dt>物块确认</dt><dd data-transport-block>等待检测</dd></div>
+      <div><dt>执行状态</dt><dd data-transport-phase>初始化中</dd></div></dl>
+      <p class="control-hint" data-transport-completion>等待检查完成判据。</p>
+      <p class="control-hint">请说“搬运蓝色物块到传送带上”。每次开启监听接收一条有效指令。停止监听只停止语音输入。</p>`;
+    return;
+  }
   const commands = module.commands.filter((name) => !name.startsWith("gimbal_"));
   list.replaceChildren(...commands.map((name) => {
     const button = document.createElement("button");
@@ -224,7 +243,9 @@ function renderVisualActions(module) {
 }
 
 function renderInstructions(module) {
-  const steps = module.visual
+  const steps = module.module_id === "voice_transport"
+    ? ["等待摄像头定位和机械臂直立完成", "点击开启监听，说出完整颜色搬运指令", "确认物块后执行一次搬运并恢复直立", "再次开启监听；等待动作安全结束后退出"]
+    : module.visual
     ? ["等待摄像头和识别模型就绪", "将目标放入画面中进行识别", "根据结果进行保存、跟踪或分拣", "退出功能后等待资源释放"]
     : ["等待功能和所需设备就绪", "使用右侧控件开始交互", "在实验记录中查看执行结果", "完成后退出并等待资源释放"];
   const list = document.querySelector("[data-instructions]");
@@ -257,7 +278,7 @@ function renderCommandWorkspace(module, accent, soft) {
   document.querySelector("[data-interaction-title]").textContent = module.name;
   document.querySelector("[data-interaction-copy]").textContent = module.description;
   const list = document.querySelector("[data-command-list]");
-  if (["ai_assistant", "voice_input_test", "nursery_rhyme", "robot_button", "voice_robot_arm", "radar_detection"].includes(module.module_id)) {
+  if (["ai_assistant", "nursery_rhyme", "robot_button", "voice_robot_arm", "radar_detection"].includes(module.module_id)) {
     list.classList.add("nonvisual-controls");
     if (module.module_id === "radar_detection") {
       resetRadarState();
@@ -285,8 +306,7 @@ function nonVisualControls(moduleId) {
   const button = (command, label, extra = "", secondary = false) => `<button type="button" class="command-button${secondary ? " is-secondary" : ""}" data-command="${command}" ${extra}>${label}</button>`;
   const listening = () => `<div class="command-row" aria-label="语音监听控制">${button("start_listening", "开始监听")}${button("stop_listening", "停止监听", "", true)}</div>`;
   if (moduleId === "radar_detection") return `<fieldset class="control-group radar-controls"><legend>雷达检测</legend><div class="radar-console"><div class="radar-screen"><canvas data-radar-canvas aria-label="实时雷达扫描图，零度朝上，角度顺时针增加，最大距离八米"></canvas><span class="radar-screen-label">实时扫描 · 8 m</span></div><div class="radar-control-column"><div class="radar-result-strip" aria-live="polite"><strong data-radar-result>雷达数据无效</strong><span data-radar-data-status>等待有效扫描数据</span></div><dl class="radar-status-grid"><div><dt>雷达状态</dt><dd data-radar-connection>未连接</dd></div><div><dt>扫描就绪</dt><dd data-radar-readiness>有效扫描 0/5</dd></div><div><dt>基准状态</dt><dd data-radar-baseline>未建立</dd></div><div><dt>检测状态</dt><dd data-radar-detection>未开始</dd></div><div><dt>传输速率</dt><dd data-radar-byte-rate>0 B/s</dd></div><div><dt>测距点率</dt><dd data-radar-point-rate>0 点/s</dd></div><div><dt>旋转速度</dt><dd data-radar-rotation-rate>0 Hz / 0 RPM</dd></div><div><dt>最近一帧</dt><dd data-radar-last-frame>0 点 / -- ms</dd></div></dl><div class="command-row">${button("build_baseline", "建立基准")}${button("start_detection", "开始检测")}${button("stop_detection", "停止检测", "", true)}${button("transfer", "搬运")}</div><section class="worker-output radar-details"><h3>检测参数</h3><dl><div><dt>固定位置</dt><dd data-radar-location>等待检测</dd></div><div><dt>检测区域</dt><dd><span data-radar-angle>180° ~ 240°</span> / <span data-radar-distance>300 ~ 2000 mm</span></dd></div><div><dt>当前变化程度</dt><dd data-radar-change>0%</dd></div><div><dt>变化阈值</dt><dd data-radar-threshold>35%</dd></div><div><dt>连续确认</dt><dd data-radar-confirmation>0 / 3</dd></div></dl></section></div></div></fieldset>`;
-  if (moduleId === "ai_assistant") return `<fieldset class="control-group"><legend>文字与语音对话</legend><label for="assistant-prompt">请输入问题</label><textarea id="assistant-prompt" data-assistant-text rows="3" maxlength="500" aria-describedby="assistant-hint" placeholder="例如：什么是图像识别？"></textarea><p id="assistant-hint" class="control-hint">支持文字输入，也可开启语音监听。</p><div class="command-row">${button("ask", "发送问题")}${button("interrupt", "停止回答", "", true)}</div>${listening()}<section class="worker-output" aria-labelledby="dialogue-title"><h3 id="dialogue-title">对话记录</h3><div data-dialogue role="log" aria-live="polite">等待提问。</div></section></fieldset>`;
-  if (moduleId === "voice_input_test") return `<fieldset class="control-group"><legend>语音输入测试</legend>${listening()}<section class="worker-output" aria-live="polite"><h3>识别结果</h3><dl><div><dt>原始文本</dt><dd data-raw>等待语音输入。</dd></div><div><dt>规范文本</dt><dd data-normalized>等待语音输入。</dd></div></dl></section></fieldset>`;
+  if (moduleId === "ai_assistant") return `<fieldset class="control-group"><legend>文字与语音对话</legend><p class="assistant-status" data-assistant-status data-state="idle" role="status" aria-live="assertive">等待文字或语音输入</p><label for="assistant-prompt">请输入问题</label><textarea id="assistant-prompt" data-assistant-text rows="3" maxlength="500" aria-describedby="assistant-hint" placeholder="例如：什么是图像识别？"></textarea><p id="assistant-hint" class="control-hint">支持文字输入，也可开启语音监听。</p><div class="command-row">${button("ask", "发送问题")}${button("interrupt", "停止回答", "", true)}</div>${listening()}<section class="worker-output" aria-labelledby="dialogue-title"><h3 id="dialogue-title">对话记录</h3><div data-dialogue role="log" aria-live="polite">等待提问。</div></section></fieldset>`;
   if (moduleId === "nursery_rhyme") return `<fieldset class="control-group"><legend>儿歌播放</legend><div class="command-row" aria-label="选择儿歌">${button("play", "播放小星星", 'data-song-id="twinkle"')}${button("play", "播放两只老虎", 'data-song-id="two_tigers"')}${button("stop_playback", "停止播放", "", true)}</div>${listening()}<section class="worker-output" aria-live="polite"><h3>当前播放</h3><p data-current-song>尚未选择儿歌。</p><div data-lyrics>歌词将在播放时显示。</div></section></fieldset>`;
   if (moduleId === "robot_button") return `<fieldset class="control-group"><legend>机械臂动作</legend><div class="control-section"><h3>预设动作</h3><div class="command-row">${button("pose", "直立", 'data-pose="直立"')}${button("pose", "放平", 'data-pose="放平"')}${button("sequence", "抓取", 'data-sequence="抓取"')}${button("sequence", "搬运", 'data-sequence="搬运"')}</div></div><div class="control-section"><h3>关节微调</h3><div class="joint-controls">${[0,1,2,3,4,5].map((id) => `<div class="joint-row"><span>关节 ${id + 1}</span>${button("joint_step", "减小", `data-servo-id="${id}" data-delta="-30"`, true)}${button("joint_step", "增大", `data-servo-id="${id}" data-delta="30"`)}</div>`).join("")}</div></div><div class="control-section"><h3>夹爪控制</h3><div class="command-row">${button("gripper", "张开", 'data-gripper="open"')}${button("gripper", "半开", 'data-gripper="half"')}${button("gripper", "闭合", 'data-gripper="close"')}${button("stop_motion", "停止动作", "", true)}</div></div></fieldset>`;
   return `<fieldset class="control-group"><legend>语音控制机械臂</legend>${listening()}<div class="command-row">${button("stop_motion", "紧急停止", "", true)}</div><section class="worker-output" aria-live="polite"><h3>语音执行结果</h3><div data-voice-result>等待语音指令。</div></section></fieldset>`;
@@ -306,10 +326,20 @@ function showHomeView() {
   document.querySelector("[data-page-title]").textContent = "功能演示";
   document.querySelector("[data-global-status]").textContent = "等待选择功能";
   appState.active = null;
+  appState.workerEventSequence = 0;
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function updateLifecycle(snapshot) {
+  if (appState.active?.module_id === "voice_transport" && snapshot.state === "running") {
+    const transport = snapshot.details;
+    if (transport && ["initializing", "positioning", "standing", "initialization_error", "fault"].includes(transport.phase)) {
+      document.querySelector("[data-status-title]").textContent = transport.locked ? "需要人工检查" : "初始化尚未完成";
+      document.querySelector("[data-status-message]").textContent = transport.message;
+      renderWorkerDetails(transport);
+      return;
+    }
+  }
   const labels = {
     idle: "已停止",
     starting: "正在准备",
@@ -517,8 +547,9 @@ const visualNameMaps = {
     Cyan: "青色", Blue: "蓝色", Purple: "紫色", Pink: "粉色",
   },
   shape_recognition: {
-    Triangle: "三角形", Square: "正方形", Rectangle: "矩形", Circle: "圆形",
-    Ellipse: "椭圆形", Pentagon: "五边形", Hexagon: "六边形", Star: "星形", Polygon: "多边形",
+    Triangle: "三角形", Square: "正方形", Rectangle: "长方形", Parallelogram: "斜平行四边形",
+    Circle: "圆形", Ellipse: "椭圆形", Pentagon: "正五边形", Hexagon: "六边形",
+    Star: "星形", Polygon: "多边形",
   },
 };
 
@@ -585,13 +616,63 @@ function formatVisualResults(moduleId, result) {
 }
 
 function renderWorkerDetails(details) {
+  if (Array.isArray(details.recent_events)) {
+    const unseenEvents = details.recent_events
+      .filter((event) => {
+        const sequence = Number(event._sequence);
+        return Number.isFinite(sequence) && sequence > appState.workerEventSequence;
+      })
+      .sort((left, right) => Number(left._sequence) - Number(right._sequence));
+    unseenEvents.forEach((event) => {
+      renderWorkerEvent(event);
+      appState.workerEventSequence = Number(event._sequence);
+    });
+    if (unseenEvents.length) return;
+  }
+  const sequence = Number(details.event_sequence);
+  if (Number.isFinite(sequence) && sequence <= appState.workerEventSequence) return;
+  renderWorkerEvent(details);
+  if (Number.isFinite(sequence)) appState.workerEventSequence = sequence;
+}
+
+function renderWorkerEvent(details) {
   const setDetail = (selector, value) => {
     const target = document.querySelector(selector);
     if (!target || value === undefined || value === null || value === "") return;
     target.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   };
-  setDetail("[data-raw]", details.raw);
-  setDetail("[data-normalized]", details.normalized);
+  if (appState.active?.module_id === "voice_transport" && details.transport === true) {
+    appState.transportStatus = details;
+    const phases = { initializing: "初始化中", positioning: "摄像头定位中", standing: "机械臂恢复直立中",
+      waiting: "等待操作", detecting: "正在处理指令，识别物块", moving: "正在搬运",
+      recovering: "正在恢复直立", completed: "搬运完成", not_found: "识别失败",
+      fault: "执行异常，任务已锁定", initialization_error: "初始化失败" };
+    setDetail("[data-transport-listening]", details.listening_status);
+    setDetail("[data-transport-raw]", details.raw || "等待语音输入。");
+    setDetail("[data-transport-color]", details.target_label);
+    setDetail("[data-transport-block]", details.block_confirmed ? "已确认对应物块" : "尚未确认对应物块");
+    setDetail("[data-transport-phase]", phases[details.phase] || details.phase);
+    setDetail("[data-transport-flow]", details.message);
+    setDetail("[data-transport-completion]", details.completion_label);
+  }
+  const assistantStatus = document.querySelector("[data-assistant-status]");
+  if (assistantStatus) {
+    const status = details.type === "assistant_status"
+      ? { state: details.status || "idle", message: details.message }
+      : details.type === "listening"
+        ? { state: "listening", message: "正在语音输入…" }
+        : details.type === "speech"
+          ? { state: "generating", message: "模型正在生成…" }
+          : details.type === "assistant_reply"
+            ? { state: "complete", message: "回答已生成。" }
+            : details.type === "error" || details.ok === false
+              ? { state: "error", message: "处理失败，请重试。" }
+              : null;
+    if (status?.message) {
+      assistantStatus.dataset.state = status.state;
+      assistantStatus.textContent = status.message;
+    }
+  }
   setDetail("[data-dialogue]", details.dialogue || (details.type === "assistant_reply" ? { turn: details.turn, text: details.text } : null));
   setDetail("[data-current-song]", details.song);
   setDetail("[data-lyrics]", Array.isArray(details.lyrics) ? details.lyrics.join("\n") : details.lyrics);
@@ -784,6 +865,9 @@ async function sendCommand(command, control) {
     appState.commandRequestPending = true;
     updateCommandControls();
   }
+  if (command === "ask") {
+    renderWorkerDetails({ type: "assistant_status", status: "generating", message: "模型正在生成…" });
+  }
   try {
     const result = await requestJson(`/api/modules/${appState.active.module_id}/commands/${command}`, { method: "POST", body: JSON.stringify(payload) });
     if (result?.ok === false) {
@@ -794,7 +878,9 @@ async function sendCommand(command, control) {
     if (assistantText) assistantText.value = "";
   } catch (error) {
     showToast(error.message, true);
-    if (appState.active?.module_id === "radar_detection") {
+    if (appState.active?.module_id === "ai_assistant") {
+      renderWorkerDetails({ type: "error", message: error.message });
+    } else if (appState.active?.module_id === "radar_detection") {
       renderWorkerDetails({ type: "error", message: error.message });
     }
   } finally {
@@ -859,6 +945,10 @@ function updateCommandControls() {
       appState.commandRequestPending && !preemptiveCommands.has(control.dataset.command)
     ) || (control.dataset.command === "build_baseline" && !appState.radarDataReady)
       || (control.dataset.command === "start_detection" && !appState.radarBaselineReady);
+    if (appState.active?.module_id === "voice_transport" && control.dataset.command === "start_listening") {
+      const status = appState.transportStatus;
+      control.disabled ||= !status || status.busy || status.locked || ["正在启动", "正在监听", "正在停止"].includes(status.listening_status);
+    }
   });
   document.querySelectorAll("[data-local-action]").forEach((control) => {
     control.disabled = appState.lifecycleControlsDisabled;
@@ -890,6 +980,7 @@ if (globalThis.__FEATURE_DEMO_TEST__) {
     handleDocumentClick,
     sendCommand,
     renderCommandWorkspace,
+    renderVisualActions,
     renderWorkerDetails,
     resetRadarState,
     showHomeView,

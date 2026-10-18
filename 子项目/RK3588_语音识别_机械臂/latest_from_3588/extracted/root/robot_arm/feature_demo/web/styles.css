@@ -144,7 +144,14 @@ main { min-width: 0; }
 .stage-status strong { font-size: 13px; }
 .stage-status p { margin: 0; color: var(--muted); font-size: 12px; text-align: right; }
 .status-dot { width: 8px; height: 8px; background: var(--orange); border-radius: 50%; }
-.visual-workspace { display: grid; grid-template-columns: minmax(480px, 1fr) 230px; gap: 16px; align-items: start; }
+.visual-workspace { display: grid; grid-template-columns: 170px minmax(440px, 1fr) 230px; gap: 16px; align-items: start; }
+.visual-workspace.transport-workspace { grid-template-columns: minmax(440px, 1fr) 260px; }
+.transport-status { padding: 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; }
+.transport-status p { margin: 6px 0 0; line-height: 1.6; }
+.transport-details { margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; }
+.transport-details div { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.transport-details dt { color: var(--muted); margin-bottom: 4px; }
+.transport-details dd { margin: 0; line-height: 1.6; }
 .camera-frame { position: relative; overflow: hidden; aspect-ratio: 16 / 10; min-height: 330px; background: #172838; border: 1px solid #253e53; border-radius: 8px; }
 .camera-frame img { width: 100%; height: 100%; object-fit: contain; }
 .frame-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 30px; color: #c1d3e2; text-align: center; }
@@ -160,8 +167,24 @@ main { min-width: 0; }
 .visual-actions:empty::after { content: "当前功能无额外操作"; color: var(--muted); font-size: 11px; }
 .visual-actions .command-button { width: 100%; }
 .result-panel { min-height: 150px; padding: 14px; }
+[data-result-content] { white-space: pre-wrap; line-height: 1.65; }
 .result-empty { display: grid; place-items: center; min-height: 94px; color: var(--muted); background: #f5f8fa; border-radius: 5px; font-size: 11px; text-align: center; }
 .gimbal-panel { padding: 14px; }
+.visual-workspace > .gimbal-panel { align-self: start; }
+.radar-status-grid, .radar-details dl { display: grid; gap: 0; margin: 0; }
+.radar-status-grid div, .radar-details dl div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 2px 0; }
+.radar-status-grid dt, .radar-details dt { color: var(--muted); }
+.radar-status-grid dt, .radar-status-grid dd, .radar-details dt, .radar-details dd { font-size: 10px; line-height: 1.35; }
+.radar-status-grid dd, .radar-details dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.radar-console { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 260px; grid-template-rows: minmax(0, 1fr); gap: 14px; align-items: center; }
+.radar-screen { position: relative; width: auto; height: 100%; max-width: 100%; justify-self: center; aspect-ratio: 1; overflow: hidden; background: #000; border: 1px solid #173b46; border-radius: 6px; }
+.radar-screen canvas { display: block; width: 100%; height: 100%; }
+.radar-screen-label { position: absolute; top: 10px; left: 10px; padding: 3px 7px; color: #cceee6; background: rgba(7,25,35,.76); border-radius: 3px; font-size: 10px; }
+.radar-control-column { min-width: 0; min-height: 0; height: 100%; align-self: stretch; display: flex; flex-direction: column; }
+.radar-result-strip { display: grid; gap: 2px; padding: 7px 9px; background: #f1f7f7; border: 1px solid #d5e9e6; border-radius: 6px; }
+.radar-result-strip strong { color: var(--ink); font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
+.radar-result-strip span { color: var(--muted); font-size: 10px; }
+.radar-controls .command-button.is-confirmed { color: #fff; background: var(--green); border-color: var(--green); }
 .gimbal-panel > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .gimbal-panel label { color: var(--muted); font-size: 10px; }
 .gimbal-panel input { width: 50px; height: 28px; margin-left: 3px; padding: 0 5px; color: var(--ink); background: #f6f9fb; border: 1px solid var(--line); border-radius: 4px; font-variant-numeric: tabular-nums; }
@@ -176,6 +199,19 @@ main { min-width: 0; }
 .direction-pad button:nth-of-type(4) { grid-column: 2; grid-row: 3; }
 .pad-center { grid-column: 2; grid-row: 2; width: 8px; height: 8px; place-self: center; background: #a8bbc9; border-radius: 50%; }
 .command-workspace { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 16px; }
+.command-workspace.radar-workspace { height: calc(100dvh - 270px); min-height: 430px; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+.radar-workspace > .activity-panel { display: none; }
+.interaction-panel.radar-mode { min-height: 0; align-items: stretch; justify-content: flex-start; padding: 16px; text-align: left; overflow: hidden; }
+.radar-mode .interaction-icon, .radar-mode > [data-interaction-title], .radar-mode > [data-interaction-copy] { display: none; }
+.radar-mode .command-list.nonvisual-controls { min-height: 0; max-height: none; height: 100%; margin-top: 0; overflow: hidden; }
+.radar-mode .nonvisual-controls .radar-controls { height: 100%; min-width: 0; padding: 10px; }
+.radar-mode .radar-console { min-height: 0; }
+.radar-mode .radar-status-grid { margin-top: 5px; }
+.radar-mode .radar-details { margin-top: 5px; }
+.radar-mode .radar-details h3 { display: none; }
+.radar-mode .radar-details dl > div { padding: 2px 0; background: transparent; border-radius: 0; }
+.radar-mode .command-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 5px; }
+.radar-mode .command-button { min-height: 30px; padding: 0 8px; font-size: 11px; }
 .interaction-panel { min-height: 400px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 42px; text-align: center; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
 .interaction-icon { width: 66px; height: 66px; margin-bottom: 18px; }
 .interaction-icon svg { width: 34px; height: 34px; }
@@ -189,6 +225,18 @@ main { min-width: 0; }
 .nonvisual-controls textarea { box-sizing: border-box; width: 100%; margin-top: 6px; padding: 9px; color: var(--ink); background: #f8fafc; border: 1px solid var(--line); border-radius: 5px; font: inherit; resize: vertical; }
 .nonvisual-controls textarea:focus { outline: 3px solid #b9daf5; border-color: var(--blue); }
 .control-hint { margin: 6px 0 10px; }
+.assistant-status {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid #4378a5;
+  background: #edf5fb;
+  color: #173b56;
+  font-size: 14px;
+  font-weight: 700;
+}
+.assistant-status[data-state="listening"] { border-color: #278761; background: #edf8f3; color: #175d43; }
+.assistant-status[data-state="generating"] { border-color: #c76a24; background: #fff5e9; color: #7d4218; }
+.assistant-status[data-state="error"] { border-color: #b94444; background: #fff0f0; color: #7c2d2d; }
 .command-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 10px; }
 .command-row .command-button { flex: 0 1 auto; }
 .control-section + .control-section, .worker-output { margin-top: 15px; }
@@ -228,7 +276,11 @@ main { min-width: 0; }
 
 @media (max-width: 1320px) {
   .module-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .visual-workspace { grid-template-columns: minmax(430px, 1fr) 210px; }
+  .visual-workspace { grid-template-columns: 1fr; }
+  .visual-workspace.transport-workspace { grid-template-columns: 1fr; }
+  .visual-workspace > .camera-frame { order: 1; }
+  .visual-workspace > .gimbal-panel { order: 2; }
+  .visual-workspace > .vision-side { order: 3; }
   .home-view, .demo-stage { padding-left: 22px; padding-right: 22px; }
 }
 @media (max-width: 1080px) {
@@ -240,9 +292,12 @@ main { min-width: 0; }
   .device-note { justify-content: center; }
   .module-layout { grid-template-columns: 240px minmax(0, 1fr); }
   .guide-panel { padding-left: 20px; }
-  .visual-workspace, .command-workspace { grid-template-columns: 1fr; }
+  .command-workspace { grid-template-columns: 1fr; }
+  .command-workspace.radar-workspace { grid-template-columns: minmax(0, 1fr); }
   .vision-side { grid-template-columns: 1fr 1fr; }
   .command-list.nonvisual-controls { max-height: none; overflow-y: visible; }
+  .radar-console { grid-template-columns: minmax(220px, 1fr) 230px; }
+  .command-workspace.radar-workspace { height: calc(100dvh - 270px); }
 }
 @media (max-width: 820px) {
   .app-shell { display: block; }
@@ -263,6 +318,13 @@ main { min-width: 0; }
   .module-layout { display: block; }
   .guide-panel { padding: 18px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .demo-stage { padding: 16px; }
+  .radar-console { grid-template-columns: 1fr; }
+  .command-workspace.radar-workspace { grid-template-columns: 1fr; }
+  .radar-screen { max-width: 520px; margin: 0 auto; }
+  .command-workspace.radar-workspace { height: auto; min-height: 0; }
+  .interaction-panel.radar-mode { overflow: visible; }
+  .radar-mode .command-list.nonvisual-controls, .radar-mode .radar-controls { height: auto; overflow: visible; }
+  .radar-control-column { overflow: visible; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

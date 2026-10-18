@@ -11,6 +11,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+import numpy as np
+
 from ..resources import DEFAULT_DEVICE_PATHS, ensure_distinct_actuator_devices
 
 
@@ -31,6 +33,10 @@ LEGACY_VISION_SPECS = {
     "face_detection": LegacyVisionSpec("face_recognition_app.py", "FaceRecognitionApp", "face"),
     "shape_recognition": LegacyVisionSpec("shape_recognition_app.py", "ShapeRecognitionApp", "shape"),
 }
+
+PLATE_RESULT_HOLD_SECONDS = float(os.getenv("PLATE_RESULT_HOLD_SECONDS", "10.0"))
+PLATE_DETECT_INTERVAL_SECONDS = float(os.getenv("PLATE_DETECT_INTERVAL_SECONDS", "0.5"))
+FRUIT_RESULT_HOLD_SECONDS = float(os.getenv("FRUIT_RESULT_HOLD_SECONDS", "5.0"))
 
 
 def _load_legacy_module(spec: LegacyVisionSpec, legacy_root: str | Path) -> ModuleType:
@@ -80,6 +86,17 @@ class LegacyVisionAdapter:
         self._sorting_observer = None
         self._tracking_lock = threading.RLock()
         self._tracking_generation = 0
+        self._last_plate_detections = []
+        self._last_plate_detected_at = 0.0
+        self._next_plate_detection_at = 0.0
+        self._last_plate_frame_at = 0.0
+        self._last_fruit_detections = []
+        self._last_fruit_detected_at = 0.0
+        self._next_fruit_detection_at = 0.0
+        self._last_fruit_frame_at = 0.0
+        self._fruit_detection_interval = max(
+            0.0, float(getattr(module, "DETECT_INTERVAL_SEC", 0.18))
+        )
 
     def set_sorting_observer(self, observer) -> None:
         self._sorting_observer = observer
@@ -91,7 +108,9 @@ class LegacyVisionAdapter:
             detected = self.instance._detect_color(normal)
             if self._sorting_observer is not None:
                 self._sorting_observer(None if detected is None else detected[0])
-            return self.instance._annotate(normal, detected), {"result": _plain_value(detected)}
+            annotation_frame = self._sorting_annotation_frame(normal)
+            annotated = self.instance._annotate(annotation_frame, detected)
+            return self._single_camera_view(annotated, normal), {"result": _plain_value(detected)}
         if mode == "tracking":
             return self._process_tracking(frame)
 
@@ -113,30 +132,60 @@ class LegacyVisionAdapter:
             self.instance._last_raw_count = len(raw)
             detections = self.instance._stabilize(raw)
         elif mode == "fruit":
-            detections = self.instance._detect_fruits(normal) if self.instance.model is not None else []
-            if not detections:
-                fallback = self.instance._classify_picture(normal)
-                if fallback is None:
-                    fallback = self.instance._color_picture_guess(normal)
-                detections = [fallback] if fallback is not None else []
-            detections, self.instance._stable_signatures = self.module.stable_filter(
-                self.instance._stable_signatures,
-                detections,
-                label_fn=lambda item: item.name_cn,
-                box_fn=lambda item: item.box,
-                image_shape=normal.shape,
-                stable_hits=self.module.STABLE_HITS,
-            )
+            now = time.monotonic()
+            if self._last_fruit_frame_at > 0.0:
+                frame_interval = now - self._last_fruit_frame_at
+                if frame_interval > 0.0:
+                    self.instance.fps = 1.0 / frame_interval
+            self._last_fruit_frame_at = now
+            detections = list(self._last_fruit_detections)
+            if now >= self._next_fruit_detection_at:
+                detections = (
+                    self.instance._detect_fruits(normal)
+                    if self.instance.model is not None
+                    else []
+                )
+                now = time.monotonic()
+                self._next_fruit_detection_at = now + self._fruit_detection_interval
+                if detections:
+                    self._last_fruit_detections = list(detections)
+                    self._last_fruit_detected_at = now
+            if not detections and now - self._last_fruit_detected_at <= FRUIT_RESULT_HOLD_SECONDS:
+                detections = list(self._last_fruit_detections)
+            elif not detections:
+                self._last_fruit_detections = []
         elif mode == "plate":
-            detections = self.instance._recognize_plates(normal)
-            detections, self.instance._stable_signatures = self.module.stable_filter(
-                self.instance._stable_signatures,
-                detections,
-                label_fn=lambda item: item.plate or item.color,
-                box_fn=lambda item: item.box,
-                image_shape=normal.shape,
-                stable_hits=self.module.STABLE_HITS,
-            )
+            now = time.monotonic()
+            if self._last_plate_frame_at > 0.0:
+                frame_interval = now - self._last_plate_frame_at
+                if frame_interval > 0.0:
+                    self.instance.fps = 1.0 / frame_interval
+            self._last_plate_frame_at = now
+            if getattr(self.instance, "_plate_model_initialized", True) is False:
+                self.instance._load_model()
+                self.instance._plate_model_initialized = True
+            detections = list(self._last_plate_detections)
+            if now >= self._next_plate_detection_at:
+                recognition_frame = self._normalized_plate_frame(normal)
+                detections = self.instance._recognize_plates(recognition_frame)
+                if not detections:
+                    preview = self.instance._annotate(normal, [])
+                    preview_frame = self._normalized_plate_frame(preview)
+                    detections = self.instance._recognize_plates(preview_frame)
+                self._next_plate_detection_at = now + PLATE_DETECT_INTERVAL_SECONDS
+                if detections:
+                    self._last_plate_detections = list(detections)
+                    self._last_plate_detected_at = now
+                elif now - self._last_plate_detected_at <= PLATE_RESULT_HOLD_SECONDS:
+                    detections = list(self._last_plate_detections)
+                else:
+                    self._last_plate_detections = []
+            if (
+                self._last_plate_detections
+                and now - self._last_plate_detected_at > PLATE_RESULT_HOLD_SECONDS
+            ):
+                self._last_plate_detections = []
+                detections = []
         elif mode == "face":
             detections = self.instance._detect_dnn(normal)
             if not detections:
@@ -154,7 +203,19 @@ class LegacyVisionAdapter:
         else:
             raise RuntimeError(f"未知的视觉适配模式：{mode}")
         annotated = self.instance._annotate(normal, detections)
-        return annotated, {"result": [_plain_value(item) for item in detections]}
+        result = {"result": [_plain_value(item) for item in detections]}
+        if mode == "fruit":
+            result["model_loaded"] = self.instance.model is not None
+            result["recognition_status"] = getattr(
+                self.instance, "_last_status", ""
+            )
+            result["model_classes"] = dict(
+                getattr(self.instance, "model_names", {})
+            )
+        if mode == "plate":
+            result["recognition_debug"] = getattr(self.instance, "_last_lpr_debug", "")
+            result["recognition_status"] = getattr(self.instance, "_last_status", "")
+        return annotated, result
 
     def _process_tracking(self, frame):
         with self._tracking_lock:
@@ -211,8 +272,64 @@ class LegacyVisionAdapter:
 
     def manual_gimbal_step(self, step: Callable[[], dict]) -> dict:
         with self._tracking_lock:
+            resume_tracking = self.instance.tracking_enabled
             self._pause_tracking_locked()
-            return step()
+            self.instance.gimbal.disconnect()
+            result = step()
+            if result.get("ok") is True:
+                if not self.instance.gimbal.reload_position():
+                    return {
+                        "ok": False,
+                        "message": "云台已移动，但位置同步失败，请重新开始跟踪。",
+                    }
+            if resume_tracking and result.get("ok") is True:
+                box = self.instance.current_box
+                if box is not None:
+                    locked = self.instance.target_lock.arm(
+                        [box], self.instance.image_size
+                    )
+                    if locked is not None:
+                        self.instance.current_box = locked
+                        self.instance.controller.start(locked, time.monotonic())
+                        self._tracking_generation += 1
+                        self.instance.tracking_enabled = True
+            return result
+
+    @staticmethod
+    def _sorting_annotation_frame(normal):
+        if len(getattr(normal, "shape", ())) < 2:
+            return normal
+        return np.concatenate((normal, normal), axis=1)
+
+    @staticmethod
+    def _single_camera_view(annotated, normal):
+        """Keep the sorting preview on one eye if legacy annotation returns stereo."""
+        annotated_shape = getattr(annotated, "shape", ())
+        normal_shape = getattr(normal, "shape", ())
+        if len(annotated_shape) >= 2 and len(normal_shape) >= 2:
+            width = normal_shape[1]
+            if annotated_shape[1] > width:
+                return annotated[:, :width].copy()
+        return annotated
+
+    def _normalized_plate_frame(self, frame):
+        cv2_module = getattr(self.module, "cv2", None)
+        imencode = getattr(cv2_module, "imencode", None)
+        imdecode = getattr(cv2_module, "imdecode", None)
+        if not callable(imencode) or not callable(imdecode):
+            return frame
+        try:
+            ok, encoded = imencode(
+                ".jpg",
+                frame,
+                [int(cv2_module.IMWRITE_JPEG_QUALITY), 84],
+            )
+            if not ok:
+                return frame
+            normalized = imdecode(encoded, cv2_module.IMREAD_COLOR)
+            return frame if normalized is None else normalized
+        except Exception:
+            return frame
 
     def command(self, name: str, payload: dict) -> dict:
         if self.spec.mode == "tracking":
@@ -268,7 +385,8 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
     instance = legacy_class.__new__(legacy_class)
     instance.fps = 0.0
     instance.det_fps = 0.0
-    instance._set_status = lambda text: None
+    instance._last_status = ""
+    instance._set_status = lambda text: setattr(instance, "_last_status", str(text))
     mode = spec.mode
     if mode in {"color", "shape", "fruit", "plate"}:
         instance._stable_signatures = {}
@@ -283,7 +401,9 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         instance._load_model()
     elif mode == "plate":
         instance.catcher = None
-        instance._load_model()
+        instance.fallback_catcher = None
+        instance._last_lpr_debug = "not run"
+        instance._plate_model_initialized = False
     elif mode == "face":
         instance.dnn = instance._load_dnn()
         instance.yunet = instance._load_yunet()
@@ -300,6 +420,8 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
         instance._tracker = module.BoxTracker(hold_misses=module.HOLD_MISSES)
         instance._voter = module.TemporalGestureVote(confirm_hits=module.STABLE_HITS, hold_misses=module.HOLD_MISSES)
     elif mode == "tracking":
+        min_step_pwm = int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4"))
+        max_step_pwm = int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22"))
         config = module.TrackingConfig(
             deadband_ratio=float(os.getenv("PALM_TRACK_DEADBAND_RATIO", "0.07")),
             smoothing_alpha=float(os.getenv("PALM_TRACK_SMOOTHING_ALPHA", "0.35")),
@@ -307,8 +429,10 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             lost_timeout_sec=float(os.getenv("PALM_TRACK_LOST_TIMEOUT_SEC", "0.5")),
             max_degrees_per_second=float(os.getenv("PALM_TRACK_MAX_DEGREES_PER_SECOND", "80")),
             pwm_per_degree=float(os.getenv("PALM_TRACK_PWM_PER_DEGREE", "11.11")),
-            min_step_pwm=int(os.getenv("PALM_TRACK_MIN_STEP_PWM", "4")),
-            max_step_pwm=int(os.getenv("PALM_TRACK_MAX_STEP_PWM", "22")),
+            min_step_pwm=min_step_pwm,
+            max_step_pwm=max_step_pwm,
+            pitch_min_step_pwm=min_step_pwm,
+            pitch_max_step_pwm=max_step_pwm,
             yaw_sign=int(os.getenv("PALM_TRACK_YAW_SIGN", "-1")),
             pitch_sign=int(os.getenv("PALM_TRACK_PITCH_SIGN", "-1")),
         )
@@ -329,6 +453,7 @@ def _initialize_instance(module: ModuleType, spec: LegacyVisionSpec) -> object:
             pwm_min=int(os.getenv("PALM_TRACK_PWM_MIN", "500")),
             pwm_max=int(os.getenv("PALM_TRACK_PWM_MAX", "2500")),
             initial_pwm=int(os.getenv("PALM_TRACK_INITIAL_PWM", "1500")),
+            min_pitch_move_pwm=min_step_pwm,
         )
         instance.hand_detector = module.HandLandmarkDetector()
         instance.right_hand_detector = module.HandLandmarkDetector()

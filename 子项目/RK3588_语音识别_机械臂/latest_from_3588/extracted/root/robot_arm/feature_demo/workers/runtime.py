@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -13,8 +14,15 @@ from ..devices import resolve_camera_device
 from ..models import PREEMPTIVE_COMMANDS
 from .assistant import AssistantWorker
 from .robot import ObjectSortingWorker, RobotWorker, SortingController
+from .radar import RadarWorker
 from .vision import VisionWorker
 from .voice import VoiceWorker
+
+
+SORTING_GIMBAL_TARGET = (
+    int(os.getenv("SORTING_GIMBAL_YAW", "1200")),
+    int(os.getenv("SORTING_GIMBAL_PITCH", "1110")),
+)
 
 
 def _configured_camera(cv2_module, device: str | None = None):
@@ -84,10 +92,21 @@ def create_worker(
     cv2_module=None,
     adapter_builder: Callable[[str], object] | None = None,
     gimbal=None,
+    device_factory=None,
 ):
+    if module_id == "voice_transport":
+        from .transport_runtime import create_transport_worker
+        return create_transport_worker(event_sink=event_sink, robot_adapter=robot_adapter,
+            cv2_module=cv2_module, adapter_builder=adapter_builder, gimbal=gimbal)
+    if module_id == "radar_detection":
+        return RadarWorker(
+            event_sink=event_sink,
+            device_factory=device_factory,
+            robot_adapter=robot_adapter or RobotAdapter(),
+        )
     if module_id == "ai_assistant":
         return AssistantWorker(event_sink=event_sink)
-    if module_id in {"voice_input_test", "nursery_rhyme"}:
+    if module_id == "nursery_rhyme":
         return VoiceWorker(module_id, event_sink=event_sink)
     if module_id == "voice_robot_arm":
         return VoiceWorker(module_id, event_sink=event_sink, robot_adapter=robot_adapter or RobotAdapter())
@@ -123,18 +142,21 @@ def create_worker(
     set_observer = getattr(adapter, "set_sorting_observer", None)
     if callable(set_observer):
         set_observer(controller.observe_color)
+    sorting_gimbal = gimbal if gimbal is not None else GimbalAdapter()
     vision_worker = create_vision_worker(
         module_id,
         cv2_module=cv2_module,
         adapter_builder=lambda _: adapter,
         event_sink=component_event_sink,
-        gimbal=gimbal,
+        gimbal=sorting_gimbal,
     )
     return ObjectSortingWorker(
         vision_worker,
         robot_worker,
         controller,
         event_sink=event_sink,
+        startup_gimbal=sorting_gimbal,
+        gimbal_target=SORTING_GIMBAL_TARGET,
     )
 
 
@@ -200,8 +222,21 @@ def run_worker(module_id: str) -> int:
                 command = str(request.get("command", ""))
                 payload = request.get("payload") or {}
                 if command == "stop":
-                    worker.stop()
-                    return 0
+                    while True:
+                        try:
+                            ordinary_requests.get_nowait()
+                        except queue.Empty:
+                            break
+                    ordinary_requests.put(None)
+                    stop_failed = False
+                    try:
+                        worker.stop()
+                    except Exception as exc:
+                        stop_failed = True
+                        emit({"type": "error", "message": str(exc)})
+                    finally:
+                        ordinary_thread.join()
+                    return 1 if stop_failed else 0
                 command_request = (request_id, command, payload)
                 if command in PREEMPTIVE_COMMANDS:
                     thread = threading.Thread(

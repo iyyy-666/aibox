@@ -26,6 +26,38 @@ class FakeSerial:
         self.connected = False
 
 
+class BlockingConnectSerial(FakeSerial):
+    def __init__(self, calls, connect_started, release_connect):
+        super().__init__(calls)
+        self.connect_started = connect_started
+        self.release_connect = release_connect
+
+    def connect(self):
+        self.calls.append("connect_started")
+        self.connect_started.set()
+        self.release_connect.wait(timeout=2)
+        self.calls.append("connect")
+        self.connected = True
+        return True
+
+
+class BlockingDisconnectSerial(FakeSerial):
+    def __init__(self, calls, disconnect_started, release_disconnect):
+        super().__init__(calls)
+        self.disconnect_started = disconnect_started
+        self.release_disconnect = release_disconnect
+        self.disconnecting = False
+
+    def disconnect(self):
+        self.calls.append("disconnect_started")
+        self.disconnecting = True
+        self.disconnect_started.set()
+        self.release_disconnect.wait(timeout=2)
+        self.connected = False
+        self.disconnecting = False
+        self.calls.append("disconnect")
+
+
 class FakeRobot:
     def __init__(self, serial, calls):
         self.serial = serial
@@ -108,6 +140,25 @@ class BlockingSequenceRobot(FakeRobot):
         self.calls.append("stop_motion")
         self.stop_called.set()
         self.release_sequence.set()
+        return True
+
+
+class BlockingStopRobot(FakeRobot):
+    def __init__(self, serial, calls):
+        super().__init__(serial, calls)
+        self.stop_started = threading.Event()
+        self.release_stop = threading.Event()
+
+    def stop(self):
+        self.calls.append("stop_motion")
+        self.stop_started.set()
+        self.release_stop.wait(timeout=2.0)
+        return True
+
+
+class DisconnectAwareRobot(FakeRobot):
+    def stop(self):
+        self.calls.append(("stop_during_disconnect", self.serial.disconnecting))
         return True
 
 
@@ -281,6 +332,211 @@ def test_robot_worker_maps_existing_commands():
     assert ("gripper", "open") in calls
 
 
+def test_upright_pose_releases_serial_and_ignores_repeat_until_other_motion():
+    calls = []
+    worker = RobotWorker(make_adapter(calls), event_sink=lambda event: None)
+    worker.start()
+
+    first = worker.command("pose", {"name": "直立"})
+    calls_after_first = list(calls)
+    second = worker.command("pose", {"name": "直立"})
+    worker.stop()
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert calls_after_first == ["connect", ("pose", "直立"), "disconnect"]
+    assert calls == ["connect", ("pose", "直立"), "disconnect"]
+
+
+def test_explicit_stop_remains_available_while_upright_is_held():
+    calls = []
+    worker = RobotWorker(make_adapter(calls), event_sink=lambda event: None)
+    worker.start()
+    worker.command("pose", {"name": "直立"})
+
+    result = worker.command("stop_motion", {})
+    worker.disconnect()
+
+    assert result["ok"] is True
+    assert calls == [
+        "connect",
+        ("pose", "直立"),
+        "disconnect",
+        "connect",
+        "stop_motion",
+        "disconnect",
+    ]
+
+
+def test_shutdown_interrupts_motion_started_after_upright_without_deadlock():
+    calls = []
+    created = []
+    adapter = RobotAdapter(
+        serial_factory=lambda: FakeSerial(calls),
+        robot_factory=lambda serial: created.append(BlockingSequenceRobot(serial, calls))
+        or created[-1],
+    )
+    worker = RobotWorker(adapter, event_sink=lambda event: None)
+    worker.start()
+    worker.command("pose", {"name": "直立"})
+
+    motion = threading.Thread(
+        target=lambda: worker.command("sequence", {"name": "搬运"})
+    )
+    motion.start()
+    assert created[-1].sequence_started.wait(timeout=1)
+
+    closing = threading.Thread(target=worker.stop)
+    closing.start()
+    try:
+        assert created[-1].stop_called.wait(timeout=1)
+        motion.join(timeout=1)
+        closing.join(timeout=1)
+    finally:
+        created[-1].release_sequence.set()
+        motion.join(timeout=1)
+        closing.join(timeout=1)
+
+    assert not motion.is_alive()
+    assert not closing.is_alive()
+    assert calls.index("stop_motion") < len(calls) - 1
+    assert calls[-1] == "disconnect"
+
+
+def test_successful_sorting_motion_clears_upright_deduplication():
+    calls = []
+    adapter = make_adapter(calls)
+
+    assert adapter.command("pose", {"name": "直立"})["ok"] is True
+    assert adapter.command("sorting_transfer", {"side": "left"})["ok"] is True
+    assert adapter.command("pose", {"name": "直立"})["ok"] is True
+    adapter.shutdown()
+
+    assert calls.count(("pose", "直立")) == 2
+
+
+def test_explicit_stop_cannot_be_disconnected_before_its_command_is_sent():
+    calls = []
+    created = []
+    robot_created = threading.Event()
+
+    def make_robot(serial):
+        created.append(BlockingStopRobot(serial, calls))
+        robot_created.set()
+        return created[-1]
+
+    adapter = RobotAdapter(
+        serial_factory=lambda: FakeSerial(calls),
+        robot_factory=make_robot,
+    )
+    adapter.command("pose", {"name": "直立"})
+    robot_created.clear()
+
+    explicit = threading.Thread(target=adapter.stop_motion)
+    closing = threading.Thread(target=adapter.shutdown)
+    explicit.start()
+    assert robot_created.wait(timeout=1)
+    stopping_robot = created[-1]
+    assert stopping_robot.stop_started.wait(timeout=1)
+    closing.start()
+
+    assert calls.count("disconnect") == 1
+    stopping_robot.release_stop.set()
+    explicit.join(timeout=1)
+    closing.join(timeout=1)
+
+    assert not explicit.is_alive()
+    assert not closing.is_alive()
+    assert calls.index("stop_motion") < len(calls) - 1
+    assert calls[-1] == "disconnect"
+
+
+def test_shutdown_serializes_disconnect_before_a_concurrent_explicit_stop():
+    calls = []
+    disconnect_started = threading.Event()
+    release_disconnect = threading.Event()
+    serials = []
+
+    def make_serial():
+        if not serials:
+            serial = FakeSerial(calls)
+        else:
+            serial = BlockingDisconnectSerial(
+                calls, disconnect_started, release_disconnect
+            )
+        serials.append(serial)
+        return serial
+
+    adapter = RobotAdapter(
+        serial_factory=make_serial,
+        robot_factory=lambda serial: DisconnectAwareRobot(serial, calls),
+    )
+    adapter.command("pose", {"name": "直立"})
+    adapter.connect()
+    closing = threading.Thread(target=adapter.shutdown)
+    closing.start()
+    assert disconnect_started.wait(timeout=1)
+
+    stopping = threading.Thread(target=adapter.stop_motion)
+    stopping.start()
+    assert not any(
+        call == ("stop_during_disconnect", True) for call in calls
+    )
+    release_disconnect.set()
+    closing.join(timeout=1)
+    stopping.join(timeout=1)
+
+    assert not closing.is_alive()
+    assert not stopping.is_alive()
+    assert ("stop_during_disconnect", True) not in calls
+    assert ("stop_during_disconnect", False) in calls
+
+
+def test_shutdown_cannot_finish_while_an_accepted_motion_is_connecting():
+    calls = []
+    connect_started = threading.Event()
+    release_connect = threading.Event()
+    robot_created = threading.Event()
+    created = []
+
+    def make_robot(serial):
+        created.append(BlockingSequenceRobot(serial, calls))
+        robot_created.set()
+        return created[-1]
+
+    adapter = RobotAdapter(
+        serial_factory=lambda: BlockingConnectSerial(
+            calls, connect_started, release_connect
+        ),
+        robot_factory=make_robot,
+    )
+
+    motion = threading.Thread(
+        target=lambda: adapter.command("sequence", {"name": "搬运"})
+    )
+    motion.start()
+    assert connect_started.wait(timeout=1)
+    closing = threading.Thread(target=adapter.shutdown)
+    closing.start()
+
+    assert closing.is_alive()
+    release_connect.set()
+    try:
+        assert robot_created.wait(timeout=1)
+        assert created[-1].sequence_started.wait(timeout=1)
+        assert created[-1].stop_called.wait(timeout=1)
+        motion.join(timeout=1)
+        closing.join(timeout=1)
+    finally:
+        if created:
+            created[-1].release_sequence.set()
+        motion.join(timeout=1)
+        closing.join(timeout=1)
+
+    assert not motion.is_alive()
+    assert not closing.is_alive()
+
+
 def test_runtime_dispatches_robot_button_without_opening_serial():
     calls = []
 
@@ -441,6 +697,53 @@ def test_stop_motion_preempts_blocking_sequence_through_robot_worker():
         worker.disconnect()
 
     assert not sequence.is_alive()
+    assert not stopper.is_alive()
+
+
+def test_queued_motion_cannot_block_stop_from_preempting_active_motion():
+    calls = []
+    created = []
+    worker = RobotWorker(
+        RobotAdapter(
+            serial_factory=lambda: FakeSerial(calls),
+            robot_factory=lambda serial: created.append(
+                BlockingSequenceRobot(serial, calls)
+            )
+            or created[-1],
+        ),
+        event_sink=lambda event: None,
+    )
+    worker.start()
+    active = threading.Thread(
+        target=lambda: worker.command("sequence", {"name": "搬运"})
+    )
+    active.start()
+    assert created[0].sequence_started.wait(timeout=1)
+
+    queued_started = threading.Event()
+
+    def queue_motion():
+        queued_started.set()
+        worker.command("pose", {"name": "直立"})
+
+    queued = threading.Thread(target=queue_motion)
+    queued.start()
+    assert queued_started.wait(timeout=1)
+    threading.Event().wait(0.05)
+
+    stopper = threading.Thread(target=worker.stop_motion)
+    stopper.start()
+    try:
+        assert created[0].stop_called.wait(timeout=0.5)
+    finally:
+        created[0].release_sequence.set()
+        active.join(timeout=1)
+        queued.join(timeout=1)
+        stopper.join(timeout=1)
+        worker.disconnect()
+
+    assert not active.is_alive()
+    assert not queued.is_alive()
     assert not stopper.is_alive()
 
 

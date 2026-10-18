@@ -175,6 +175,20 @@ class ModuleManager:
                 raise ModuleConflictError("请求停止的功能不是当前活动功能。")
             module = get_module(module_id)
             worker = self._worker
+            if module_id == "voice_transport" and worker is not None and self._state == ModuleState.RUNNING:
+                # Atomically close speech acceptance before process shutdown.
+                # A busy trajectory retains its process and all resource leases.
+                try:
+                    result = worker.command("prepare_exit", {})
+                except RuntimeError as error:
+                    # WorkerProcess raises on ok=False. A controlled refusal
+                    # preserves the running worker rather than producing HTTP500.
+                    return LifecycleResult(module_id, ModuleState.RUNNING,
+                        str(error), details=worker.snapshot())
+                if result.get("ok") is not True:
+                    return LifecycleResult(module_id, ModuleState.RUNNING,
+                        str(result.get("message") or "请等待机械臂安全结束后退出。"),
+                        details=worker.snapshot())
             self._state = ModuleState.STOPPING
             cleanup_error = ""
             if worker is not None:
