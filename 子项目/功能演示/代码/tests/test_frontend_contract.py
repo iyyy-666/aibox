@@ -160,10 +160,10 @@ def test_frame_updates_use_abortable_single_request_loop(app_javascript):
     assert "window.setTimeout" in app_javascript
 
 
-def test_fruit_frame_updates_use_a_faster_visible_poll_interval(app_javascript):
-    assert "function frameRefreshDelay(moduleId)" in app_javascript
-    assert 'moduleId === "fruit_recognition" ? 50 : 80' in app_javascript
-    assert "frameRefreshDelay(moduleId)" in app_javascript
+def test_visible_frame_updates_budget_network_time_for_all_visual_modules(app_javascript):
+    assert "function frameRefreshDelay(moduleId, elapsedMs = 0)" in app_javascript
+    assert "1000 / 30 - elapsedMs" in app_javascript
+    assert "frameRefreshDelay(moduleId, performance.now() - startedAt)" in app_javascript
 
 
 def test_status_socket_reconnects_only_for_the_active_module(app_javascript):

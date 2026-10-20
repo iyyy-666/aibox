@@ -73,13 +73,14 @@ def test_catalog_rejects_template_path_outside_course(tmp_path):
         CourseCatalog.load(tmp_path)
 
 
-def test_bundled_course_contains_all_56_numbered_experiments():
+def test_bundled_course_preserves_56_experiments_and_adds_integrated_plan():
     root = bundled_course_path()
 
     catalog = CourseCatalog.load(root)
 
-    assert len(catalog.experiments) == 56
-    assert [item.number for item in catalog.experiments] == list(range(1, 57))
+    assert len(catalog.experiments) == 57
+    assert [item.number for item in catalog.experiments] == list(range(1, 58))
+    assert catalog.experiment("integrated.voice-transport.01").capabilities == ("voice.listen",)
     assert catalog.experiment("fun.ai-sentence.01").capabilities == ("voice.speak",)
     assert catalog.experiment("arm.move.01").capabilities == (
         "arm.adjust",

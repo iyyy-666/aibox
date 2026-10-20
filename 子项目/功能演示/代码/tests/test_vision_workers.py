@@ -128,8 +128,10 @@ def test_palm_manual_gimbal_step_releases_button_service_after_command():
     )
     worker.start()
 
-    result = worker.command("gimbal_down", {"amount": 30})
-    worker.stop()
+    try:
+        result = worker.command("gimbal_down", {"amount": 30})
+    finally:
+        worker.stop()
 
     assert result["ok"] is True
 

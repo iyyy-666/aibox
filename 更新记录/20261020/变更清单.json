@@ -1,0 +1,24 @@
+{
+  "demo": [
+    "adapters/transport_vision.py",
+    "api.py",
+    "web/app.js",
+    "web/index.html",
+    "web/styles.css",
+    "workers/assistant.py",
+    "workers/vision.py",
+    "workers/voice.py"
+  ],
+  "student_src": [
+    "aibox_studio/app.py",
+    "aibox_studio/resources/basic-ai/experiments.json",
+    "aibox_studio/resources/basic-ai/manifest.json",
+    "aibox_studio/resources/basic-ai/templates/voice_transport_plan.py",
+    "aibox_studio/sdk_help.py"
+  ],
+  "student_additional": [
+    "README.md",
+    "examples/voice_transport_plan.py",
+    "docs/07-综合实验与SDK实际边界.md"
+  ]
+}

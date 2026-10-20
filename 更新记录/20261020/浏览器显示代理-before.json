@@ -1,0 +1,8 @@
+{
+  "duration_s": 4.001300000011921,
+  "image_load_events": 43,
+  "image_load_fps": 10.746507385067826,
+  "mean_interval_ms": 93.63809523837907,
+  "document_hidden": false,
+  "measured_on": "Windows Edge headless over SSH, image load events; not board LCD paint"
+}

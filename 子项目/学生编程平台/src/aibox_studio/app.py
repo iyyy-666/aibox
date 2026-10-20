@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .course import CourseCatalog, Experiment, bundled_course_path
 from .runner import RunRequest, RunResult, Runner
+from .sdk_help import SDK_HELP
 from .workspace import WorkspaceStore
 
 
@@ -343,6 +344,8 @@ class MainWindow(QMainWindow):
         self.stop_button = self._button("停止", QStyle.StandardPixmap.SP_MediaStop, "stopButton")
         self.save_button = self._button("保存", QStyle.StandardPixmap.SP_DialogSaveButton)
         self.reset_button = self._button("恢复模板", QStyle.StandardPixmap.SP_BrowserReload)
+        help_button = self._button("SDK帮助", QStyle.StandardPixmap.SP_DialogHelpButton)
+        help_button.clicked.connect(lambda: QMessageBox.information(self, "SDK接口与综合实验", SDK_HELP))
         self.stop_button.setEnabled(False)
         self.run_button.clicked.connect(self._start_run)
         self.stop_button.clicked.connect(self._stop_run)
@@ -350,6 +353,7 @@ class MainWindow(QMainWindow):
         self.reset_button.clicked.connect(self._reset_code)
         for button in (self.run_button, self.stop_button, self.save_button, self.reset_button):
             layout.addWidget(button)
+        layout.addWidget(help_button)
         return bar
 
     def _button(self, text: str, icon: QStyle.StandardPixmap, name: str = "") -> QPushButton:

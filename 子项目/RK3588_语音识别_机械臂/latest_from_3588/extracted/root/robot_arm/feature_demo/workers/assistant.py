@@ -51,6 +51,9 @@ class AssistantWorker:
         self._history: list[tuple[str, str]] = []
         self._turn = 0
         self._lock = threading.RLock()
+        # llama contexts cannot generate two streams concurrently. Keep their
+        # serialization separate from the lock used by interrupt/status updates.
+        self._generation_lock = threading.Lock()
         self._voice: VoiceWorker | None = None
         self._tts_queue: queue.Queue[tuple[int, str] | None] = queue.Queue()
         self._tts_thread: threading.Thread | None = None
@@ -227,23 +230,32 @@ class AssistantWorker:
         return path
 
     def _generate(self, turn: int, question: str) -> str:
-        with self._lock:
-            if self._llm is None:
-                self._llm = self._llm_factory()
-            history = self._history[-8:]
-            llm = self._llm
-        parts = [f"<|im_start|>system\n{assistant_system_prompt()}<|im_end|>"]
-        parts.extend(f"<|im_start|>{role}\n{content}<|im_end|>" for role, content in history)
-        parts.extend((f"<|im_start|>user\n{question}<|im_end|>", "<|im_start|>assistant\n"))
-        response = llm("\n".join(parts), stream=True, **self.LLM_SETTINGS)
-        pieces: list[str] = []
-        for chunk in response:
+        with self._generation_lock:
             if turn != self._current_turn():
                 return ""
-            choices = chunk.get("choices") or []
-            if choices:
-                pieces.append(str(choices[0].get("text", "")))
-        return "".join(pieces).strip() or "抱歉，我暂时无法生成回答。"
+            if self._llm is None:
+                self._llm = self._llm_factory()
+            with self._lock:
+                if turn != self._turn:
+                    return ""
+                history = self._history[-8:]
+            parts = [f"<|im_start|>system\n{assistant_system_prompt()}<|im_end|>"]
+            parts.extend(f"<|im_start|>{role}\n{content}<|im_end|>" for role, content in history)
+            parts.extend((f"<|im_start|>user\n{question}<|im_end|>", "<|im_start|>assistant\n"))
+            response = self._llm("\n".join(parts), stream=True, **self.LLM_SETTINGS)
+            pieces: list[str] = []
+            try:
+                for chunk in response:
+                    if turn != self._current_turn():
+                        return ""
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        pieces.append(str(choices[0].get("text", "")))
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+            return "".join(pieces).strip() or "抱歉，我暂时无法生成回答。"
 
     def _queue_tts_latest(self, turn: int, text: str) -> None:
         with self._lock:

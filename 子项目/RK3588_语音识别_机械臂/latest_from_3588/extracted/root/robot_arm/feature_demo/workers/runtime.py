@@ -36,6 +36,21 @@ def _configured_camera(cv2_module, device: str | None = None):
     capture.set(cv2_module.CAP_PROP_FRAME_HEIGHT, 480)
     capture.set(cv2_module.CAP_PROP_FPS, 30)
     capture.set(cv2_module.CAP_PROP_BUFFERSIZE, 1)
+    try:
+        # Every visual module and reconnect uses the same fixed V4L2 profile.
+        # 1 = manual mode; absolute exposure uses 0.1 ms units on this camera.
+        if capture.set(cv2_module.CAP_PROP_AUTO_EXPOSURE, 1) is False:
+            raise RuntimeError('无法将摄像头设为手动曝光。')
+        if capture.set(cv2_module.CAP_PROP_EXPOSURE, 180) is False:
+            raise RuntimeError('无法将摄像头曝光设为 180。')
+        if callable(getattr(capture, 'get', None)):
+            mode = capture.get(cv2_module.CAP_PROP_AUTO_EXPOSURE)
+            value = capture.get(cv2_module.CAP_PROP_EXPOSURE)
+            if mode != 1 or value != 180:
+                raise RuntimeError(f'摄像头曝光读回不匹配：模式 {mode}，曝光 {value}。')
+    except Exception:
+        capture.release()
+        raise
     return capture
 
 

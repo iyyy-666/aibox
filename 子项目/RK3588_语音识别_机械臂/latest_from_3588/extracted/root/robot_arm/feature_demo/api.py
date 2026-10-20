@@ -76,11 +76,14 @@ def create_app(manager: ModuleManager) -> FastAPI:
         return _result_payload(snapshot)
 
     @app.get("/api/modules/{module_id}/frame")
-    def module_frame(module_id: str) -> Response:
+    def module_frame(module_id: str, after_sequence: int | None = None) -> Response:
         _module_or_404(module_id)
         snapshot = manager.snapshot()
         if snapshot.module_id != module_id:
             raise HTTPException(status_code=409, detail="该功能当前未运行。")
+        frame_sequence = (snapshot.details or {}).get("frame_sequence", 0)
+        if after_sequence is not None and after_sequence == frame_sequence:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
         encoded_frame = (snapshot.details or {}).get("frame_jpeg_base64")
         if not encoded_frame:
             return Response(status_code=204)
@@ -112,7 +115,12 @@ def create_app(manager: ModuleManager) -> FastAPI:
                 if snapshot.module_id != module_id:
                     await websocket.close(code=4409, reason="该功能当前未运行。")
                     return
-                await websocket.send_json(_result_payload(snapshot))
+                payload = _result_payload(snapshot)
+                # Camera bytes use the frame endpoint; status updates must not
+                # repeatedly serialize the same image over a second channel.
+                if isinstance(payload.get("details"), dict):
+                    payload["details"].pop("frame_jpeg_base64", None)
+                await websocket.send_json(payload)
                 await asyncio.sleep(0.5)
         except (WebSocketDisconnect, RuntimeError):
             return

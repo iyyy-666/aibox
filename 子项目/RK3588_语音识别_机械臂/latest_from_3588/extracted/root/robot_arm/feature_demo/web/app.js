@@ -14,6 +14,8 @@ const appState = {
   frameRequest: null,
   frameGeneration: 0,
   frameSequence: null,
+  frameDisplayTimes: [],
+  cameraPerformance: null,
   toastTimer: null,
   commandRequestPending: false,
   lifecycleControlsDisabled: false,
@@ -616,6 +618,7 @@ function formatVisualResults(moduleId, result) {
 }
 
 function renderWorkerDetails(details) {
+  if (details.performance) updateFramePerformance(details.performance);
   if (Array.isArray(details.recent_events)) {
     const unseenEvents = details.recent_events
       .filter((event) => {
@@ -654,6 +657,7 @@ function renderWorkerEvent(details) {
     setDetail("[data-transport-phase]", phases[details.phase] || details.phase);
     setDetail("[data-transport-flow]", details.message);
     setDetail("[data-transport-completion]", details.completion_label);
+
   }
   const assistantStatus = document.querySelector("[data-assistant-status]");
   if (assistantStatus) {
@@ -772,25 +776,55 @@ function startFrameUpdates(moduleId) {
   refreshFrame(moduleId, generation);
 }
 
-function frameRefreshDelay(moduleId) {
+function frameRefreshDelay(moduleId, elapsedMs = 0) {
   if (document.hidden) return 500;
-  return moduleId === "fruit_recognition" ? 50 : 80;
+  // The request is part of the frame budget, not extra delay after it.
+  return Math.max(0, 1000 / 30 - elapsedMs);
+}
+
+function updateFramePerformance(metrics = null) {
+  if (metrics) appState.cameraPerformance = metrics;
+  const target = document.querySelector("[data-camera-performance]");
+  if (!target) return;
+  const now = performance.now();
+  const values = appState.frameDisplayTimes.filter((time) => now - time <= 2000);
+  appState.frameDisplayTimes = values;
+  const rate = values.length > 1 ? (values.length - 1) * 1000 / (values.at(-1) - values[0]) : 0;
+  const measured = appState.cameraPerformance;
+  target.textContent = measured
+    ? `采集 ${measured.capture_fps.toFixed(1)} · 处理 ${measured.processing_fps.toFixed(1)} · 图像加载 ${rate.toFixed(1)} FPS`
+    : "等待帧率测量";
 }
 
 async function refreshFrame(moduleId, generation) {
+  if (generation !== appState.frameGeneration || appState.active?.module_id !== moduleId) return;
+  const startedAt = performance.now();
   const image = document.querySelector("[data-camera-frame]");
   const empty = document.querySelector("[data-frame-empty]");
   const controller = new AbortController();
   appState.frameRequest = controller;
+  if (!image.dataset.metricsBound) {
+    image.addEventListener?.("load", () => {
+      if (image.hidden || !appState.active?.visual) return;
+      const now = performance.now();
+      appState.frameDisplayTimes.push(now);
+      appState.frameDisplayTimes = appState.frameDisplayTimes.filter((time) => now - time <= 2000).slice(-120);
+      updateFramePerformance();
+    });
+    image.dataset.metricsBound = "true";
+  }
   try {
-    const response = await fetch(`/api/modules/${moduleId}/frame`, {
+    const suffix = appState.frameSequence === null ? "" : `?after_sequence=${encodeURIComponent(appState.frameSequence)}`;
+    const response = await fetch(`/api/modules/${moduleId}/frame${suffix}`, {
       cache: "no-store",
       signal: controller.signal,
     });
+    if (generation !== appState.frameGeneration || appState.active?.module_id !== moduleId) return;
     if (response.status === 200) {
       const sequence = response.headers.get("X-Frame-Sequence");
       if (sequence !== appState.frameSequence) {
         const blob = await response.blob();
+        if (generation !== appState.frameGeneration || appState.active?.module_id !== moduleId) return;
         const nextUrl = URL.createObjectURL(blob);
         if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
         image.dataset.objectUrl = nextUrl;
@@ -801,7 +835,7 @@ async function refreshFrame(moduleId, generation) {
       }
     }
   } catch (error) {
-    if (error.name !== "AbortError") {
+    if (error.name !== "AbortError" && generation === appState.frameGeneration && appState.active?.module_id === moduleId) {
       empty.querySelector("span").textContent = "画面暂时中断，正在继续尝试。";
     }
   } finally {
@@ -809,7 +843,7 @@ async function refreshFrame(moduleId, generation) {
     if (generation === appState.frameGeneration && appState.active?.module_id === moduleId) {
       appState.frameTimer = window.setTimeout(
         () => refreshFrame(moduleId, generation),
-        frameRefreshDelay(moduleId),
+        frameRefreshDelay(moduleId, performance.now() - startedAt),
       );
     }
   }
@@ -822,6 +856,9 @@ function stopFrameUpdates() {
   if (appState.frameRequest) appState.frameRequest.abort();
   appState.frameRequest = null;
   appState.frameSequence = null;
+  appState.frameDisplayTimes = [];
+  appState.cameraPerformance = null;
+  updateFramePerformance();
   const image = document.querySelector("[data-camera-frame]");
   if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
   image.removeAttribute("src");
@@ -949,6 +986,7 @@ function updateCommandControls() {
       const status = appState.transportStatus;
       control.disabled ||= !status || status.busy || status.locked || ["正在启动", "正在监听", "正在停止"].includes(status.listening_status);
     }
+
   });
   document.querySelectorAll("[data-local-action]").forEach((control) => {
     control.disabled = appState.lifecycleControlsDisabled;

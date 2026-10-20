@@ -53,6 +53,8 @@ class FakeCv2:
     CAP_PROP_FRAME_HEIGHT = 3
     CAP_PROP_FPS = 4
     CAP_PROP_BUFFERSIZE = 5
+    CAP_PROP_AUTO_EXPOSURE = 21
+    CAP_PROP_EXPOSURE = 15
     IMWRITE_JPEG_QUALITY = 6
 
     def __init__(self):
@@ -114,7 +116,7 @@ def test_runtime_keeps_camera_lazy_and_uses_stable_capture_device(monkeypatch):
         "/dev/v4l/by-id/usb-DECXIN_DECXIN_Camera_01.00.00-video-index0",
         200,
     )
-    assert camera.settings == [(1, 77), (2, 1280), (3, 480), (4, 30), (5, 1)]
+    assert camera.settings == [(1, 77), (2, 1280), (3, 480), (4, 30), (5, 1), (21, 1), (15, 180)]
 
 
 def test_runtime_uses_environment_camera_override(monkeypatch):

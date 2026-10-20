@@ -203,10 +203,14 @@ def test_voice_restart_calibration_failure_rolls_back_resources() -> None:
     pcms = [FakePCM([]), FakePCM([]), FakePCM([])]
 
     class FailingCalibrationEngine(FakeEngine):
-        def _calibrate_noise(self, _pcm):
-            raise RuntimeError("calibration failed")
+        calibrations = 0
 
-    engines = [FakeEngine(), FailingCalibrationEngine(), FakeEngine()]
+        def _calibrate_noise(self, _pcm):
+            self.calibrations += 1
+            if self.calibrations == 2:
+                raise RuntimeError("calibration failed")
+
+    engines = [FailingCalibrationEngine(), FakeEngine()]
     worker = VoiceWorker(
         "ai_assistant",
         event_sink=lambda _event: None,

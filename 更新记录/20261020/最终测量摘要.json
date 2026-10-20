@@ -1,0 +1,18 @@
+{
+  "browser_image_load_fps_before": 10.746507385067826,
+  "browser_image_load_fps_after": 14.995501349639799,
+  "browser_relative_increase_percent": 39.54,
+  "transport_same_real_frame_median_ms_before": 11.359,
+  "transport_same_real_frame_median_ms_after": 9.808,
+  "transport_relative_reduction_percent": 13.65,
+  "full_demo_tests": {
+    "passed": 452,
+    "failed": 16
+  },
+  "related_demo_tests_passed": 197,
+  "student_local_tests_passed": 95,
+  "student_board_simulation_templates_passed": 57,
+  "actual_asr_accuracy_measured": false,
+  "actual_board_lcd_fps_measured": false,
+  "arm_motions_tested_this_task": false
+}

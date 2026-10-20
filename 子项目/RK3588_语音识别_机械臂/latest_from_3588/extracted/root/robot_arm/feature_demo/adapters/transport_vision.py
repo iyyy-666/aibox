@@ -8,9 +8,30 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class BlockDetection:
+    name: str
+    box: tuple
+    area: float
+    center: tuple
+    bgr: tuple
+
+
+# Four supported physical block colors. The board camera renders the yellow
+# face at H=15..18 under warm light. Keep a saturation floor: white is unknown.
+BLOCK_COLORS = {
+    'Red': (((0, 45, 45), (10, 255, 255)), ((170, 45, 45), (179, 255, 255))),
+    'Yellow': (((14, 65, 65), (36, 255, 255)),),
+    'Green': (((37, 45, 35), (84, 255, 255)),),
+    'Blue': (((85, 35, 35), (142, 255, 255)),),
+}
+BLOCK_BGR = {'Red': (45, 45, 235), 'Yellow': (0, 225, 255),
+             'Green': (80, 210, 80), 'Blue': (235, 120, 45)}
 
 
 class TransportVisionAdapter:
@@ -28,23 +49,40 @@ class TransportVisionAdapter:
     def set_observer(self, observer):
         self._observer = observer
 
-    def _mask(self, patch, name):
+    def _mask(self, patch, name, hsv=None):
         cv2 = self._colors.module.cv2
-        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        if hsv is None:
+            hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
         mask = np.zeros(patch.shape[:2], np.uint8)
-        if name.lower() in {'blue', 'cyan'}:
-            # Same blue hue range used by sorting, including this cyan-blue cube.
-            mask = cv2.inRange(hsv, np.array((85,35,35),np.uint8), np.array((142,255,255),np.uint8))
-        else:
-            for label, (lower, upper), _ in self._colors.module.COLOR_RANGES:
-                if label.lower() == name.lower():
-                    mask |= cv2.inRange(hsv, np.array(lower,np.uint8),np.array(upper,np.uint8))
+        label = 'Blue' if name.lower() == 'cyan' else name.title()
+        for lower, upper in BLOCK_COLORS.get(label, ()):
+            mask |= cv2.inRange(hsv, np.array(lower,np.uint8),np.array(upper,np.uint8))
         return mask, hsv
 
-    def refine_detection(self, frame, detection):
+    def _detect_blocks(self, frame, hsv=None):
+        cv2 = self._colors.module.cv2
+        candidates = []
+        kernel = np.ones((3, 3), np.uint8)
+        for name in BLOCK_COLORS:
+            mask, _ = self._mask(frame, name, hsv)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # No global top-four cutoff and no union of separate red objects.
+            for contour in contours:
+                area = float(cv2.contourArea(contour))
+                if area < frame.shape[0] * frame.shape[1] * .004:
+                    continue
+                x, y, w, h = cv2.boundingRect(contour)
+                candidates.append(BlockDetection(name, (x,y,w,h), area,
+                                  (x+w//2,y+h//2), BLOCK_BGR[name]))
+        return candidates
+
+    def refine_detection(self, frame, detection, hsv=None):
         cv2 = self._colors.module.cv2
         x,y,w,h = map(int,detection.box)
-        mask,hsv = self._mask(frame[y:y+h,x:x+w], detection.name)
+        mask,hsv = self._mask(frame[y:y+h,x:x+w], detection.name,
+                              None if hsv is None else hsv[y:y+h,x:x+w])
         values = hsv[:,:,2][mask > 0]
         if values.size == 0:
             return None
@@ -59,7 +97,7 @@ class TransportVisionAdapter:
         return replace(detection, box=(x+bx,y+by,bw,bh), area=float(cv2.contourArea(contour)),
                        center=(x+bx+bw//2,y+by+bh//2))
 
-    def confirm_block(self, frame, candidate):
+    def confirm_block(self, frame, candidate, hsv=None):
         cv2 = self._colors.module.cv2
         x, y, w, h = map(int, candidate['box'])
         height, width = frame.shape[:2]
@@ -76,7 +114,8 @@ class TransportVisionAdapter:
                                    max_area_ratio=.12, min_side=24):
             return False
         patch = frame[y:y + h, x:x + w]
-        mask, hsv = self._mask(patch, candidate['name'])
+        mask, hsv = self._mask(patch, candidate['name'],
+                                None if hsv is None else hsv[y:y+h,x:x+w])
         # Extent rejects outlines, scattered pixels and gaps; hull solidity rejects
         # irregular objects. Four corners reject circles and colored blobs.
         if cv2.countNonZero(mask) < w * h * .80:
@@ -94,7 +133,8 @@ class TransportVisionAdapter:
 
     def process(self, frame):
         normal, _ = self._split_stereo(frame)
-        colors = self._colors.instance._detect_colors(normal)
+        hsv = self._colors.module.cv2.cvtColor(normal, self._colors.module.cv2.COLOR_BGR2HSV)
+        colors = self._detect_blocks(normal, hsv)
         blocks, confirmed = [], []
         for detection in colors:
             color = str(detection.name).lower()
@@ -102,10 +142,10 @@ class TransportVisionAdapter:
                 color = 'blue'
             if color not in {'red', 'green', 'yellow', 'blue'}:
                 continue
-            detection = self.refine_detection(normal, detection)
+            detection = self.refine_detection(normal, detection, hsv)
             if detection is None:
                 continue
-            if self.confirm_block(normal, {'name': detection.name, 'box': detection.box}):
+            if self.confirm_block(normal, {'name': detection.name, 'box': detection.box}, hsv):
                 if any(abs(item['box'][0]-detection.box[0]) < 12 and abs(item['box'][1]-detection.box[1]) < 12 for item in blocks):
                     continue
                 blocks.append({'color': color, 'box': list(detection.box), 'is_block': True})

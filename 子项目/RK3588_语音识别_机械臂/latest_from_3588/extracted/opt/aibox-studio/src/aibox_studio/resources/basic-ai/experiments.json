@@ -130,6 +130,38 @@
           {"id":"fun.ai-answer.01","number":56,"title":"让AI回答一个简单问题","description":"调用本地 AI 并打印回答。","template":"templates/ai_chat.py","allowed_imports":["aibox"],"capabilities":["ai.chat"],"resources":["llm","npu"],"panel":"assistant","run_mode":"oneshot","timeout_seconds":90,"output_limit_bytes":65536}
         ]}
       ]
+    },
+    {
+      "id": "integrated",
+      "title": "第九篇 综合实验",
+      "order": 9,
+      "chapters": [
+        {
+          "id": "integrated.voice-transport",
+          "title": "第十七章 语音搬运综合实验",
+          "order": 17,
+          "experiments": [
+            {
+              "id": "integrated.voice-transport.01",
+              "number": 57,
+              "title": "综合实验：语音搬运规划（模拟）",
+              "description": "六步练习：检查环境、初始化、输入口令、视觉确认、固定动作、时序等待后直立。本模板仅打印计划；Voice为模拟输入。真实联动请进入功能演示。",
+              "template": "templates/voice_transport_plan.py",
+              "allowed_imports": [
+                "aibox"
+              ],
+              "capabilities": [
+                "voice.listen"
+              ],
+              "resources": [],
+              "panel": "voice",
+              "run_mode": "oneshot",
+              "timeout_seconds": 30,
+              "output_limit_bytes": 65536
+            }
+          ]
+        }
+      ]
     }
   ]
 }

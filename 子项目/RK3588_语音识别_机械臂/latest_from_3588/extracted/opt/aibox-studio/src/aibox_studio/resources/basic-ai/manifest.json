@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "course_id": "cn.aibox.basic-ai",
-  "course_version": "0.1.0",
+  "course_version": "0.2.0",
   "title": "人工智能实验箱应用实训",
   "language": "zh-CN",
   "sdk_compatibility": ">=1.0,<2.0",
   "studio_compatibility": ">=0.1,<1.0",
-  "experiment_count": 56,
+  "experiment_count": 57,
   "entry": "experiments.json",
   "publisher": "AIBox"
 }

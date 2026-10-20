@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import threading
+import time
+from collections import deque
 from typing import Callable, Protocol
 
 from ..devices import STABLE_CAMERA_DEVICE
@@ -61,6 +63,10 @@ class VisionWorker:
         self._processing_thread: threading.Thread | None = None
         self._frame_ready = threading.Condition()
         self._frame_sequence = 0
+        self._captured_at = 0.0
+        self._capture_times = deque(maxlen=60)
+        self._process_times = deque(maxlen=60)
+        self._processed_frames = 0
         self._latest_frame: object | None = None
         self._last_event: dict = {}
         self._guard = threading.RLock()
@@ -85,6 +91,9 @@ class VisionWorker:
         with self._frame_ready:
             self._frame_sequence = 0
             self._latest_frame = None
+            self._capture_times.clear()
+            self._process_times.clear()
+            self._processed_frames = 0
         self._capture_thread = threading.Thread(
             target=self._capture_loop,
             name="feature-demo-vision-capture",
@@ -122,6 +131,8 @@ class VisionWorker:
                     )
                 with self._frame_ready:
                     self._frame_sequence += 1
+                    self._captured_at = time.monotonic()
+                    self._capture_times.append(self._captured_at)
                     self._latest_frame = frame
                     self._frame_ready.notify()
                 continue
@@ -185,15 +196,34 @@ class VisionWorker:
                     return
                 processed_sequence = self._frame_sequence
                 frame = self._latest_frame
+                captured_at = self._captured_at
             try:
+                started = time.monotonic()
                 annotated, result = self._adapter.process(frame)
+                recognized_at = time.monotonic()
                 encoded = base64.b64encode(self._encode_frame(annotated)).decode("ascii")
+                completed_at = time.monotonic()
+                self._process_times.append(completed_at)
+                self._processed_frames += 1
+                with self._frame_ready:
+                    capture_times = tuple(self._capture_times)
+                    captured_frames = self._frame_sequence
+                def rate(times):
+                    return round((len(times)-1)/(times[-1]-times[0]), 2) if len(times)>1 and times[-1]>times[0] else 0.0
+                metrics = {'capture_fps': rate(capture_times),
+                           'processing_fps': rate(self._process_times),
+                           'capture_frames': captured_frames,
+                           'processed_frames': self._processed_frames,
+                           'algorithm_ms': round((recognized_at-started)*1000, 2),
+                           'encode_ms': round((completed_at-recognized_at)*1000, 2),
+                           'frame_age_ms': round((completed_at-captured_at)*1000, 2)}
                 self._emit(
                     {
                         "type": "frame",
                         "frame_sequence": processed_sequence,
                         "frame_jpeg_base64": encoded,
                         **result,
+                        "performance": metrics,
                     }
                 )
             except Exception as exc:
@@ -233,9 +263,11 @@ class VisionWorker:
         if self._camera is not None:
             self._camera.release()
             self._camera = None
-        self._adapter.close()
-        if self._gimbal is not None:
-            self._gimbal.close()
+        try:
+            self._adapter.close()
+        finally:
+            if self._gimbal is not None:
+                self._gimbal.close()
         self._emit({"type": "stopped", "message": "视觉功能已停止。"})
 
     def _emit(self, event: dict) -> None:

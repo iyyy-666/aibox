@@ -398,13 +398,15 @@ class TransportWorker:
                 thread.join(timeout=5)
                 if thread.is_alive():
                     raise TimeoutError('搬运模块后台任务尚未退出。')
-        if self._vision_started:
-            self._vision.stop()
-            self._vision_started = False
-        else:
-            self._gimbal.close() if hasattr(self._gimbal, 'close') else None
-        # No stop_motion()/shutdown(): stopping speech must never interrupt a trajectory.
-        self._robot.disconnect()
+        try:
+            if self._vision_started:
+                self._vision.stop()
+                self._vision_started = False
+            else:
+                self._gimbal.close() if hasattr(self._gimbal, 'close') else None
+        finally:
+            # No stop_motion()/shutdown(): never interrupt a trajectory.
+            self._robot.disconnect()
         with self._guard:
             self._started = False
             self._emit('stopped')

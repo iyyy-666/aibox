@@ -1,0 +1,26 @@
+[
+  {
+    "source": "G:\\codexwork\\人工智能实验箱\\教材排版修复20261020\\AI智能试验箱应用实训教程_综合升级20261020_排版修正版.docx",
+    "target": "C:\\Users\\iyyy\\Desktop\\AI智能试验箱应用实训教程_完整版.docx",
+    "backup": "G:\\codexwork\\人工智能实验箱\\教材排版修复20261020\\备份\\桌面覆盖前_20261020_164749\\0_AI智能试验箱应用实训教程_完整版.docx",
+    "previous_sha256": "6e3f7cc8c86c78c8c0650f32d44a1cca31d52df8018a1b0c43fb37f384c6f2ce",
+    "expected_sha256": "f57a57455dc84988ab92d06aa11b69ea5b4030a61579ff090a1ac64e3adae801",
+    "published": true
+  },
+  {
+    "source": "G:\\codexwork\\人工智能实验箱\\综合升级20261020\\教材\\人工智能实验箱学生编程平台_aibox封装代码附录_综合升级20261020.docx",
+    "target": "C:\\Users\\iyyy\\Desktop\\人工智能实验箱学生编程平台_aibox封装代码附录.docx",
+    "backup": "G:\\codexwork\\人工智能实验箱\\教材排版修复20261020\\备份\\桌面覆盖前_20261020_164749\\1_人工智能实验箱学生编程平台_aibox封装代码附录.docx",
+    "previous_sha256": "24725a93df2597f85c1c238dcd8b839082aac3ccea1e2a29d79aa855cca0e962",
+    "expected_sha256": "5ce10fc965358a339563256d89cdcd513b421eb8910c97c45891259a9627c8ee",
+    "published": true
+  },
+  {
+    "source": "G:\\codexwork\\人工智能实验箱\\教材排版修复20261020\\AI智能试验箱应用实训教程_综合升级20261020_排版修正版.docx",
+    "target": "G:\\codexwork\\人工智能实验箱\\综合升级20261020\\教材\\AI智能试验箱应用实训教程_综合升级20261020.docx",
+    "backup": "G:\\codexwork\\人工智能实验箱\\教材排版修复20261020\\备份\\桌面覆盖前_20261020_164749\\2_AI智能试验箱应用实训教程_综合升级20261020.docx",
+    "previous_sha256": "da540a7a0b85aaa0d5b7a4ac5a4cab1917e67e44f992bfbcdab20386373ecf2a",
+    "expected_sha256": "f57a57455dc84988ab92d06aa11b69ea5b4030a61579ff090a1ac64e3adae801",
+    "published": true
+  }
+]

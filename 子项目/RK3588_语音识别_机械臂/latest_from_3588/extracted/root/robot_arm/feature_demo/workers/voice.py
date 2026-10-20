@@ -127,6 +127,8 @@ class VoiceWorker:
         self._pcm = None
         self._thread: threading.Thread | None = None
         self._lifecycle_lock = threading.RLock()
+        self._starting = False
+        self._stopping = 0
         self._listen_generation = 0
         self._listener_started = threading.Event()
         self._join_timeout = join_timeout
@@ -145,17 +147,25 @@ class VoiceWorker:
 
     def start_listening(self) -> dict:
         with self._lifecycle_lock:
+            if self._starting:
+                raise RuntimeError("上一监听启动尚未结束，请稍后重试。")
+            if self._stopping:
+                raise RuntimeError("上一监听停止尚未结束，请稍后重试。")
             if self._listening.is_set():
                 return {"ok": True, "listening": True}
             if self._thread is not None and self._thread.is_alive():
                 raise RuntimeError("上一监听线程尚未停止，请稍后重试。")
             self._thread = None
+            # Model lifetime belongs to this worker, microphone to one listen.
+            # Never share mutable grammar or callbacks across module workers.
+            cached_engine = self._engine
+            self._starting = True
             self._listen_generation += 1
             generation = self._listen_generation
         engine = None
         pcm = None
         try:
-            engine = self._engine_factory()
+            engine = cached_engine if cached_engine is not None else self._engine_factory()
             set_commands = getattr(engine, "set_commands", None)
             if self.module_id == "voice_robot_arm":
                 commands = {name: None for name in ROBOT_COMMANDS}
@@ -225,6 +235,9 @@ class VoiceWorker:
                     self._thread = None
             self._release_listening_resources(engine, pcm)
             raise
+        finally:
+            with self._lifecycle_lock:
+                self._starting = False
 
     def stop_listening(self) -> dict:
         with self._lifecycle_lock:
@@ -234,26 +247,33 @@ class VoiceWorker:
             pcm = self._pcm
             thread = self._thread
             self._pcm = None
-        if engine is not None:
-            with suppress(Exception):
-                engine.running = False
-        # Close first: ALSA read may be blocked and must release before stopped.
-        close = getattr(pcm, "close", None)
-        if callable(close):
-            with suppress(Exception):
-                close()
-        stop = getattr(engine, "stop", None)
-        if callable(stop):
-            with suppress(Exception):
-                stop()
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=self._join_timeout)
-        if thread is not None and thread.is_alive():
-            raise TimeoutError("语音监听停止超时。")
-        with self._lifecycle_lock:
-            if self._thread is thread:
-                self._thread = None
-        return {"ok": True, "listening": False}
+            # A dead listener does not imply native engine.stop has finished.
+            # Count overlapping stops so one cannot unlock another's cleanup.
+            self._stopping += 1
+        try:
+            if engine is not None:
+                with suppress(Exception):
+                    engine.running = False
+            # Close first: ALSA read may be blocked and must release before stopped.
+            close = getattr(pcm, "close", None)
+            if callable(close):
+                with suppress(Exception):
+                    close()
+            stop = getattr(engine, "stop", None)
+            if callable(stop):
+                with suppress(Exception):
+                    stop()
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=self._join_timeout)
+            if thread is not None and thread.is_alive():
+                raise TimeoutError("语音监听停止超时。")
+            with self._lifecycle_lock:
+                if self._thread is thread:
+                    self._thread = None
+            return {"ok": True, "listening": False}
+        finally:
+            with self._lifecycle_lock:
+                self._stopping -= 1
 
     @staticmethod
     def _release_listening_resources(engine, pcm) -> None:
@@ -396,8 +416,14 @@ class VoiceWorker:
                         generation, engine, pcm, raw, normalized
                     )
             except Exception as exc:
-                if self._listener_is_current(generation, engine, pcm):
-                    self._emit({"type": "error", "message": str(exc)})
+                with self._lifecycle_lock:
+                    if self._listener_is_current(generation, engine, pcm):
+                        # An ended listener must not keep reporting listening or
+                        # hold the microphone until the user exits the module.
+                        self._listening.clear()
+                        self._pcm = None
+                        self._release_listening_resources(engine, pcm)
+                        self._emit({"type": "error", "message": str(exc)})
                 return
 
     def _handle_text(self, raw: str, normalized: str) -> None:

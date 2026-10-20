@@ -1,0 +1,1 @@
+{"healthy": true, "demo_port": 33007, "demo_pid": 3190906, "student_pid": 3190907, "student_desktop_process_running": true, "course_count": 57, "deployed_hashes_match": true, "camera_exposure": 180, "state": "idle", "rollback_script": "/root/aibox_backups/comprehensive-20261020-162537/rollback.py", "arm_commands_issued": false}
