@@ -1,0 +1,102 @@
+[
+  {
+    "width": 1100,
+    "height": 600,
+    "count": 14,
+    "scrollWidth": 1100,
+    "scrollHeight": 600,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1100,
+    "height": 680,
+    "count": 14,
+    "scrollWidth": 1100,
+    "scrollHeight": 680,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1100,
+    "height": 881,
+    "count": 14,
+    "scrollWidth": 1100,
+    "scrollHeight": 881,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1280,
+    "height": 720,
+    "count": 14,
+    "scrollWidth": 1280,
+    "scrollHeight": 720,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1280,
+    "height": 820,
+    "count": 14,
+    "scrollWidth": 1280,
+    "scrollHeight": 820,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1280,
+    "height": 900,
+    "count": 14,
+    "scrollWidth": 1280,
+    "scrollHeight": 900,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1366,
+    "height": 768,
+    "count": 14,
+    "scrollWidth": 1366,
+    "scrollHeight": 768,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1440,
+    "height": 680,
+    "count": 14,
+    "scrollWidth": 1440,
+    "scrollHeight": 680,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1440,
+    "height": 900,
+    "count": 14,
+    "scrollWidth": 1440,
+    "scrollHeight": 900,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  },
+  {
+    "width": 1920,
+    "height": 1080,
+    "count": 14,
+    "scrollWidth": 1920,
+    "scrollHeight": 1080,
+    "visible": true,
+    "cardsFit": true,
+    "titlesFit": true
+  }
+]
